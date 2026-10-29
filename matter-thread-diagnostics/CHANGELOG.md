@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7] - 2026-10-29
+
+### Added
+- Added interactive **"Test AI Connection"** button in Settings with instant live feedback from Google API.
+- Fixed key persistence across container restarts by saving to persistent `/data/matter_ai_settings.json`.
+- Added API key status preview (`✓ Saved (AIzaSy...)`) in Settings placeholders.
+- Enhanced error handling to return full exception details instead of empty error strings.
+
 ## [1.0.6] - 2026-10-29
 
 ### Added

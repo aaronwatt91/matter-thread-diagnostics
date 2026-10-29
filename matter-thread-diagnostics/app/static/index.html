@@ -278,10 +278,13 @@
             <input type="text" id="cfg-matter-url" class="form-control" value="ws://core-matter-server:5580/ws">
           </div>
 
-          <div class="form-actions">
+          <div class="form-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Settings</button>
+            <button type="button" id="btn-test-ai" class="btn btn-secondary"><i class="fa-solid fa-vial-circle-check"></i> Test AI Connection</button>
             <span id="settings-save-status" class="save-feedback"></span>
           </div>
+          <div id="ai-test-result" style="margin-top: 14px; font-size: 13px;" class="hidden"></div>
+
         </form>
       </div>
     </section>

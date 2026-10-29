@@ -99,6 +99,17 @@ async function fetchStatus() {
     }
     const modelInput = document.getElementById("cfg-model");
     if (modelInput && data.ai_model) modelInput.value = data.ai_model;
+
+    // Show key previews if configured
+    if (data.has_gemini_key) {
+      document.getElementById("cfg-gemini-key").placeholder = `✓ Saved (${data.gemini_key_preview || 'Active'}) - enter new key to replace`;
+    }
+    if (data.has_openai_key) {
+      document.getElementById("cfg-openai-key").placeholder = `✓ Saved (${data.openai_key_preview || 'Active'}) - enter new key to replace`;
+    }
+    if (data.has_anthropic_key) {
+      document.getElementById("cfg-anthropic-key").placeholder = `✓ Saved (${data.anthropic_key_preview || 'Active'}) - enter new key to replace`;
+    }
   } catch (err) {
     badge.className = "badge badge-danger";
     badge.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Server Error`;
@@ -149,7 +160,43 @@ function initSettingsForm() {
       }
     });
   }
+
+  const btnTest = document.getElementById("btn-test-ai");
+  if (btnTest) {
+    btnTest.addEventListener("click", async () => {
+      const testResult = document.getElementById("ai-test-result");
+      testResult.className = "";
+      testResult.innerHTML = `<span style="color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Testing AI API connection to Google...</span>`;
+
+      // Save form inputs first if key was typed
+      const keyVal = document.getElementById("cfg-gemini-key").value;
+      if (keyVal) {
+        await fetch(apiPath("/api/config"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ai_provider: document.getElementById("cfg-provider").value,
+            ai_model: document.getElementById("cfg-model").value,
+            gemini_api_key: keyVal
+          })
+        });
+      }
+
+      try {
+        const res = await fetch(apiPath("/api/test_ai"), { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          testResult.innerHTML = `<span class="badge badge-success"><i class="fa-solid fa-check"></i> ${data.message}</span>`;
+        } else {
+          testResult.innerHTML = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error:</span> <span style="color:var(--color-danger); margin-left:6px;">${data.error}</span>`;
+        }
+      } catch (err) {
+        testResult.innerHTML = `<span style="color:var(--color-danger);">Network test error: ${err.message}</span>`;
+      }
+    });
+  }
 }
+
 
 function toggleKeyInputs(provider) {
   document.getElementById("group-gemini-key").classList.toggle("hidden", provider !== "gemini");

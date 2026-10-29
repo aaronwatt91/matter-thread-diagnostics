@@ -68,6 +68,9 @@ async def get_status():
         "has_gemini_key": bool(config.gemini_api_key and len(config.gemini_api_key) > 5),
         "has_openai_key": bool(config.openai_api_key and len(config.openai_api_key) > 5),
         "has_anthropic_key": bool(config.anthropic_api_key and len(config.anthropic_api_key) > 5),
+        "gemini_key_preview": (config.gemini_api_key[:6] + "...") if config.gemini_api_key else "",
+        "openai_key_preview": (config.openai_api_key[:7] + "...") if config.openai_api_key else "",
+        "anthropic_key_preview": (config.anthropic_api_key[:8] + "...") if config.anthropic_api_key else "",
         "matter_server_url": config.matter_server_url,
         "otbr_url": config.otbr_url,
     }
@@ -85,6 +88,20 @@ async def update_config(req: ConfigUpdateRequest):
         "has_openai_key": bool(config.openai_api_key),
         "has_anthropic_key": bool(config.anthropic_api_key),
     }}
+
+
+@app.post("/api/test_ai")
+async def test_ai_connection():
+    """Test AI connection and API key."""
+    engine = AIDiagnosticEngine(
+        provider=config.ai_provider,
+        model=config.ai_model,
+        gemini_key=config.gemini_api_key,
+        openai_key=config.openai_api_key,
+        anthropic_key=config.anthropic_api_key
+    )
+    return await engine.test_connection()
+
 
 
 @app.get("/api/diagnostics/collect")
