@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5] - 2026-10-29
+
+### Fixed
+- Fixed Gemini API model name mismatch by replacing free-form text input with a verified model dropdown (`gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-pro`).
+- Added smart model normalization in AI engine to map `gemini-3.x` designations or typos to `gemini-2.0-flash`.
+- Added automatic model fallback to `gemini-1.5-flash` if a 404 model error is returned by Google API.
+
 ## [1.0.4] - 2026-10-29
 
 ### Fixed

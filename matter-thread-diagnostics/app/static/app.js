@@ -156,14 +156,24 @@ function toggleKeyInputs(provider) {
   document.getElementById("group-openai-key").classList.toggle("hidden", provider !== "openai");
   document.getElementById("group-anthropic-key").classList.toggle("hidden", provider !== "anthropic");
 
-  const modelInput = document.getElementById("cfg-model");
-  if (modelInput) {
-    if (provider === "gemini" && !modelInput.value.includes("gemini")) {
-      modelInput.value = "gemini-2.0-flash";
-    } else if (provider === "openai" && !modelInput.value.includes("gpt")) {
-      modelInput.value = "gpt-4o";
-    } else if (provider === "anthropic" && !modelInput.value.includes("claude")) {
-      modelInput.value = "claude-3-5-sonnet-20241022";
+  const modelSelect = document.getElementById("cfg-model");
+  if (modelSelect) {
+    if (provider === "gemini") {
+      modelSelect.innerHTML = `
+        <option value="gemini-2.0-flash">Gemini 2.0 Flash (Recommended - Fastest)</option>
+        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+      `;
+    } else if (provider === "openai") {
+      modelSelect.innerHTML = `
+        <option value="gpt-4o">GPT-4o (Recommended)</option>
+        <option value="gpt-4o-mini">GPT-4o-mini</option>
+      `;
+    } else if (provider === "anthropic") {
+      modelSelect.innerHTML = `
+        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
+        <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+      `;
     }
   }
 }
