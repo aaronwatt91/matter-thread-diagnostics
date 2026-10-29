@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.3] - 2026-10-29
+
+### Fixed
+- Migrated base image from Alpine to Debian Bookworm (`python:3.12-slim-bookworm`).
+- Fixed build failure caused by missing musl pre-compiled wheels for `pydantic-core` on aarch64. Debian provides official pre-built `manylinux` wheels, eliminating any source compilation on HA Green.
+
 ## [1.0.2] - 2026-10-29
 
 ### Fixed
