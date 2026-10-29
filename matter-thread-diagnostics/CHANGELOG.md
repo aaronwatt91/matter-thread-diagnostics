@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4] - 2026-10-29
+
+### Fixed
+- Fixed base image override by hardcoding `docker.io/library/python:3.12-slim-bookworm` directly in Dockerfile, preventing Supervisor from falling back to Alpine.
+- Removed deprecated `build.yaml`.
+- Removed deprecated 32-bit architectures (`armv7`, `armhf`) from `config.yaml`.
+
 ## [1.0.3] - 2026-10-29
 
 ### Fixed

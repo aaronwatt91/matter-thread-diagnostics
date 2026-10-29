@@ -1,5 +1,4 @@
-ARG BUILD_FROM=python:3.12-slim-bookworm
-FROM ${BUILD_FROM}
+FROM docker.io/library/python:3.12-slim-bookworm
 
 ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \

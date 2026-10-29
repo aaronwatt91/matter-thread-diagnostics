@@ -1,13 +1,11 @@
 name: "Matter & Thread AI Diagnostics"
 slug: "matter_thread_ai_diagnostics"
-version: "1.0.3"
+version: "1.0.4"
 description: "AI-powered diagnostic engine for Matter-over-Thread mesh stability, border router synchronization, and IPv6 reachability on Home Assistant Green."
 url: "https://github.com/aaronwatt91/matter-thread-diagnostics"
 arch:
   - aarch64
   - amd64
-  - armv7
-  - armhf
 startup: application
 boot: auto
 init: false
