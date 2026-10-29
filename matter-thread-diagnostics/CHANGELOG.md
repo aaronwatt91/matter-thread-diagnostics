@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6] - 2026-10-29
+
+### Added
+- Upgraded primary Gemini model to **`gemini-3.8-flash`** (Google's latest active Gemini 3 family).
+- Added `x-goog-api-key` header authentication support for all Gemini API calls.
+- Updated default model dropdown and backend normalization for `gemini-3.8-flash`.
+
 ## [1.0.5] - 2026-10-29
 
 ### Fixed

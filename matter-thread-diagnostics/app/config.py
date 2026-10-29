@@ -15,7 +15,7 @@ OPTIONS_FILE = os.environ.get("HA_OPTIONS_PATH", "/data/options.json")
 
 class AppConfig(BaseModel):
     ai_provider: str = "gemini"  # gemini, openai, anthropic
-    ai_model: str = "gemini-2.0-flash"
+    ai_model: str = "gemini-3.8-flash"
     gemini_api_key: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""

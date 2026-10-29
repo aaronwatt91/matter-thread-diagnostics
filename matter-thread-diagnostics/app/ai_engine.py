@@ -38,7 +38,7 @@ Format your response clearly using markdown with:
 
 
 class AIDiagnosticEngine:
-    def __init__(self, provider: str = "gemini", model: str = "gemini-2.0-flash",
+    def __init__(self, provider: str = "gemini", model: str = "gemini-3.8-flash",
                  gemini_key: str = "", openai_key: str = "", anthropic_key: str = ""):
         self.provider = (provider or "gemini").lower()
         self.model = self._normalize_model(self.provider, model)
@@ -47,15 +47,14 @@ class AIDiagnosticEngine:
         self.anthropic_key = anthropic_key.strip().strip('"').strip("'") if anthropic_key else ""
 
     def _normalize_model(self, provider: str, model: str) -> str:
-        """Map common typos, alias designations, or unsupported model strings to valid endpoints."""
+        """Map model alias designations to valid endpoints."""
         m = (model or "").strip().lower()
         if provider == "gemini":
-            # Map gemini-3.x (IDE preset designation) or custom aliases to official public models
-            if "3." in m or "3-" in m or "38" in m or not m or m == "gemini":
-                return "gemini-2.0-flash"
-            if m in ("gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"):
-                return m
-            return "gemini-2.0-flash"
+            if not m or m == "gemini" or "3.8" in m or "38" in m:
+                return "gemini-3.8-flash"
+            if "3-flash" in m or "3" in m:
+                return "gemini-3.8-flash"
+            return m or "gemini-3.8-flash"
         elif provider == "openai":
             if "mini" in m:
                 return "gpt-4o-mini"
@@ -64,7 +63,8 @@ class AIDiagnosticEngine:
             if "haiku" in m:
                 return "claude-3-5-haiku-20241022"
             return "claude-3-5-sonnet-20241022"
-        return m or "gemini-2.0-flash"
+        return m or "gemini-3.8-flash"
+
 
     def has_valid_key(self) -> bool:
 
@@ -121,9 +121,13 @@ class AIDiagnosticEngine:
         )
 
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Google Gemini REST API with automatic model fallback."""
-        model_name = self.model or "gemini-2.0-flash"
+        """Call Google Gemini REST API."""
+        model_name = self.model or "gemini-3.8-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_key.strip()}"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.gemini_key.strip()
+        }
         
         payload = {
             "contents": [
@@ -139,7 +143,7 @@ class AIDiagnosticEngine:
         }
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+            r = await client.post(url, json=payload, headers=headers)
             if r.status_code != 200:
                 err_text = r.text
                 try:
@@ -148,20 +152,7 @@ class AIDiagnosticEngine:
                 except Exception:
                     pass
                 
-                # If model was rejected (404), retry with gemini-1.5-flash
-                if r.status_code == 404 and model_name != "gemini-1.5-flash":
-                    logger.warning("Gemini model %s not found (404), retrying with gemini-1.5-flash...", model_name)
-                    fb_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_key.strip()}"
-                    r_fb = await client.post(fb_url, json=payload, headers={"Content-Type": "application/json"})
-                    if r_fb.status_code == 200:
-                        res_data = r_fb.json()
-                        candidates = res_data.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            if parts:
-                                return parts[0].get("text", "")
-                
-                raise RuntimeError(f"Gemini API error ({r.status_code}): {err_text}")
+                raise RuntimeError(f"Gemini API ({r.status_code}): {err_text}")
 
             res_data = r.json()
             candidates = res_data.get("candidates", [])

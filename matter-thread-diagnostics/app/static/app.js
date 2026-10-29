@@ -160,7 +160,8 @@ function toggleKeyInputs(provider) {
   if (modelSelect) {
     if (provider === "gemini") {
       modelSelect.innerHTML = `
-        <option value="gemini-2.0-flash">Gemini 2.0 Flash (Recommended - Fastest)</option>
+        <option value="gemini-3.8-flash">Gemini 3.8 Flash (Recommended / Default)</option>
+        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
       `;
