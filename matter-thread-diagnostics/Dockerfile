@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20
+ARG BUILD_FROM=python:3.12-alpine3.20
 FROM ${BUILD_FROM}
 
 ENV LANG=C.UTF-8 \
@@ -7,7 +7,7 @@ ENV LANG=C.UTF-8 \
 
 WORKDIR /app
 
-# Install system diagnostic utilities and build dependencies for pip
+# Install system diagnostic utilities and build dependencies
 RUN apk add --no-cache \
     bash \
     curl \
@@ -36,4 +36,4 @@ COPY app/ /app/
 
 EXPOSE 8099
 
-CMD ["/app/run.sh"]
+ENTRYPOINT ["/app/run.sh"]

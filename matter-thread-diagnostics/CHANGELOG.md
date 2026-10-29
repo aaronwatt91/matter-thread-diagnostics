@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2] - 2026-10-29
+
+### Fixed
+- Fixed `s6-overlay-suexec: fatal: can only run as pid 1` by migrating from HA s6 base image to clean Python 3.12 Alpine.
+- Set `init: false` in `config.yaml` to prevent Docker init / tini process interception.
+- Direct entrypoint to `/app/run.sh` ensuring Uvicorn runs as the root service process.
+
 ## [1.0.1] - 2026-10-29
 
 ### Fixed
