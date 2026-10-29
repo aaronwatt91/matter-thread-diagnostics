@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matter & Thread AI Diagnostics</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-icon"><i class="fa-solid fa-network-wired"></i></div>
+        <div>
+          <h1>Matter & Thread AI Diagnostics</h1>
+          <p class="subtitle"><span class="badge badge-ha"><i class="fa-solid fa-microchip"></i> Home Assistant Green</span> AI-Powered Mesh Health & Troubleshooting</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <div id="ai-status-badge" class="badge badge-warning">
+          <i class="fa-solid fa-circle-notch fa-spin"></i> Checking AI...
+        </div>
+        <button id="btn-refresh" class="btn btn-secondary" title="Refresh Live Data"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+        <button id="btn-open-settings" class="btn btn-icon" title="Settings"><i class="fa-solid fa-gear"></i></button>
+      </div>
+    </header>
+
+    <!-- Top KPI Cards -->
+    <section class="kpi-grid">
+      <div class="kpi-card" id="kpi-health">
+        <div class="kpi-header">
+          <span class="kpi-title">Mesh Health Index</span>
+          <i class="fa-solid fa-heart-pulse kpi-icon"></i>
+        </div>
+        <div class="kpi-value"><span id="health-score">--</span><span class="unit">%</span></div>
+        <div class="kpi-status" id="health-desc">Evaluating...</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-split">
+        <div class="kpi-header">
+          <span class="kpi-title">Border Router Sync</span>
+          <i class="fa-solid fa-circle-nodes kpi-icon"></i>
+        </div>
+        <div class="kpi-value" id="split-status">--</div>
+        <div class="kpi-status" id="split-desc">Checking PAN IDs...</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-rf">
+        <div class="kpi-header">
+          <span class="kpi-title">2.4GHz RF Coexistence</span>
+          <i class="fa-solid fa-wifi kpi-icon"></i>
+        </div>
+        <div class="kpi-value" id="rf-status">--</div>
+        <div class="kpi-status" id="rf-desc">Checking Channel overlap...</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-ipv6">
+        <div class="kpi-header">
+          <span class="kpi-title">IPv6 Thread Routes</span>
+          <i class="fa-solid fa-route kpi-icon"></i>
+        </div>
+        <div class="kpi-value" id="ipv6-status">--</div>
+        <div class="kpi-status" id="ipv6-desc">Checking ULA prefix...</div>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="tab-ai"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio</button>
+      <button class="tab-btn" data-tab="tab-topology"><i class="fa-solid fa-diagram-project"></i> Live Mesh Topology</button>
+      <button class="tab-btn" data-tab="tab-rules"><i class="fa-solid fa-list-check"></i> Rule & Network Breakdown</button>
+      <button class="tab-btn" data-tab="tab-manual"><i class="fa-solid fa-file-code"></i> Log & Diagnostic Analyzer</button>
+      <button class="tab-btn" data-tab="tab-settings"><i class="fa-solid fa-sliders"></i> Settings & API Keys</button>
+    </nav>
+
+    <!-- TAB 1: AI Diagnostics Studio -->
+    <section id="tab-ai" class="tab-content active">
+      <div class="ai-studio-panel">
+        <div class="ai-controls card">
+          <h3><i class="fa-solid fa-robot"></i> Run AI Diagnosis</h3>
+          <p class="section-desc">The AI will analyze your Thread mesh topology, Border Router synchronization, Wi-Fi channel coexistence, IPv6 routing, and Matter server telemetry.</p>
+          
+          <div class="form-group">
+            <label for="user-symptoms">Observed Symptoms / User Notes (Optional):</label>
+            <textarea id="user-symptoms" rows="2" placeholder="e.g. Eve sensor takes 10s to respond, Nanoleaf bulb drops offline after router reboot, or Apple Home device won't pair to HA..."></textarea>
+          </div>
+
+          <div class="action-buttons">
+            <button id="btn-run-ai" class="btn btn-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> Run AI Diagnosis</button>
+            <button id="btn-run-sample" class="btn btn-outline" title="Test with realistic real-world Matter/Thread problem scenario"><i class="fa-solid fa-vial"></i> Load Demo Multi-Router Scenario</button>
+          </div>
+        </div>
+
+        <div id="ai-loading-indicator" class="loading-container hidden">
+          <div class="spinner"></div>
+          <p id="loading-text">Analyzing Matter fabrics, Thread datasets, and RF interference...</p>
+        </div>
+
+        <div id="ai-results-container" class="card ai-report-card hidden">
+          <div class="report-header">
+            <h3><i class="fa-solid fa-clipboard-check"></i> AI Diagnostic Report</h3>
+            <span id="report-model-badge" class="badge badge-info">Gemini 2.0 Flash</span>
+          </div>
+          <div id="ai-report-body" class="markdown-body">
+            <!-- Rendered by marked.js -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Topology Graph -->
+    <section id="tab-topology" class="tab-content">
+      <div class="card">
+        <div class="card-header-flex">
+          <div>
+            <h3><i class="fa-solid fa-diagram-project"></i> Interactive Thread Mesh Topology</h3>
+            <p class="section-desc">Visualizes Border Routers, Leader Router, Mains-Powered Routers, and Sleepy Battery End Devices.</p>
+          </div>
+          <div class="topology-legend">
+            <span><span class="dot dot-br"></span> Border Router</span>
+            <span><span class="dot dot-router"></span> Mains Router</span>
+            <span><span class="dot dot-end"></span> Battery Sensor</span>
+            <span><span class="dot dot-weak"></span> Weak Link</span>
+            <span><span class="dot dot-offline"></span> Offline</span>
+          </div>
+        </div>
+        <div id="topology-canvas-container">
+          <svg id="mesh-svg" width="100%" height="450"></svg>
+        </div>
+        <div id="node-inspector" class="node-inspector-panel hidden">
+          <h4 id="inspector-title">Device Inspector</h4>
+          <div id="inspector-content">Click a node to inspect its attributes, IPv6 address, and RF status.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Rules & Network Breakdown -->
+    <section id="tab-rules" class="tab-content">
+      <div class="rules-grid">
+        <!-- Split Network Card -->
+        <div class="card rule-card">
+          <div class="rule-card-header">
+            <i class="fa-solid fa-arrows-split-up-and-left rule-icon"></i>
+            <div>
+              <h4>1. Multi-Border Router Synchronization</h4>
+              <p class="rule-subtitle">Thread 1.3 Split Mesh Detection</p>
+            </div>
+            <span id="rule-badge-split" class="badge">--</span>
+          </div>
+          <p id="rule-text-split" class="rule-text">Evaluating Border Routers...</p>
+          <div id="split-networks-detail" class="detail-box"></div>
+        </div>
+
+        <!-- RF Interference Card -->
+        <div class="card rule-card">
+          <div class="rule-card-header">
+            <i class="fa-solid fa-tower-broadcast rule-icon"></i>
+            <div>
+              <h4>2. 2.4 GHz RF Coexistence</h4>
+              <p class="rule-subtitle">Thread vs 20MHz Wi-Fi Channels (1, 6, 11)</p>
+            </div>
+            <span id="rule-badge-rf" class="badge">--</span>
+          </div>
+          <p id="rule-text-rf" class="rule-text">Evaluating RF spectral overlap...</p>
+          <div class="rf-visual-scale">
+            <div class="rf-bar">
+              <span class="rf-zone z1">Wi-Fi Ch 1 (Thread 11-14)</span>
+              <span class="rf-zone z2">Wi-Fi Ch 6 (Thread 16-19)</span>
+              <span class="rf-zone z3">Wi-Fi Ch 11 (Thread 21-24)</span>
+              <span class="rf-zone z-safe">Thread Ch 25 (Clean)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- IPv6 ULA Routing Card -->
+        <div class="card rule-card">
+          <div class="rule-card-header">
+            <i class="fa-solid fa-globe rule-icon"></i>
+            <div>
+              <h4>3. IPv6 ULA & RIO Route Advertisements</h4>
+              <p class="rule-subtitle">Host Kernel Route to Thread Prefix (fd00::/8)</p>
+            </div>
+            <span id="rule-badge-ipv6" class="badge">--</span>
+          </div>
+          <p id="rule-text-ipv6" class="rule-text">Evaluating kernel routing table...</p>
+          <div id="ipv6-routes-detail" class="detail-box mono-box"></div>
+        </div>
+
+        <!-- Node Quality Card -->
+        <div class="card rule-card">
+          <div class="rule-card-header">
+            <i class="fa-solid fa-signal rule-icon"></i>
+            <div>
+              <h4>4. Node Link Attenuation & ICD Health</h4>
+              <p class="rule-subtitle">LQI, RSSI (&lt; -82 dBm), and Sleepy Polling</p>
+            </div>
+            <span id="rule-badge-nodes" class="badge">--</span>
+          </div>
+          <p id="rule-text-nodes" class="rule-text">Evaluating Matter node signals...</p>
+          <div id="nodes-detail-list" class="detail-box"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Manual Log Analyzer -->
+    <section id="tab-manual" class="tab-content">
+      <div class="card">
+        <h3><i class="fa-solid fa-file-code"></i> External Diagnostic Log & JSON Analyzer</h3>
+        <p class="section-desc">Paste Matter server logs, OpenThread Border Router logs, or Apple/Google Home Thread JSON diagnostics for deep AI analysis.</p>
+        
+        <div class="form-group">
+          <label for="manual-log-input">Paste Logs or Diagnostics JSON:</label>
+          <textarea id="manual-log-input" rows="12" class="mono-textarea" placeholder="Paste python-matter-server log excerpts, 'ot-ctl' terminal output, or Home Assistant diagnostics JSON here..."></textarea>
+        </div>
+
+        <button id="btn-analyze-manual" class="btn btn-primary"><i class="fa-solid fa-magnifying-glass"></i> Diagnose Logs with AI</button>
+      </div>
+    </section>
+
+    <!-- TAB 5: Settings -->
+    <section id="tab-settings" class="tab-content">
+      <div class="card settings-card">
+        <h3><i class="fa-solid fa-sliders"></i> AI Configuration</h3>
+        <p class="section-desc">Choose your preferred Cloud AI provider and enter your API key. Keys are securely stored inside Home Assistant.</p>
+
+        <form id="settings-form">
+          <div class="form-group">
+            <label for="cfg-provider">AI Provider:</label>
+            <select id="cfg-provider" class="form-control">
+              <option value="gemini">Google Gemini (Recommended - Fast & Cost-effective)</option>
+              <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+              <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet / Haiku)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-model">Model Name:</label>
+            <input type="text" id="cfg-model" class="form-control" value="gemini-2.0-flash" placeholder="e.g. gemini-2.0-flash, gpt-4o, claude-3-5-sonnet-20241022">
+          </div>
+
+          <div class="form-group" id="group-gemini-key">
+            <label for="cfg-gemini-key">Google Gemini API Key:</label>
+            <div class="input-password-wrap">
+              <input type="password" id="cfg-gemini-key" class="form-control" placeholder="AIzaSy...">
+              <button type="button" class="btn-toggle-pw" data-target="cfg-gemini-key"><i class="fa-solid fa-eye"></i></button>
+            </div>
+            <small class="help-text">Get a free Gemini API key at <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</small>
+          </div>
+
+          <div class="form-group hidden" id="group-openai-key">
+            <label for="cfg-openai-key">OpenAI API Key:</label>
+            <div class="input-password-wrap">
+              <input type="password" id="cfg-openai-key" class="form-control" placeholder="sk-proj-...">
+              <button type="button" class="btn-toggle-pw" data-target="cfg-openai-key"><i class="fa-solid fa-eye"></i></button>
+            </div>
+            <small class="help-text">Get an API key from your <a href="https://platform.openai.com/" target="_blank">OpenAI Dashboard</a>.</small>
+          </div>
+
+          <div class="form-group hidden" id="group-anthropic-key">
+            <label for="cfg-anthropic-key">Anthropic Claude API Key:</label>
+            <div class="input-password-wrap">
+              <input type="password" id="cfg-anthropic-key" class="form-control" placeholder="sk-ant-...">
+              <button type="button" class="btn-toggle-pw" data-target="cfg-anthropic-key"><i class="fa-solid fa-eye"></i></button>
+            </div>
+            <small class="help-text">Get an API key from the <a href="https://console.anthropic.com/" target="_blank">Anthropic Console</a>.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-matter-url">Matter Server WebSocket URL:</label>
+            <input type="text" id="cfg-matter-url" class="form-control" value="ws://core-matter-server:5580/ws">
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Settings</button>
+            <span id="settings-save-status" class="save-feedback"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
