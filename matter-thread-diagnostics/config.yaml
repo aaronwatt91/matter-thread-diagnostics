@@ -1,6 +1,6 @@
 name: "Matter & Thread AI Diagnostics"
 slug: "matter_thread_ai_diagnostics"
-version: "1.0.0"
+version: "1.0.1"
 description: "AI-powered diagnostic engine for Matter-over-Thread mesh stability, border router synchronization, and IPv6 reachability on Home Assistant Green."
 url: "https://github.com/aaronwatt91/matter-thread-diagnostics"
 arch:
@@ -16,8 +16,6 @@ panel_icon: "mdi:resistor-nodes"
 panel_title: "Matter & Thread AI"
 homeassistant_api: true
 hassio_api: true
-hassio_role: manager
-host_network: true
 stage: stable
 
 options:
@@ -31,11 +29,11 @@ options:
   log_level: "info"
 
 schema:
-  ai_provider: list(gemini|openai|anthropic)
+  ai_provider: str
   ai_model: str?
   gemini_api_key: password?
   openai_api_key: password?
   anthropic_api_key: password?
   matter_server_url: str?
   otbr_url: str?
-  log_level: list(debug|info|warning|error)
+  log_level: str?

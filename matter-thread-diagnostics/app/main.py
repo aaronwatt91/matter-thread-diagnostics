@@ -314,6 +314,23 @@ async def serve_index(request: Request):
     return HTMLResponse("<h2>Matter & Thread AI Diagnostics is initializing...</h2>")
 
 
+@app.get("/style.css")
+async def serve_css():
+    css_file = os.path.join(STATIC_DIR, "style.css")
+    if os.path.exists(css_file):
+        return FileResponse(css_file, media_type="text/css")
+    return HTMLResponse("", status_code=404)
+
+
+@app.get("/app.js")
+async def serve_js():
+    js_file = os.path.join(STATIC_DIR, "app.js")
+    if os.path.exists(js_file):
+        return FileResponse(js_file, media_type="application/javascript")
+    return HTMLResponse("", status_code=404)
+
+
+
 def get_sample_telemetry() -> Dict[str, Any]:
     """Provides a realistic Matter-over-Thread diagnostic dump representing common issues."""
     return {

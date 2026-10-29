@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1] - 2026-10-29
+
+### Fixed
+- Fixed 502 Bad Gateway under Home Assistant Ingress by switching to bridge container networking.
+- Fixed schema parsing in `config.yaml` for string options.
+- Added explicit working directory navigation `/app` in container entrypoint `run.sh`.
+- Added direct static asset routes for `/style.css` and `/app.js` under Ingress path rewrites.
+- Added Alpine build tools in Dockerfile to guarantee clean compilation of dependencies.
+
 ## [1.0.0] - 2026-10-29
 
 ### Added

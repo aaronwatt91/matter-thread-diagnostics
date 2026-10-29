@@ -11,5 +11,8 @@ else
     echo "[INFO] Running in standalone/development mode (no /data/options.json)."
 fi
 
+cd /app
+
 # Run the FastAPI app using Uvicorn on 0.0.0.0:8099 (HA Ingress port)
+echo "[INFO] Launching Uvicorn on 0.0.0.0:8099..."
 exec python3 -m uvicorn main:app --host 0.0.0.0 --port 8099 --log-level info

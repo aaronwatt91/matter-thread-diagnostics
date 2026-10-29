@@ -7,7 +7,7 @@ ENV LANG=C.UTF-8 \
 
 WORKDIR /app
 
-# Install system diagnostic utilities for Thread/IPv6 routing inspection
+# Install system diagnostic utilities and build dependencies for pip
 RUN apk add --no-cache \
     bash \
     curl \
@@ -16,10 +16,18 @@ RUN apk add --no-cache \
     iputils \
     bind-tools \
     net-tools \
-    ca-certificates
+    ca-certificates \
+    build-base \
+    gcc \
+    musl-dev \
+    linux-headers \
+    python3-dev
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Remove build tools after pip install to keep container slim
+RUN apk del build-base gcc musl-dev linux-headers python3-dev
 
 COPY run.sh /app/run.sh
 RUN chmod +x /app/run.sh
