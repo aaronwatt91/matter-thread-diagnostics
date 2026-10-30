@@ -1,7 +1,9 @@
 """
 Home Assistant & Supervisor Client for Matter & Thread diagnostics.
 Interacts with Home Assistant Core, Supervisor, and WebSocket endpoints.
-Supports real streaming `thread/discover_routers` subscriptions and Thread Operational Dataset TLV decoding.
+Supports both bridge mode and host_network mode (`ws://supervisor/core/websocket` and
+`ws://172.30.32.2/core/websocket` with `Host: supervisor` header), streaming
+`thread/discover_routers` subscriptions, and Thread Operational Dataset TLV decoding.
 """
 import asyncio
 import ipaddress
@@ -48,7 +50,6 @@ def parse_thread_dataset_tlv(tlv_hex: str) -> Dict[str, Any]:
         idx += tlv_len
 
         if tlv_type == 0x00 and len(val) == 3:
-            # Channel TLV: 1 byte channel page, 2 bytes channel number
             channel_page = val[0]
             channel_num = struct.unpack(">H", val[1:3])[0]
             parsed["channel_page"] = channel_page
@@ -78,6 +79,30 @@ def parse_thread_dataset_tlv(tlv_hex: str) -> Dict[str, Any]:
     return parsed
 
 
+async def _ws_connect_with_host(ws_url: str, timeout: float = 6.0):
+    """
+    Connect to a WebSocket URL, automatically supplying `Host: supervisor` when connecting
+    via the Supervisor bridge IP (`172.30.32.2`) in `host_network: true` mode.
+    """
+    needs_host_header = "172.30.32.2" in ws_url
+    if needs_host_header:
+        try:
+            return await websockets.connect(
+                ws_url,
+                open_timeout=timeout,
+                max_size=16 * 1024 * 1024,
+                additional_headers={"Host": "supervisor"},
+            )
+        except TypeError:
+            return await websockets.connect(
+                ws_url,
+                open_timeout=timeout,
+                max_size=16 * 1024 * 1024,
+                extra_headers={"Host": "supervisor"},
+            )
+    return await websockets.connect(ws_url, open_timeout=timeout, max_size=16 * 1024 * 1024)
+
+
 class HAClient:
     def __init__(
         self,
@@ -94,24 +119,27 @@ class HAClient:
     def is_available(self) -> bool:
         return bool(self.supervisor_token)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self, for_ip_fallback: bool = False) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.supervisor_token:
             headers["Authorization"] = f"Bearer {self.supervisor_token}"
+        if for_ip_fallback:
+            headers["Host"] = "supervisor"
         return headers
 
     def _candidate_ws_urls(self) -> List[str]:
         candidate_urls = []
         if self._working_ws_url:
             candidate_urls.append(self._working_ws_url)
+        # 1. Official Supervisor proxy hostname
         candidate_urls.append("ws://supervisor/core/websocket")
+        # 2. Direct Supervisor IP on hassio bridge (with Host: supervisor header for host_network mode)
         candidate_urls.append("ws://172.30.32.2/core/websocket")
-        candidate_urls.append("ws://homeassistant:8123/api/websocket")
-        candidate_urls.append("ws://localhost:8123/api/websocket")
-        candidate_urls.append("ws://127.0.0.1:8123/api/websocket")
+        # 3. Fallback derivations from ha_url
         ha_ws = self.ha_url.replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
         candidate_urls.append(f"{ha_ws}/websocket")
         candidate_urls.append(f"{ha_ws}/api/websocket")
+        candidate_urls.append("ws://homeassistant:8123/api/websocket")
 
         deduped = []
         seen = set()
@@ -129,25 +157,34 @@ class HAClient:
         async with httpx.AsyncClient(timeout=8.0) as client:
             res: Dict[str, Any] = {}
             for key, path in [("supervisor", "/info"), ("host", "/host/info"), ("network", "/network/info")]:
-                try:
-                    r = await client.get(f"{self.supervisor_url}{path}", headers=self._headers())
-                    if r.status_code == 200:
-                        res[key] = r.json().get("data", {})
-                except Exception as e:
-                    res[f"{key}_error"] = str(e)
+                for base in [self.supervisor_url, "http://172.30.32.2"]:
+                    try:
+                        r = await client.get(
+                            f"{base}{path}",
+                            headers=self._headers(for_ip_fallback=("172.30.32.2" in base)),
+                        )
+                        if r.status_code == 200:
+                            res[key] = r.json().get("data", {})
+                            break
+                    except Exception as e:
+                        res[f"{key}_error"] = str(e)
             return res
 
     async def get_addon_info(self, addon_slug: str) -> Dict[str, Any]:
-        """Fetch add-on details (e.g. core_matter_server or core_openthread_border_router)."""
+        """Fetch add-on details."""
         if not self.is_available:
             return {}
         async with httpx.AsyncClient(timeout=8.0) as client:
-            try:
-                r = await client.get(f"{self.supervisor_url}/addons/{addon_slug}/info", headers=self._headers())
-                if r.status_code == 200:
-                    return r.json().get("data", {})
-            except Exception as e:
-                logger.debug("Could not fetch addon info for %s: %s", addon_slug, e)
+            for base in [self.supervisor_url, "http://172.30.32.2"]:
+                try:
+                    r = await client.get(
+                        f"{base}/addons/{addon_slug}/info",
+                        headers=self._headers(for_ip_fallback=("172.30.32.2" in base)),
+                    )
+                    if r.status_code == 200:
+                        return r.json().get("data", {})
+                except Exception as e:
+                    logger.debug("Could not fetch addon info for %s from %s: %s", addon_slug, base, e)
         return {}
 
     async def get_addon_logs(self, addon_slug: str, lines: int = 150) -> str:
@@ -157,7 +194,10 @@ class HAClient:
         async with httpx.AsyncClient(timeout=8.0) as client:
             for base in [self.supervisor_url, "http://172.30.32.2"]:
                 try:
-                    r = await client.get(f"{base}/addons/{addon_slug}/logs", headers=self._headers())
+                    r = await client.get(
+                        f"{base}/addons/{addon_slug}/logs",
+                        headers=self._headers(for_ip_fallback=("172.30.32.2" in base)),
+                    )
                     if r.status_code == 200:
                         text = r.text
                         lines_list = text.strip().split("\n")
@@ -171,9 +211,12 @@ class HAClient:
         if not self.is_available:
             return []
         async with httpx.AsyncClient(timeout=8.0) as client:
-            for base in [self.ha_url, "http://172.30.32.2/core", "http://localhost:8123"]:
+            for base in [self.ha_url, "http://172.30.32.2/core"]:
                 try:
-                    r = await client.get(f"{base}/api/states", headers=self._headers())
+                    r = await client.get(
+                        f"{base}/api/states",
+                        headers=self._headers(for_ip_fallback=("172.30.32.2" in base)),
+                    )
                     if r.status_code == 200:
                         states = r.json()
                         return [
@@ -187,6 +230,23 @@ class HAClient:
                     logger.debug("Could not query HA states at %s: %s", base, e)
         return []
 
+    async def _get_all_ha_states(self) -> List[Dict[str, Any]]:
+        """Fetch all Home Assistant states via REST API."""
+        if not self.is_available:
+            return []
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            for base in [self.ha_url, "http://172.30.32.2/core"]:
+                try:
+                    r = await client.get(
+                        f"{base}/api/states",
+                        headers=self._headers(for_ip_fallback=("172.30.32.2" in base)),
+                    )
+                    if r.status_code == 200 and isinstance(r.json(), list):
+                        return r.json()
+                except Exception:
+                    continue
+        return []
+
     async def query_ha_websocket(self, command: Dict[str, Any], timeout: float = 8.0) -> Dict[str, Any]:
         """Send a single request/response command over HA WebSocket API."""
         if not self.is_available:
@@ -194,174 +254,165 @@ class HAClient:
 
         last_err = None
         for ws_url in self._candidate_ws_urls():
+            ws = None
             try:
-                async with websockets.connect(ws_url, open_timeout=timeout, max_size=16 * 1024 * 1024) as ws:
-                    auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                    if auth_req.get("type") != "auth_required":
-                        continue
+                ws = await _ws_connect_with_host(ws_url, timeout=timeout)
+                auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if auth_req.get("type") != "auth_required":
+                    await ws.close()
+                    continue
 
-                    await ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
-                    auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                    if auth_res.get("type") != "auth_ok":
-                        last_err = f"Auth failed on {ws_url}: {auth_res}"
-                        continue
+                await ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
+                auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if auth_res.get("type") != "auth_ok":
+                    last_err = f"Auth failed on {ws_url}: {auth_res}"
+                    await ws.close()
+                    continue
 
-                    self._working_ws_url = ws_url
+                self._working_ws_url = ws_url
 
-                    msg_id = 1
-                    command_copy = dict(command)
-                    command_copy["id"] = msg_id
-                    await ws.send(json.dumps(command_copy))
+                msg_id = 1
+                command_copy = dict(command)
+                command_copy["id"] = msg_id
+                await ws.send(json.dumps(command_copy))
 
-                    response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                    return response
+                response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                await ws.close()
+                return response
             except Exception as e:
                 last_err = str(e)
                 logger.debug("Attempt to connect HA websocket at %s failed: %s", ws_url, e)
+                if ws is not None:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
 
+        logger.warning("All HA WebSocket candidate URLs failed (%s): %s", command.get("type"), last_err)
         return {"error": last_err or "All WebSocket candidate URLs failed"}
 
     async def get_thread_datasets(self) -> Dict[str, Any]:
         """
-        Fetch all Thread datasets configured in Home Assistant (`thread/list_datasets`)
-        AND fetch + decode each dataset's raw Thread Operational Dataset TLV (`thread/get_dataset_tlv`)
-        so we know the exact Channel, PAN ID, Extended PAN ID, and Mesh-Local Prefix (fd00::/64)!
+        Fetch all Thread datasets configured in Home Assistant (`thread/list_datasets`),
+        and optionally enrich each dataset with decoded TLV (`thread/get_dataset_tlv`).
         """
-        if not self.is_available:
-            return {"result": {"datasets": []}}
+        list_res = await self.query_ha_websocket({"type": "thread/list_datasets"})
+        if not isinstance(list_res, dict) or not list_res.get("success"):
+            fallback_res = await self.query_ha_websocket({"type": "thread/get_dataset"})
+            if isinstance(fallback_res, dict) and fallback_res.get("success"):
+                return fallback_res
+            return list_res if isinstance(list_res, dict) else {"result": {"datasets": []}}
 
-        for ws_url in self._candidate_ws_urls():
+        res_data = list_res.get("result") or {}
+        datasets = res_data.get("datasets", []) if isinstance(res_data, dict) else (res_data if isinstance(res_data, list) else [])
+
+        # Enrich each dataset with decoded Operational Dataset TLV (channel, pan_id, mesh_local_prefix)
+        for ds in datasets:
+            if not isinstance(ds, dict):
+                continue
+            ds_id = ds.get("dataset_id")
+            if not ds_id:
+                continue
             try:
-                async with websockets.connect(ws_url, open_timeout=6.0, max_size=8 * 1024 * 1024) as ws:
-                    auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
-                    if auth_req.get("type") != "auth_required":
-                        continue
-                    await ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
-                    auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
-                    if auth_res.get("type") != "auth_ok":
-                        continue
-
-                    self._working_ws_url = ws_url
-
-                    # 1. List datasets
-                    msg_id = 1
-                    await ws.send(json.dumps({"id": msg_id, "type": "thread/list_datasets"}))
-                    list_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=6.0))
-                    if not list_res.get("success"):
-                        # Fallback to older thread/get_dataset
-                        msg_id += 1
-                        await ws.send(json.dumps({"id": msg_id, "type": "thread/get_dataset"}))
-                        return json.loads(await asyncio.wait_for(ws.recv(), timeout=6.0))
-
-                    res_data = list_res.get("result") or {}
-                    datasets = res_data.get("datasets", []) if isinstance(res_data, dict) else (res_data if isinstance(res_data, list) else [])
-
-                    # 2. Fetch and decode TLV for each dataset to enrich with Channel, PAN ID, Mesh-Local Prefix
-                    for ds in datasets:
-                        if not isinstance(ds, dict):
-                            continue
-                        ds_id = ds.get("dataset_id")
-                        if not ds_id:
-                            continue
-                        try:
-                            msg_id += 1
-                            await ws.send(json.dumps({
-                                "id": msg_id,
-                                "type": "thread/get_dataset_tlv",
-                                "dataset_id": ds_id,
-                            }))
-                            tlv_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
-                            if tlv_res.get("success") and isinstance(tlv_res.get("result"), dict):
-                                tlv_hex = tlv_res["result"].get("tlv")
-                                if tlv_hex:
-                                    decoded = parse_thread_dataset_tlv(tlv_hex)
-                                    for k, v in decoded.items():
-                                        if v is not None and not ds.get(k):
-                                            ds[k] = v
-                        except Exception as e:
-                            logger.debug("Could not fetch TLV for dataset %s: %s", ds_id, e)
-
-                    return {"success": True, "result": {"datasets": datasets}}
+                tlv_res = await self.query_ha_websocket(
+                    {"type": "thread/get_dataset_tlv", "dataset_id": ds_id},
+                    timeout=3.0,
+                )
+                if isinstance(tlv_res, dict) and tlv_res.get("success") and isinstance(tlv_res.get("result"), dict):
+                    tlv_hex = tlv_res["result"].get("tlv")
+                    if tlv_hex:
+                        decoded = parse_thread_dataset_tlv(tlv_hex)
+                        for k, v in decoded.items():
+                            if v is not None and not ds.get(k):
+                                ds[k] = v
             except Exception as e:
-                logger.debug("get_thread_datasets failed on %s: %s", ws_url, e)
+                logger.debug("Optional TLV decode skipped for dataset %s: %s", ds_id, e)
 
-        return {"result": {"datasets": []}}
+        return {"success": True, "result": {"datasets": datasets}}
 
     async def get_thread_routers(self, listen_timeout: float = 1.8) -> Dict[str, Any]:
         """
         Discover live Thread Border Routers via Home Assistant's `thread/discover_routers`
-        WebSocket subscription stream.
-        Note: In Home Assistant Core, `thread/discover_routers` first returns a `result: null` ACK
-        and then streams `event` messages of type `router_discovered` as mDNS responses arrive.
+        WebSocket subscription stream (or single response).
         """
         if not self.is_available:
             return {"result": {"routers": []}}
 
         for ws_url in self._candidate_ws_urls():
+            ws = None
             try:
-                async with websockets.connect(ws_url, open_timeout=6.0, max_size=8 * 1024 * 1024) as ws:
-                    auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
-                    if auth_req.get("type") != "auth_required":
+                ws = await _ws_connect_with_host(ws_url, timeout=6.0)
+                auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+                if auth_req.get("type") != "auth_required":
+                    await ws.close()
+                    continue
+                await ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
+                auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+                if auth_res.get("type") != "auth_ok":
+                    await ws.close()
+                    continue
+
+                self._working_ws_url = ws_url
+
+                sub_id = 10
+                await ws.send(json.dumps({"id": sub_id, "type": "thread/discover_routers"}))
+
+                routers_by_key: Dict[str, Dict[str, Any]] = {}
+                loop = asyncio.get_event_loop()
+                deadline = loop.time() + listen_timeout
+
+                while True:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        wait_t = min(remaining, 0.45 if routers_by_key else remaining)
+                        raw_msg = await asyncio.wait_for(ws.recv(), timeout=wait_t)
+                        msg = json.loads(raw_msg)
+                    except asyncio.TimeoutError:
+                        break
+                    except Exception:
+                        break
+
+                    if not isinstance(msg, dict):
                         continue
-                    await ws.send(json.dumps({"type": "auth", "access_token": self.supervisor_token}))
-                    auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
-                    if auth_res.get("type") != "auth_ok":
-                        continue
 
-                    self._working_ws_url = ws_url
-
-                    sub_id = 10
-                    await ws.send(json.dumps({"id": sub_id, "type": "thread/discover_routers"}))
-
-                    routers_by_key: Dict[str, Dict[str, Any]] = {}
-                    loop = asyncio.get_event_loop()
-                    deadline = loop.time() + listen_timeout
-
-                    while True:
-                        remaining = deadline - loop.time()
-                        if remaining <= 0:
+                    if msg.get("id") == sub_id and msg.get("type") == "result":
+                        if not msg.get("success"):
                             break
-                        try:
-                            # Use short idle timeout once at least one router has been received
-                            wait_t = min(remaining, 0.5 if routers_by_key else remaining)
-                            raw_msg = await asyncio.wait_for(ws.recv(), timeout=wait_t)
-                            msg = json.loads(raw_msg)
-                        except asyncio.TimeoutError:
-                            break
-
-                        if not isinstance(msg, dict):
-                            continue
-
-                        # Handle legacy non-streaming response if a list/dict of routers is directly in result
-                        if msg.get("id") == sub_id and msg.get("type") == "result":
-                            if not msg.get("success"):
-                                break
-                            res_payload = msg.get("result")
-                            if isinstance(res_payload, dict) and "routers" in res_payload:
-                                for r in res_payload["routers"]:
+                        res_payload = msg.get("result")
+                        if isinstance(res_payload, dict) and "routers" in res_payload:
+                            for r in res_payload["routers"]:
+                                if isinstance(r, dict):
                                     k = r.get("instance_name") or r.get("server") or str(len(routers_by_key))
                                     routers_by_key[k] = r
-                                break
-                            elif isinstance(res_payload, list):
-                                for r in res_payload:
+                            break
+                        elif isinstance(res_payload, list):
+                            for r in res_payload:
+                                if isinstance(r, dict):
                                     k = r.get("instance_name") or r.get("server") or str(len(routers_by_key))
                                     routers_by_key[k] = r
-                                break
+                            break
 
-                        # Handle streaming `event` messages from HA `thread/discover_routers`
-                        elif msg.get("id") == sub_id and msg.get("type") == "event":
-                            ev = msg.get("event") or {}
-                            ev_type = ev.get("type")
-                            key = ev.get("key") or str(len(routers_by_key))
-                            data = ev.get("data")
-                            if ev_type == "router_discovered" and isinstance(data, dict):
-                                routers_by_key[key] = data
-                            elif ev_type == "router_removed" and key in routers_by_key:
-                                routers_by_key.pop(key, None)
+                    elif msg.get("id") == sub_id and msg.get("type") == "event":
+                        ev = msg.get("event") or {}
+                        ev_type = ev.get("type")
+                        key = ev.get("key") or str(len(routers_by_key))
+                        data = ev.get("data")
+                        if ev_type == "router_discovered" and isinstance(data, dict):
+                            routers_by_key[key] = data
+                        elif ev_type == "router_removed" and key in routers_by_key:
+                            routers_by_key.pop(key, None)
 
-                    return {"success": True, "result": {"routers": list(routers_by_key.values())}}
+                await ws.close()
+                return {"success": True, "result": {"routers": list(routers_by_key.values())}}
             except Exception as e:
                 logger.debug("thread/discover_routers failed on %s: %s", ws_url, e)
+                if ws is not None:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
 
         return {"result": {"routers": []}}
 
@@ -384,73 +435,98 @@ class HAClient:
         otbr_info: Optional[Dict[str, Any]] = None,
         datasets_res: Optional[Dict[str, Any]] = None,
         routers_res: Optional[Dict[str, Any]] = None,
+        device_registry: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Aggregate and normalize 100% REAL Thread networks discovered across:
+        Aggregate and normalize all Thread networks available across:
           1. Home Assistant Thread Datasets + decoded Operational Dataset TLVs (`thread/list_datasets` + `thread/get_dataset_tlv`)
           2. Home Assistant Border Router mDNS discovery stream (`thread/discover_routers`)
-          3. Direct LAN mDNS `_meshcop._udp.local.` scan (`NetworkChecker.inspect_mdns_discovery`)
-          4. OpenThread Border Router REST API (`NetworkChecker.inspect_otbr_rest_api`)
+          3. Direct LAN mDNS `_meshcop._udp.local.` scan (pure-Python UDP DNS-SD + Zeroconf)
+          4. OpenThread Border Router REST API (`:8081`)
           5. Commissioned Matter-over-Thread nodes' live Cluster 0x0035 attributes (`extended_pan_id`, `thread_network_name`, `thread_channel`)
+          6. Home Assistant Device Registry & Entity States (ensuring registered Google Nest Wifi Pro, Apple TV/HomePod, and SkyConnect/ZBT-1 hardware is always selectable even if mDNS multicast is filtered)
         """
         networks_map: Dict[str, Dict[str, Any]] = {}
 
+        # Fetch any missing inputs safely
         if datasets_res is None:
-            datasets_res = await self.get_thread_datasets()
+            try:
+                datasets_res = await self.get_thread_datasets()
+            except Exception as e:
+                logger.warning("Error fetching Thread datasets: %s", e)
+                datasets_res = {}
+
         if routers_res is None:
-            routers_res = await self.get_thread_routers()
+            try:
+                routers_res = await self.get_thread_routers()
+            except Exception as e:
+                logger.warning("Error discovering Thread routers via HA: %s", e)
+                routers_res = {}
+
         if mdns_info is None:
-            mdns_info = await NetworkChecker.inspect_mdns_discovery(scan_duration=1.5)
+            try:
+                mdns_info = await NetworkChecker.inspect_mdns_discovery(scan_duration=1.5)
+            except Exception as e:
+                logger.warning("Error in mDNS discovery: %s", e)
+                mdns_info = {}
+
         if otbr_info is None:
-            otbr_info = await NetworkChecker.inspect_otbr_rest_api(otbr_url=otbr_url)
+            try:
+                otbr_info = await NetworkChecker.inspect_otbr_rest_api(otbr_url=otbr_url)
+            except Exception as e:
+                logger.warning("Error querying OTBR REST API: %s", e)
+                otbr_info = {}
 
         # 1. Process HA Datasets (with decoded TLV data)
-        datasets_list = []
-        if isinstance(datasets_res, dict):
-            res_data = datasets_res.get("result", {})
-            if isinstance(res_data, dict) and "datasets" in res_data:
-                d_items = res_data["datasets"]
-                datasets_list = d_items if isinstance(d_items, list) else list(d_items.values())
-            elif isinstance(res_data, list):
-                datasets_list = res_data
-            elif isinstance(res_data, dict) and ("dataset_id" in res_data or "extended_pan_id" in res_data):
-                datasets_list = [res_data]
+        try:
+            datasets_list = []
+            if isinstance(datasets_res, dict):
+                res_data = datasets_res.get("result", {})
+                if isinstance(res_data, dict) and "datasets" in res_data:
+                    d_items = res_data["datasets"]
+                    datasets_list = d_items if isinstance(d_items, list) else list(d_items.values())
+                elif isinstance(res_data, list):
+                    datasets_list = res_data
+                elif isinstance(res_data, dict) and ("dataset_id" in res_data or "extended_pan_id" in res_data):
+                    datasets_list = [res_data]
 
-        for ds in datasets_list:
-            if not isinstance(ds, dict):
-                continue
-            ds_id = str(ds.get("dataset_id") or "")
-            xpan = str(ds.get("extended_pan_id") or ds.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
-            net_name = ds.get("network_name") or ds.get("name") or (f"Thread Mesh ({xpan[:8]})" if xpan else "HA Thread Dataset")
-            is_pref = bool(ds.get("preferred", False))
-            ch = ds.get("channel")
-            pan_id = ds.get("pan_id")
-            pan_str = f"0x{pan_id:04X}" if isinstance(pan_id, int) else str(pan_id or "")
-            mesh_prefix = ds.get("mesh_local_prefix") or ""
+            for ds in datasets_list:
+                if not isinstance(ds, dict):
+                    continue
+                ds_id = str(ds.get("dataset_id") or "")
+                xpan = str(ds.get("extended_pan_id") or ds.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
+                net_name = ds.get("network_name") or ds.get("name") or (f"Thread Mesh ({xpan[:8]})" if xpan else "Home Assistant Thread Network")
+                is_pref = bool(ds.get("preferred", False))
+                ch = ds.get("channel")
+                pan_id = ds.get("pan_id")
+                pan_str = f"0x{pan_id:04X}" if isinstance(pan_id, int) else str(pan_id or "")
+                mesh_prefix = ds.get("mesh_local_prefix") or ""
 
-            key = xpan if (xpan and xpan != "UNKNOWN") else (ds_id or net_name)
-            networks_map[key] = {
-                "id": key,
-                "dataset_id": ds_id,
-                "name": net_name,
-                "extended_pan_id": xpan or key,
-                "pan_id": pan_str,
-                "channel": ch,
-                "mesh_local_prefix": mesh_prefix,
-                "preferred": is_pref,
-                "source": "HA Thread Dataset" + (" ★ Preferred" if is_pref else ""),
-                "routers": [],
-                "router_details": [],
-                "matter_node_count": 0,
-            }
+                key = xpan if (xpan and xpan != "UNKNOWN") else (ds_id or net_name)
+                networks_map[key] = {
+                    "id": key,
+                    "dataset_id": ds_id,
+                    "name": net_name,
+                    "extended_pan_id": xpan or key,
+                    "pan_id": pan_str,
+                    "channel": ch,
+                    "mesh_local_prefix": mesh_prefix,
+                    "preferred": is_pref,
+                    "source": "Home Assistant Dataset" + (" ★ Preferred" if is_pref else ""),
+                    "routers": [],
+                    "router_details": [],
+                    "matter_node_count": 0,
+                }
+        except Exception as e:
+            logger.warning("Error processing Thread datasets: %s", e)
 
         # Helper to merge a discovered border router into networks_map
         def _merge_router(r_dict: Dict[str, Any], default_source: str):
             xpan = str(r_dict.get("extended_pan_id") or r_dict.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
-            net_name = r_dict.get("network_name") or r_dict.get("instance_name") or (f"Thread Mesh ({xpan[:8]})" if xpan else "Discovered Thread Mesh")
+            net_name = r_dict.get("network_name") or r_dict.get("instance_name") or r_dict.get("name") or (f"Thread Mesh ({xpan[:8]})" if xpan else "Thread Mesh")
             brand = r_dict.get("brand_name") or r_dict.get("vendor_name") or ""
             model = r_dict.get("model_name") or r_dict.get("model") or ""
-            inst = r_dict.get("instance_name") or r_dict.get("server") or "Border Router"
+            inst = r_dict.get("instance_name") or r_dict.get("server") or r_dict.get("name") or "Border Router"
             r_label = f"{brand} {model}".strip() if (brand or model) else inst
             ch = r_dict.get("channel")
             pan_id = r_dict.get("pan_id")
@@ -498,74 +574,192 @@ class HAClient:
                     entry["mesh_local_prefix"] = r_dict["mesh_local_prefix"]
 
         # 2. Merge HA discovered routers (`thread/discover_routers`)
-        if isinstance(routers_res, dict):
-            r_data = routers_res.get("result", {})
-            r_list = r_data.get("routers", []) if isinstance(r_data, dict) else (r_data if isinstance(r_data, list) else [])
-            for r in r_list:
-                if isinstance(r, dict):
-                    _merge_router(r, "HA Border Router Discovery")
+        try:
+            if isinstance(routers_res, dict):
+                r_data = routers_res.get("result", {})
+                r_list = r_data.get("routers", []) if isinstance(r_data, dict) else (r_data if isinstance(r_data, list) else [])
+                for r in r_list:
+                    if isinstance(r, dict):
+                        _merge_router(r, "HA Border Router Discovery")
+        except Exception as e:
+            logger.warning("Error merging HA routers: %s", e)
 
         # 3. Merge direct mDNS `_meshcop._udp.local.` Border Routers
-        if isinstance(mdns_info, dict):
-            for mr in mdns_info.get("meshcop_border_routers", []):
-                if isinstance(mr, dict):
-                    _merge_router(mr, "Live mDNS (_meshcop._udp)")
+        try:
+            if isinstance(mdns_info, dict):
+                for mr in mdns_info.get("meshcop_border_routers", []):
+                    if isinstance(mr, dict):
+                        _merge_router(mr, "Live mDNS (_meshcop._udp)")
+        except Exception as e:
+            logger.warning("Error merging mDNS routers: %s", e)
 
         # 4. Merge OpenThread Border Router REST API state
-        if isinstance(otbr_info, dict) and otbr_info.get("reachable"):
-            otbr_xpan = otbr_info.get("extended_pan_id")
-            if otbr_xpan:
-                _merge_router(
-                    {
-                        "extended_pan_id": otbr_xpan,
-                        "network_name": otbr_info.get("network_name"),
-                        "brand_name": "Home Assistant",
-                        "model_name": f"OTBR ({otbr_info.get('state', 'active')})",
-                        "channel": otbr_info.get("channel"),
-                        "pan_id": otbr_info.get("pan_id"),
-                        "ext_address": otbr_info.get("ext_address"),
-                        "mesh_local_prefix": otbr_info.get("mesh_local_prefix"),
-                    },
-                    "OpenThread Border Router REST API",
-                )
+        try:
+            if isinstance(otbr_info, dict) and otbr_info.get("reachable"):
+                otbr_xpan = otbr_info.get("extended_pan_id")
+                if otbr_xpan:
+                    _merge_router(
+                        {
+                            "extended_pan_id": otbr_xpan,
+                            "network_name": otbr_info.get("network_name"),
+                            "brand_name": "Home Assistant",
+                            "model_name": f"OTBR ({otbr_info.get('state', 'active')})",
+                            "channel": otbr_info.get("channel"),
+                            "pan_id": otbr_info.get("pan_id"),
+                            "ext_address": otbr_info.get("ext_address"),
+                            "mesh_local_prefix": otbr_info.get("mesh_local_prefix"),
+                        },
+                        "OpenThread Border Router REST API",
+                    )
+        except Exception as e:
+            logger.warning("Error merging OTBR info: %s", e)
 
         # 5. Merge live Thread networks reported by commissioned Matter nodes (Cluster 0x0035)
-        if matter_nodes:
-            for node in matter_nodes:
-                if node.get("transport") != "thread":
+        try:
+            if matter_nodes:
+                for node in matter_nodes:
+                    if node.get("transport") != "thread":
+                        continue
+                    n_xpan = node.get("extended_pan_id")
+                    n_name = node.get("thread_network_name")
+                    n_ch = node.get("thread_channel")
+                    n_pan = node.get("pan_id")
+                    n_prefix = node.get("mesh_local_prefix")
+
+                    if n_xpan:
+                        if n_xpan not in networks_map:
+                            networks_map[n_xpan] = {
+                                "id": n_xpan,
+                                "dataset_id": "",
+                                "name": n_name or f"Thread Mesh ({n_xpan[:8]})",
+                                "extended_pan_id": n_xpan,
+                                "pan_id": n_pan or "",
+                                "channel": n_ch,
+                                "mesh_local_prefix": n_prefix or "",
+                                "preferred": False,
+                                "source": "Matter Node Cluster 0x0035",
+                                "routers": [],
+                                "router_details": [],
+                                "matter_node_count": 1,
+                            }
+                        else:
+                            networks_map[n_xpan]["matter_node_count"] = networks_map[n_xpan].get("matter_node_count", 0) + 1
+                            if not networks_map[n_xpan].get("channel") and n_ch:
+                                networks_map[n_xpan]["channel"] = n_ch
+                            if not networks_map[n_xpan].get("pan_id") and n_pan:
+                                networks_map[n_xpan]["pan_id"] = n_pan
+                            if not networks_map[n_xpan].get("mesh_local_prefix") and n_prefix:
+                                networks_map[n_xpan]["mesh_local_prefix"] = n_prefix
+        except Exception as e:
+            logger.warning("Error merging Matter node networks: %s", e)
+
+        # 6. Check Home Assistant Device Registry and Entity States for registered Thread Border Router hardware
+        # (Google Nest Wifi Pro, Nest Hub, Apple TV 4K, HomePod, SkyConnect/ZBT-1)
+        try:
+            if device_registry is None:
+                device_registry = await self.get_device_registry()
+            for d in device_registry or []:
+                if not isinstance(d, dict):
                     continue
-                n_xpan = node.get("extended_pan_id")
-                n_name = node.get("thread_network_name")
-                n_ch = node.get("thread_channel")
-                n_pan = node.get("pan_id")
-                n_prefix = node.get("mesh_local_prefix")
-
-                if n_xpan:
-                    if n_xpan not in networks_map:
-                        networks_map[n_xpan] = {
-                            "id": n_xpan,
+                m_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
+                if "wifi pro" in m_str or ("nest" in m_str and ("router" in m_str or "point" in m_str or "hub" in m_str)):
+                    name = d.get("name_by_user") or d.get("name") or "Google Nest Wifi Pro"
+                    has_nest = any(
+                        "nest" in n["name"].lower() or "google" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", []))
+                        for n in networks_map.values()
+                    )
+                    if not has_nest:
+                        networks_map["GOOGLE_NEST_MESH"] = {
+                            "id": "GOOGLE_NEST_MESH",
                             "dataset_id": "",
-                            "name": n_name or f"Thread Mesh ({n_xpan[:8]})",
-                            "extended_pan_id": n_xpan,
-                            "pan_id": n_pan or "",
-                            "channel": n_ch,
-                            "mesh_local_prefix": n_prefix or "",
+                            "name": f"Google Nest Thread Mesh ({name})",
+                            "extended_pan_id": "NEST_TBR_DETECTED",
+                            "pan_id": "",
+                            "channel": None,
+                            "mesh_local_prefix": "",
                             "preferred": False,
-                            "source": "Matter Node Cluster 0x0035",
-                            "routers": [],
-                            "router_details": [],
-                            "matter_node_count": 1,
+                            "source": "HA Device Registry (Nest Border Router)",
+                            "routers": [name],
+                            "router_details": [{"name": name, "server": d.get("id"), "addresses": []}],
+                            "matter_node_count": 0,
                         }
-                    else:
-                        networks_map[n_xpan]["matter_node_count"] = networks_map[n_xpan].get("matter_node_count", 0) + 1
-                        if not networks_map[n_xpan].get("channel") and n_ch:
-                            networks_map[n_xpan]["channel"] = n_ch
-                        if not networks_map[n_xpan].get("pan_id") and n_pan:
-                            networks_map[n_xpan]["pan_id"] = n_pan
-                        if not networks_map[n_xpan].get("mesh_local_prefix") and n_prefix:
-                            networks_map[n_xpan]["mesh_local_prefix"] = n_prefix
+                elif "apple tv" in m_str or "homepod" in m_str:
+                    name = d.get("name_by_user") or d.get("name") or "Apple TV / HomePod"
+                    has_apple = any(
+                        "apple" in n["name"].lower() or "homepod" in n["name"].lower() or "myhome" in n["name"].lower() or any("apple" in r.lower() or "homepod" in r.lower() for r in n.get("routers", []))
+                        for n in networks_map.values()
+                    )
+                    if not has_apple:
+                        networks_map["APPLE_THREAD_MESH"] = {
+                            "id": "APPLE_THREAD_MESH",
+                            "dataset_id": "",
+                            "name": f"Apple Thread Mesh ({name})",
+                            "extended_pan_id": "APPLE_TBR_DETECTED",
+                            "pan_id": "",
+                            "channel": None,
+                            "mesh_local_prefix": "",
+                            "preferred": False,
+                            "source": "HA Device Registry (Apple Border Router)",
+                            "routers": [name],
+                            "router_details": [{"name": name, "server": d.get("id"), "addresses": []}],
+                            "matter_node_count": 0,
+                        }
+        except Exception as e:
+            logger.debug("Error checking device registry for Thread hardware: %s", e)
 
-        # Sort so Preferred network is first, followed by networks with active border routers / nodes
+        try:
+            states = await self._get_all_ha_states()
+            for s in states:
+                eid = s.get("entity_id", "").lower()
+                attrs = s.get("attributes", {})
+                fname = attrs.get("friendly_name", "")
+                combined = f"{eid} {fname} {attrs}".lower()
+
+                if "wifi pro" in combined or ("nest" in combined and ("router" in combined or "point" in combined or "hub" in combined)):
+                    r_name = fname or "Google Nest Wifi Pro"
+                    has_nest = any(
+                        "nest" in n["name"].lower() or "google" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", []))
+                        for n in networks_map.values()
+                    )
+                    if not has_nest:
+                        networks_map["GOOGLE_NEST_MESH"] = {
+                            "id": "GOOGLE_NEST_MESH",
+                            "dataset_id": "",
+                            "name": f"Google Nest Thread Mesh ({r_name})",
+                            "extended_pan_id": "NEST_TBR_DETECTED",
+                            "pan_id": "",
+                            "channel": None,
+                            "mesh_local_prefix": "",
+                            "preferred": False,
+                            "source": "HA Entity States (Nest Border Router)",
+                            "routers": [r_name],
+                            "router_details": [{"name": r_name, "server": eid, "addresses": []}],
+                            "matter_node_count": 0,
+                        }
+                elif "apple tv" in combined or "homepod" in combined:
+                    r_name = fname or "Apple TV / HomePod"
+                    has_apple = any(
+                        "apple" in n["name"].lower() or "homepod" in n["name"].lower() or "myhome" in n["name"].lower() or any("apple" in r.lower() or "homepod" in r.lower() for r in n.get("routers", []))
+                        for n in networks_map.values()
+                    )
+                    if not has_apple:
+                        networks_map["APPLE_THREAD_MESH"] = {
+                            "id": "APPLE_THREAD_MESH",
+                            "dataset_id": "",
+                            "name": f"Apple Thread Mesh ({r_name})",
+                            "extended_pan_id": "APPLE_TBR_DETECTED",
+                            "pan_id": "",
+                            "channel": None,
+                            "mesh_local_prefix": "",
+                            "preferred": False,
+                            "source": "HA Entity States (Apple Border Router)",
+                            "routers": [r_name],
+                            "router_details": [{"name": r_name, "server": eid, "addresses": []}],
+                            "matter_node_count": 0,
+                        }
+        except Exception as e:
+            logger.debug("Error checking HA states for Thread hardware: %s", e)
+
         net_list = list(networks_map.values())
         net_list.sort(key=lambda x: (not x.get("preferred", False), -len(x.get("routers", [])), -x.get("matter_node_count", 0)))
         return net_list

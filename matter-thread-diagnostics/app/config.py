@@ -14,7 +14,7 @@ logger = logging.getLogger("matter_thread_ai.config")
 OPTIONS_FILE = os.environ.get("HA_OPTIONS_PATH", "/data/options.json")
 PERSISTENT_SETTINGS_FILES = [
     "/data/matter_ai_settings.json",
-    os.path.join(os.path.dirname(__file__), "matter_ai_settings.json")
+    os.path.join(os.path.dirname(__file__), "matter_ai_settings.json"),
 ]
 
 
@@ -51,7 +51,13 @@ class AppConfig(BaseModel):
                 try:
                     with open(pfile, "r", encoding="utf-8") as f:
                         ui_data = json.load(f)
-                        data.update({k: v for k, v in ui_data.items() if v is not None and v != ""})
+                        for k, v in ui_data.items():
+                            if v is not None:
+                                # Allow empty string for target_thread_network (Auto-Detect / All)
+                                # For API keys, only overlay if non-empty
+                                if k in ("gemini_api_key", "openai_api_key", "anthropic_api_key") and v == "":
+                                    continue
+                                data[k] = v
                         logger.info("Loaded custom settings from: %s", pfile)
                     break
                 except Exception as e:
@@ -60,8 +66,6 @@ class AppConfig(BaseModel):
         # 3. Allow override from environment variables
         ai_provider = os.environ.get("AI_PROVIDER", data.get("ai_provider", "gemini"))
         ai_model = os.environ.get("AI_MODEL", data.get("ai_model", "gemini-2.5-flash"))
-        if ai_model in ("gemini-3.8-flash", "gemini-3-flash"):
-            ai_model = "gemini-2.5-flash"
         gemini_api_key = os.environ.get("GEMINI_API_KEY", data.get("gemini_api_key", ""))
         openai_api_key = os.environ.get("OPENAI_API_KEY", data.get("openai_api_key", ""))
         anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", data.get("anthropic_api_key", ""))
@@ -70,25 +74,35 @@ class AppConfig(BaseModel):
         log_level = os.environ.get("LOG_LEVEL", data.get("log_level", "info"))
         target_thread_network = os.environ.get("TARGET_THREAD_NETWORK", data.get("target_thread_network", ""))
 
-        supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+        supervisor_token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
+        if not supervisor_token:
+            for token_file in ("/run/s6/container_environment/SUPERVISOR_TOKEN", "/run/s6/container_environment/HASSIO_TOKEN"):
+                if os.path.exists(token_file):
+                    try:
+                        with open(token_file, "r", encoding="utf-8") as tf:
+                            supervisor_token = tf.read().strip()
+                            if supervisor_token:
+                                break
+                    except Exception:
+                        pass
+
         supervisor_url = os.environ.get("SUPERVISOR_URL", "http://supervisor")
         ha_url = os.environ.get("HA_URL", f"{supervisor_url}/core")
 
-        # Clean keys
         gemini_api_key = (gemini_api_key or "").strip().strip('"').strip("'")
         openai_api_key = (openai_api_key or "").strip().strip('"').strip("'")
         anthropic_api_key = (anthropic_api_key or "").strip().strip('"').strip("'")
 
         return cls(
-            ai_provider=ai_provider,
-            ai_model=ai_model,
+            ai_provider=(ai_provider or "gemini").strip(),
+            ai_model=(ai_model or "gemini-2.5-flash").strip(),
             gemini_api_key=gemini_api_key,
             openai_api_key=openai_api_key,
             anthropic_api_key=anthropic_api_key,
             matter_server_url=matter_server_url,
             otbr_url=otbr_url,
             log_level=log_level,
-            target_thread_network=target_thread_network,
+            target_thread_network=target_thread_network or "",
             supervisor_token=supervisor_token,
             supervisor_url=supervisor_url,
             ha_url=ha_url,
@@ -100,9 +114,11 @@ class AppConfig(BaseModel):
             if hasattr(self, k) and v is not None:
                 if isinstance(v, str):
                     v = v.strip().strip('"').strip("'")
+                # Don't wipe out an existing API key if an empty string was passed
+                if k in ("gemini_api_key", "openai_api_key", "anthropic_api_key") and v == "":
+                    continue
                 setattr(self, k, v)
 
-        # Write to first writable persistent location
         data_to_save = self.model_dump(exclude={"supervisor_token", "supervisor_url", "ha_url"})
         saved = False
         for pfile in PERSISTENT_SETTINGS_FILES:
@@ -110,7 +126,7 @@ class AppConfig(BaseModel):
                 os.makedirs(os.path.dirname(pfile), exist_ok=True)
                 with open(pfile, "w", encoding="utf-8") as f:
                     json.dump(data_to_save, f, indent=2)
-                logger.info("Persisted user settings to %s", pfile)
+                logger.info("Persisted user settings to %s (provider=%s, model=%s)", pfile, self.ai_provider, self.ai_model)
                 saved = True
                 break
             except Exception as e:

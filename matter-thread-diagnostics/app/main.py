@@ -1,6 +1,6 @@
 """
 FastAPI application entrypoint for Matter & Thread AI Diagnostics.
-Runs inside Home Assistant OS (with host_network: true) as an Ingress Add-on.
+Runs inside Home Assistant OS as an Ingress Add-on.
 Performs real mDNS (_meshcop._udp, _matter._tcp) discovery, HA Thread dataset TLV decoding,
 Matter Cluster 0x0035 (NeighborTable, RouteTable, RSSI/LQI, RLOC16) inspection,
 OTBR REST API querying, and active ICMPv6 reachability probing.
@@ -25,7 +25,18 @@ from ai_engine import AIDiagnosticEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("matter_thread_ai.main")
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.1")
+
+
+@app.middleware("http")
+async def disable_ingress_cache(request: Request, call_next):
+    """Prevent Home Assistant Ingress or browser from caching stale JS/HTML/API responses."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 
 ha_client = HAClient(
     supervisor_token=config.supervisor_token,
@@ -38,7 +49,6 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Cache of the most recent full scan so AI analysis & topology views can reuse fresh scan data immediately
 _last_telemetry_cache: Optional[Dict[str, Any]] = None
 
 
@@ -66,11 +76,21 @@ class RunDiagnosisRequest(BaseModel):
     user_notes: Optional[str] = None
     custom_data: Optional[Dict[str, Any]] = None
     use_cached_scan: bool = True
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
 
 
 class ManualLogAnalysisRequest(BaseModel):
     log_content: str
     user_notes: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+
+
+def _safe_unwrap(val: Any, default: Any):
+    if isinstance(val, Exception) or val is None:
+        return default
+    return val
 
 
 @app.get("/api/status")
@@ -78,13 +98,13 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
         "has_gemini_key": bool(config.gemini_api_key and len(config.gemini_api_key) > 5),
         "has_openai_key": bool(config.openai_api_key and len(config.openai_api_key) > 5),
-        "has_anthropic_key": bool(config.anthropic_key if hasattr(config, "anthropic_key") else (config.anthropic_api_key and len(config.anthropic_api_key) > 5)),
+        "has_anthropic_key": bool(config.anthropic_api_key and len(config.anthropic_api_key) > 5),
         "gemini_key_preview": (config.gemini_api_key[:6] + "...") if config.gemini_api_key else "",
         "openai_key_preview": (config.openai_api_key[:7] + "...") if config.openai_api_key else "",
         "anthropic_key_preview": (config.anthropic_api_key[:8] + "...") if config.anthropic_api_key else "",
@@ -96,7 +116,7 @@ async def get_status():
 
 @app.post("/api/config")
 async def update_config(req: ConfigUpdateRequest):
-    """Update API keys or configuration options."""
+    """Update API keys, AI provider/model, or configuration options."""
     updates = req.model_dump(exclude_unset=True)
     config.save_options(updates)
     matter_client.ws_url = config.matter_server_url
@@ -115,21 +135,31 @@ async def update_config(req: ConfigUpdateRequest):
 
 @app.get("/api/thread/networks")
 async def get_thread_networks():
-    """Discover and return all real Thread networks available across HA, mDNS, OTBR, and Matter nodes."""
-    matter_info, datasets_res, routers_res, mdns_info, otbr_info = await asyncio.gather(
+    """Discover and return all Thread networks available across HA, mDNS, OTBR, Matter nodes, and Device Registry."""
+    raw_results = await asyncio.gather(
         matter_client.get_nodes_and_server_info(timeout=3.5),
         ha_client.get_thread_datasets(),
         ha_client.get_thread_routers(listen_timeout=1.5),
         NetworkChecker.inspect_mdns_discovery(scan_duration=1.5),
         NetworkChecker.inspect_otbr_rest_api(otbr_url=config.otbr_url),
+        ha_client.get_device_registry(),
+        return_exceptions=True,
     )
+    matter_info = _safe_unwrap(raw_results[0], {"nodes": []})
+    datasets_res = _safe_unwrap(raw_results[1], {})
+    routers_res = _safe_unwrap(raw_results[2], {})
+    mdns_info = _safe_unwrap(raw_results[3], {})
+    otbr_info = _safe_unwrap(raw_results[4], {})
+    device_registry = _safe_unwrap(raw_results[5], [])
+
     networks = await ha_client.get_all_available_thread_networks(
         otbr_url=config.otbr_url,
-        matter_nodes=matter_info.get("nodes", []),
-        mdns_info=mdns_info,
-        otbr_info=otbr_info,
-        datasets_res=datasets_res,
-        routers_res=routers_res,
+        matter_nodes=matter_info.get("nodes", []) if isinstance(matter_info, dict) else [],
+        mdns_info=mdns_info if isinstance(mdns_info, dict) else {},
+        otbr_info=otbr_info if isinstance(otbr_info, dict) else {},
+        datasets_res=datasets_res if isinstance(datasets_res, dict) else {},
+        routers_res=routers_res if isinstance(routers_res, dict) else {},
+        device_registry=device_registry if isinstance(device_registry, list) else [],
     )
     return {
         "networks": networks,
@@ -159,7 +189,9 @@ async def ping_matter_node(req: PingNodeRequest):
         if req.ipv6_address
         else asyncio.sleep(0, result=None)
     )
-    matter_res, icmp_res = await asyncio.gather(matter_ping_task, icmp_ping_task)
+    raw = await asyncio.gather(matter_ping_task, icmp_ping_task, return_exceptions=True)
+    matter_res = _safe_unwrap(raw[0], {"node_id": req.node_id, "success": False, "error": "Ping error"})
+    icmp_res = _safe_unwrap(raw[1], None)
     return {
         "node_id": req.node_id,
         "matter_ping": matter_res,
@@ -189,35 +221,38 @@ async def collect_diagnostics():
 async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]:
     global _last_telemetry_cache
 
-    # 1. Execute all live discovery & telemetry probes concurrently
-    (
-        matter_info,
-        ha_matter_entities,
-        thread_datasets_res,
-        thread_routers_res,
-        mdns_info,
-        otbr_info,
-        ipv6_inspection,
-        matter_logs,
-        otbr_logs,
-    ) = await asyncio.gather(
+    # 1. Execute all live discovery & telemetry probes concurrently with full fault tolerance
+    raw_probe = await asyncio.gather(
         matter_client.get_nodes_and_server_info(timeout=4.5),
         ha_client.get_matter_nodes_via_ha(),
         ha_client.get_thread_datasets(),
         ha_client.get_thread_routers(listen_timeout=1.8),
-        NetworkChecker.inspect_mdns_discovery(scan_duration=2.0),
+        ha_client.get_device_registry(),
+        NetworkChecker.inspect_mdns_discovery(scan_duration=1.8),
         NetworkChecker.inspect_otbr_rest_api(otbr_url=config.otbr_url),
         NetworkChecker.inspect_ipv6_routes(),
         ha_client.get_addon_logs("core_matter_server", lines=100),
         ha_client.get_addon_logs("core_openthread_border_router", lines=100),
+        return_exceptions=True,
     )
 
-    all_matter_nodes: List[Dict[str, Any]] = matter_info.get("nodes", [])
+    matter_info = _safe_unwrap(raw_probe[0], {"connected": False, "nodes": [], "error": "Probe error"})
+    ha_matter_entities = _safe_unwrap(raw_probe[1], [])
+    thread_datasets_res = _safe_unwrap(raw_probe[2], {})
+    thread_routers_res = _safe_unwrap(raw_probe[3], {})
+    device_registry = _safe_unwrap(raw_probe[4], [])
+    mdns_info = _safe_unwrap(raw_probe[5], {"mdns_capable": False, "meshcop_border_routers": [], "matter_operational_nodes": []})
+    otbr_info = _safe_unwrap(raw_probe[6], {"reachable": False})
+    ipv6_inspection = _safe_unwrap(raw_probe[7], {"has_thread_ula_route": False, "detected_ula_prefixes": [], "sample_routes": []})
+    matter_logs = _safe_unwrap(raw_probe[8], "")
+    otbr_logs = _safe_unwrap(raw_probe[9], "")
 
-    # Enrich Matter nodes with IPv6 addresses discovered via mDNS `_matter._tcp.local.` if Cluster 0x0033 didn't report them
+    all_matter_nodes: List[Dict[str, Any]] = matter_info.get("nodes", []) if isinstance(matter_info, dict) else []
+
+    # Enrich Matter nodes with IPv6 addresses discovered via mDNS `_matter._tcp.local.`
     mdns_op_by_node_id = {
         m["node_id"]: m
-        for m in mdns_info.get("matter_operational_nodes", [])
+        for m in (mdns_info.get("matter_operational_nodes", []) if isinstance(mdns_info, dict) else [])
         if isinstance(m, dict) and m.get("node_id") is not None
     }
     for n in all_matter_nodes:
@@ -229,7 +264,7 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
                 if ip not in existing_v6:
                     existing_v6.append(ip)
             n["ipv6_addresses"] = existing_v6
-            n["mdns_Hostname"] = mdns_op_by_node_id[nid].get("server")
+            n["mdns_hostname"] = mdns_op_by_node_id[nid].get("server")
 
     # 2. Build normalized list of available Thread networks
     available_networks = await ha_client.get_all_available_thread_networks(
@@ -239,6 +274,7 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
         otbr_info=otbr_info,
         datasets_res=thread_datasets_res,
         routers_res=thread_routers_res,
+        device_registry=device_registry,
     )
 
     # 3. Extract raw datasets list & HA routers list
@@ -272,17 +308,18 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
                 target_net = net
                 break
 
-    # 5. Evaluate Border Router synchronization & Split Networks across all real sources
+    # 5. Evaluate Border Router synchronization & Split Networks across all sources
     split_net_analysis = ThreadAnalyzer.detect_split_networks(
         routers_list,
         datasets_list,
+        device_registry=device_registry,
         target_network_id=target_id,
         mdns_routers=mdns_info.get("meshcop_border_routers", []),
         otbr_info=otbr_info,
     )
     all_routers = split_net_analysis.get("all_discovered_routers", [])
 
-    # 6. Determine active Thread channel (from selected network -> OTBR -> datasets -> Matter nodes -> routers)
+    # 6. Determine active Thread channel
     active_channel = None
     if target_net and target_net.get("channel"):
         active_channel = target_net["channel"]
@@ -307,7 +344,10 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
     # 7. Run active ICMPv6/ICMPv4 reachability pings to Border Routers & Matter nodes
     reachability_probes = {"probed_count": 0, "reachable_count": 0, "results": []}
     if run_active_pings and (all_routers or all_matter_nodes):
-        reachability_probes = await NetworkChecker.probe_network_reachability(all_routers, all_matter_nodes)
+        try:
+            reachability_probes = await NetworkChecker.probe_network_reachability(all_routers, all_matter_nodes)
+        except Exception as e:
+            logger.debug("Reachability probe error: %s", e)
 
     # 8. Deterministic RF & Node Quality analysis
     rf_analysis = ThreadAnalyzer.analyze_rf_coexistence(active_channel)
@@ -334,7 +374,6 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
     if node_quality.get("wrong_network_count", 0) > 0:
         base_score = max(0, base_score - 15)
 
-    # Extract recent error lines from Matter Server and OTBR logs for quick inspection
     matter_error_lines = [
         line for line in (matter_logs or "").splitlines()
         if any(w in line.lower() for w in ("error", "warning", "timeout", "failed", "unreachable", "chip_error"))
@@ -386,6 +425,15 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
 @app.post("/api/diagnostics/analyze")
 async def analyze_diagnostics(req: RunDiagnosisRequest):
     """Run AI diagnosis on the scanned telemetry (or collect fresh telemetry if none cached)."""
+    # If the user passed a specific provider or model in the request, save & apply it immediately
+    updates = {}
+    if req.ai_provider:
+        updates["ai_provider"] = req.ai_provider
+    if req.ai_model:
+        updates["ai_model"] = req.ai_model
+    if updates:
+        config.save_options(updates)
+
     if req.custom_data:
         telemetry_data = req.custom_data
     elif req.use_cached_scan and _last_telemetry_cache is not None:
@@ -412,6 +460,14 @@ async def analyze_diagnostics(req: RunDiagnosisRequest):
 @app.post("/api/manual/analyze")
 async def analyze_manual_logs(req: ManualLogAnalysisRequest):
     """Analyze raw logs or user-pasted Thread/Matter diagnostics using AI."""
+    updates = {}
+    if req.ai_provider:
+        updates["ai_provider"] = req.ai_provider
+    if req.ai_model:
+        updates["ai_model"] = req.ai_model
+    if updates:
+        config.save_options(updates)
+
     engine = AIDiagnosticEngine(
         provider=config.ai_provider,
         model=config.ai_model,

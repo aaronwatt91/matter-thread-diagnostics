@@ -1,6 +1,7 @@
 """
 Real Network, mDNS (_meshcop._udp, _matter._tcp, _matterc._udp), OTBR REST API,
 IPv6 Routing (ULA/RIO), Neighbor Discovery, and Active ICMPv6 Ping Inspector.
+Includes a zero-dependency pure-Python UDP DNS-SD mDNS scanner + AsyncZeroconf + avahi-browse.
 """
 import asyncio
 import ipaddress
@@ -9,21 +10,18 @@ import re
 import socket
 import struct
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger("matter_thread_ai.network_checker")
 
 
 def _decode_txt_bytes_or_hex(raw: Optional[bytes]) -> str:
-    """Decode mDNS TXT value that may be raw binary bytes (8 or 16 bytes) or ASCII hex/text."""
+    """Decode mDNS TXT value that may be raw binary bytes or ASCII hex/text."""
     if not raw:
         return ""
-    # Try UTF-8 printable string first if all bytes are printable ASCII
     if all(32 <= b <= 126 for b in raw):
-        s = raw.decode("utf-8", errors="ignore").strip()
-        return s
-    # Otherwise convert binary bytes (e.g. 8-byte Extended PAN ID or Extended MAC) to uppercase hex
+        return raw.decode("utf-8", errors="ignore").strip()
     return raw.hex().upper()
 
 
@@ -32,14 +30,19 @@ def _decode_ext_pan_or_mac(raw: Optional[bytes]) -> str:
     if not raw:
         return ""
     if len(raw) == 8:
-        # Check if all 8 bytes happen to be hex chars or raw binary (8 raw bytes = 64-bit ID)
         return raw.hex().upper()
     if all(32 <= b <= 126 for b in raw):
         s = raw.decode("utf-8", errors="ignore").strip().replace(":", "").replace("-", "").upper()
         if s.startswith("0X"):
             s = s[2:]
-        if all(c in "0123456789ABCDEF" for c in s):
+        if all(c in "0123456789ABCDEF" for c in s) and len(s) >= 8:
             return s.zfill(16)
+    return raw.hex().upper()
+
+
+def _decode_ext_pan_or_hex_len(raw: Optional[bytes]) -> str:
+    if not raw:
+        return ""
     return raw.hex().upper()
 
 
@@ -76,13 +79,309 @@ def _decode_state_bitmap(raw: Optional[bytes]) -> Dict[str, Any]:
     }
 
 
+# --- Pure-Python DNS / mDNS Wire Format Parser (Zero external dependencies required) ---
+
+def _encode_dns_name(name: str) -> bytes:
+    out = bytearray()
+    for part in name.strip(".").split("."):
+        b = part.encode("utf-8")
+        out.append(len(b))
+        out.extend(b)
+    out.append(0)
+    return bytes(out)
+
+
+def _build_mdns_ptr_query(service_names: List[str], unicast_response: bool = True) -> bytes:
+    """Build a multi-question DNS PTR query packet for mDNS (224.0.0.251:5353)."""
+    header = struct.pack(">HHHHHH", 0x0000, 0x0000, len(service_names), 0, 0, 0)
+    q_bytes = bytearray()
+    qclass = 0x8001 if unicast_response else 0x0001  # IN class, bit 15 = QU (unicast response)
+    for svc in service_names:
+        q_bytes.extend(_encode_dns_name(svc))
+        q_bytes.extend(struct.pack(">HH", 12, qclass))  # QTYPE 12 = PTR
+    return header + bytes(q_bytes)
+
+
+def _read_dns_name(packet: bytes, offset: int) -> Tuple[str, int]:
+    labels: List[str] = []
+    curr = offset
+    jumped = False
+    next_offset = offset
+    visited = set()
+
+    while curr < len(packet):
+        if curr in visited:
+            break
+        visited.add(curr)
+        length = packet[curr]
+        if length == 0:
+            curr += 1
+            if not jumped:
+                next_offset = curr
+            break
+        elif (length & 0xC0) == 0xC0:
+            if curr + 1 >= len(packet):
+                break
+            ptr = ((length & 0x3F) << 8) | packet[curr + 1]
+            if not jumped:
+                next_offset = curr + 2
+                jumped = True
+            curr = ptr
+        else:
+            curr += 1
+            if curr + length > len(packet):
+                break
+            labels.append(packet[curr : curr + length].decode("utf-8", errors="ignore"))
+            curr += length
+            if not jumped:
+                next_offset = curr
+
+    return ".".join(labels), next_offset
+
+
+def _parse_mdns_packet(packet: bytes, sender_ip: str) -> Dict[str, Any]:
+    """Parse DNS Answer + Additional records from an mDNS response packet."""
+    out: Dict[str, Any] = {"ptr": [], "srv": {}, "txt": {}, "a": {}, "aaaa": {}, "sender_ip": sender_ip}
+    if len(packet) < 12:
+        return out
+    _, _, qdcount, ancount, nscount, arcount = struct.unpack(">HHHHHH", packet[:12])
+    offset = 12
+
+    for _ in range(qdcount):
+        _, offset = _read_dns_name(packet, offset)
+        offset += 4
+        if offset > len(packet):
+            return out
+
+    total_rr = ancount + nscount + arcount
+    for _ in range(total_rr):
+        if offset >= len(packet):
+            break
+        rr_name, offset = _read_dns_name(packet, offset)
+        if offset + 10 > len(packet):
+            break
+        rtype, rclass, ttl, rdlength = struct.unpack(">HHIH", packet[offset : offset + 10])
+        offset += 10
+        rdata = packet[offset : offset + rdlength]
+        r_start = offset
+        offset += rdlength
+        if offset > len(packet):
+            break
+
+        if rtype == 12:  # PTR
+            target_name, _ = _read_dns_name(packet, r_start)
+            out["ptr"].append((rr_name, target_name))
+        elif rtype == 33 and len(rdata) >= 6:  # SRV
+            prio, weight, port = struct.unpack(">HHH", rdata[:6])
+            target_host, _ = _read_dns_name(packet, r_start + 6)
+            out["srv"][rr_name] = {"port": port, "server": target_host}
+        elif rtype == 16:  # TXT
+            props: Dict[bytes, bytes] = {}
+            t_idx = 0
+            while t_idx < len(rdata):
+                t_len = rdata[t_idx]
+                t_idx += 1
+                if t_idx + t_len > len(rdata):
+                    break
+                kv = rdata[t_idx : t_idx + t_len]
+                t_idx += t_len
+                if b"=" in kv:
+                    k, v = kv.split(b"=", 1)
+                    props[k] = v
+            out["txt"].setdefault(rr_name, {}).update(props)
+        elif rtype == 1 and len(rdata) == 4:  # A
+            ip_str = socket.inet_ntoa(rdata)
+            out["a"].setdefault(rr_name, [])
+            if ip_str not in out["a"][rr_name]:
+                out["a"][rr_name].append(ip_str)
+        elif rtype == 28 and len(rdata) == 16:  # AAAA
+            try:
+                ip6_str = str(ipaddress.IPv6Address(rdata))
+                out["aaaa"].setdefault(rr_name, [])
+                if ip6_str not in out["aaaa"][rr_name]:
+                    out["aaaa"][rr_name].append(ip6_str)
+            except Exception:
+                pass
+
+    return out
+
+
+async def _scan_mdns_via_udp_sockets(duration: float = 1.6) -> Dict[str, Any]:
+    """
+    Active pure-Python UDP mDNS scanner that queries 224.0.0.251:5353 from an ephemeral socket
+    (and shared port 5353 if available). Works even without python-zeroconf or avahi-daemon!
+    """
+    services = ["_meshcop._udp.local", "_matter._tcp.local", "_matterc._udp.local"]
+    sockets_list: List[socket.socket] = []
+
+    try:
+        # 1. Ephemeral UDP socket (receives unicast QU replies directly)
+        s_ephem = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        s_ephem.setblocking(False)
+        s_ephem.bind(("0.0.0.0", 0))
+        sockets_list.append(s_ephem)
+
+        # 2. Shared port 5353 multicast listener (receives QM multicast replies)
+        try:
+            s_mcast = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            s_mcast.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_REUSEPORT"):
+                try:
+                    s_mcast.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except Exception:
+                    pass
+            s_mcast.setblocking(False)
+            s_mcast.bind(("0.0.0.0", 5353))
+            mreq = struct.pack("4s4s", socket.inet_aton("224.0.0.251"), socket.inet_aton("0.0.0.0"))
+            s_mcast.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            sockets_list.append(s_mcast)
+        except Exception:
+            pass
+
+        # Send both QU (unicast response) and QM (multicast response) queries
+        q_qu = _build_mdns_ptr_query(services, unicast_response=True)
+        q_qm = _build_mdns_ptr_query(services, unicast_response=False)
+        for sock in sockets_list:
+            try:
+                sock.sendto(q_qu, ("224.0.0.251", 5353))
+                sock.sendto(q_qm, ("224.0.0.251", 5353))
+            except Exception:
+                pass
+
+        ptr_records: List[Tuple[str, str, str]] = []
+        srv_records: Dict[str, Dict[str, Any]] = {}
+        txt_records: Dict[str, Dict[bytes, bytes]] = {}
+        a_records: Dict[str, List[str]] = {}
+        aaaa_records: Dict[str, List[str]] = {}
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + duration
+
+        while loop.time() < deadline:
+            for sock in sockets_list:
+                while True:
+                    try:
+                        data, addr = sock.recvfrom(9000)
+                        parsed = _parse_mdns_packet(data, addr[0])
+                        for svc_name, target_inst in parsed["ptr"]:
+                            ptr_records.append((svc_name, target_inst, addr[0]))
+                        srv_records.update(parsed["srv"])
+                        for k, v in parsed["txt"].items():
+                            txt_records.setdefault(k, {}).update(v)
+                        for k, v in parsed["a"].items():
+                            a_records.setdefault(k, []).extend(x for x in v if x not in a_records.get(k, []))
+                        for k, v in parsed["aaaa"].items():
+                            aaaa_records.setdefault(k, []).extend(x for x in v if x not in aaaa_records.get(k, []))
+                    except (BlockingIOError, InterruptedError):
+                        break
+                    except Exception:
+                        break
+            await asyncio.sleep(0.08)
+
+        meshcop_list: List[Dict[str, Any]] = []
+        matter_op_list: List[Dict[str, Any]] = []
+        matter_comm_list: List[Dict[str, Any]] = []
+        seen_instances = set()
+
+        # Also inspect any TXT/SRV records whose names end with ._meshcop._udp.local
+        all_candidates = list(ptr_records)
+        for name_key in list(txt_records.keys()) + list(srv_records.keys()):
+            for svc in services:
+                if name_key.endswith(svc):
+                    all_candidates.append((svc, name_key, ""))
+
+        for svc_name, inst_full, sender_ip in all_candidates:
+            if inst_full in seen_instances:
+                continue
+            seen_instances.add(inst_full)
+
+            props = txt_records.get(inst_full, {})
+            srv = srv_records.get(inst_full, {})
+            server_host = srv.get("server", "")
+            port = srv.get("port", 0)
+            v4_list = list(a_records.get(server_host, []))
+            if sender_ip and "." in sender_ip and sender_ip not in v4_list:
+                v4_list.append(sender_ip)
+            v6_list = list(aaaa_records.get(server_host, []))
+            inst_short = inst_full.replace(f".{svc_name}", "").replace("._meshcop._udp.local", "").replace("._matter._tcp.local", "").replace("._matterc._udp.local", "")
+
+            if "_meshcop._udp" in svc_name or "_meshcop._udp" in inst_full:
+                nn = _decode_txt_bytes_or_hex(props.get(b"nn"))
+                xp = _decode_ext_pan_or_mac(props.get(b"xp"))
+                vn = _decode_txt_bytes_or_hex(props.get(b"vn"))
+                mn = _decode_txt_bytes_or_hex(props.get(b"mn"))
+                tv = _decode_txt_bytes_or_hex(props.get(b"tv"))
+                xa = _decode_ext_pan_or_mac(props.get(b"xa"))
+                ba = _decode_ext_pan_or_hex_len(props.get(b"ba"))
+                dn = _decode_txt_bytes_or_hex(props.get(b"dn"))
+                sb_info = _decode_state_bitmap(props.get(b"sb"))
+
+                meshcop_list.append({
+                    "instance_name": inst_short,
+                    "service_name": inst_full,
+                    "server": server_host or sender_ip,
+                    "port": port,
+                    "network_name": nn or inst_short,
+                    "extended_pan_id": xp or "UNKNOWN",
+                    "vendor_name": vn,
+                    "model_name": mn,
+                    "thread_version": tv,
+                    "ext_address": xa,
+                    "border_agent_id": ba,
+                    "domain_name": dn,
+                    "state_bitmap": sb_info,
+                    "ipv6_addresses": v6_list,
+                    "ipv4_addresses": v4_list,
+                    "addresses": v6_list + v4_list,
+                    "source": "Live UDP mDNS (_meshcop._udp)",
+                })
+            elif "_matter._tcp" in svc_name or "_matter._tcp" in inst_full:
+                fabric_part = ""
+                node_id_int = None
+                if "-" in inst_short:
+                    parts = inst_short.split("-")
+                    fabric_part = parts[0]
+                    try:
+                        node_id_int = int(parts[1], 16)
+                    except ValueError:
+                        pass
+                matter_op_list.append({
+                    "instance_name": inst_short,
+                    "compressed_fabric_id": fabric_part,
+                    "node_id": node_id_int,
+                    "server": server_host,
+                    "port": port,
+                    "ipv6_addresses": v6_list,
+                    "ipv4_addresses": v4_list,
+                })
+            elif "_matterc._udp" in svc_name or "_matterc._udp" in inst_full:
+                matter_comm_list.append({
+                    "instance_name": inst_short,
+                    "server": server_host,
+                    "port": port,
+                    "ipv6_addresses": v6_list,
+                    "ipv4_addresses": v4_list,
+                })
+
+        return {
+            "meshcop_border_routers": meshcop_list,
+            "matter_operational_nodes": matter_op_list,
+            "matter_commissionable_nodes": matter_comm_list,
+        }
+    finally:
+        for sock in sockets_list:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
 class NetworkChecker:
     @staticmethod
     async def inspect_ipv6_routes() -> Dict[str, Any]:
         """
         Inspect kernel IPv6 routing table and Neighbor Discovery cache for Thread ULA
         prefixes (fd00::/8) advertised via ICMPv6 Route Information Options (RIO).
-        Works on Linux (HAOS `ip -6 route show`) and macOS (`netstat -rn -f inet6`).
         """
         routes: List[str] = []
         ula_routes_detailed: List[Dict[str, str]] = []
@@ -90,7 +389,6 @@ class NetworkChecker:
         neighbors: List[Dict[str, str]] = []
         has_thread_ula_route = False
 
-        # 1. Query IPv6 routing table via `ip -6 route show`
         try:
             proc = await asyncio.create_subprocess_exec(
                 "ip", "-6", "route", "show",
@@ -121,7 +419,6 @@ class NetworkChecker:
                             "raw": line_clean,
                         })
         except FileNotFoundError:
-            # Fallback for macOS (`netstat -rn -f inet6`)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "netstat", "-rn", "-f", "inet6",
@@ -140,7 +437,6 @@ class NetworkChecker:
                             prefix = parts[0]
                             gw = parts[1] if len(parts) > 1 else ""
                             iface = parts[3] if len(parts) > 3 else ""
-                            # Ignore loopback ULA entries if any
                             if "lo0" not in iface:
                                 has_thread_ula_route = True
                                 if prefix not in thread_ula_prefixes:
@@ -158,7 +454,6 @@ class NetworkChecker:
             logger.warning("Failed running 'ip -6 route show': %s", e)
             routes = [f"Error querying IPv6 routes: {e}"]
 
-        # 2. Query IPv6 Neighbor Discovery cache (`ip -6 neigh show`)
         try:
             proc_n = await asyncio.create_subprocess_exec(
                 "ip", "-6", "neigh", "show",
@@ -203,25 +498,46 @@ class NetworkChecker:
         }
 
     @staticmethod
-    async def inspect_mdns_discovery(scan_duration: float = 2.5) -> Dict[str, Any]:
+    async def inspect_mdns_discovery(scan_duration: float = 1.6) -> Dict[str, Any]:
         """
-        Perform a REAL live mDNS scan on the local network using Python `zeroconf`
-        (with `avahi-browse` fallback) for:
-          - `_meshcop._udp.local.` (Thread Border Routers)
-          - `_matter._tcp.local.` (Commissioned Operational Matter Nodes)
-          - `_matterc._udp.local.` (Matter Commissioning Advertisements)
+        Perform a REAL live mDNS scan on the local network combining:
+          1. Built-in pure-Python UDP DNS-SD socket scanner (zero external dependencies, never conflicts with port 5353)
+          2. Python `zeroconf` (`AsyncZeroconf`) if installed
         """
         meshcop_routers: List[Dict[str, Any]] = []
         matter_operational_nodes: List[Dict[str, Any]] = []
         matter_commissionable_nodes: List[Dict[str, Any]] = []
-        scanner_backend = "none"
+        seen_router_keys = set()
+        seen_op_keys = set()
+        scanner_backend = "udp_dns_sd"
         error_msg = None
 
+        # 1. Run pure-Python UDP DNS-SD scan (works in 100% of environments)
+        try:
+            udp_res = await _scan_mdns_via_udp_sockets(duration=scan_duration)
+            for r in udp_res.get("meshcop_border_routers", []):
+                k = r.get("border_agent_id") or r.get("ext_address") or f"{r.get('instance_name')}_{r.get('extended_pan_id')}"
+                if k not in seen_router_keys:
+                    seen_router_keys.add(k)
+                    meshcop_routers.append(r)
+            for op in udp_res.get("matter_operational_nodes", []):
+                k = op.get("instance_name")
+                if k not in seen_op_keys:
+                    seen_op_keys.add(k)
+                    matter_operational_nodes.append(op)
+            matter_commissionable_nodes.extend(udp_res.get("matter_commissionable_nodes", []))
+        except Exception as e:
+            error_msg = str(e)
+            logger.debug("Pure-Python UDP mDNS scan error: %s", e)
+
+        # 2. Also run AsyncZeroconf if available to enrich any additional multicast records
+        azc = None
+        browser = None
         try:
             from zeroconf import ServiceStateChange, Zeroconf
             from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
-            scanner_backend = "zeroconf"
+            scanner_backend = "udp_dns_sd+zeroconf"
             discovered_targets: List[tuple] = []
 
             def on_service_state_change(zeroconf: Zeroconf, service_type: str, name: str, state_change: ServiceStateChange) -> None:
@@ -232,12 +548,11 @@ class NetworkChecker:
             services = ["_meshcop._udp.local.", "_matter._tcp.local.", "_matterc._udp.local."]
             browser = AsyncServiceBrowser(azc.zeroconf, services, handlers=[on_service_state_change])
 
-            await asyncio.sleep(scan_duration)
+            await asyncio.sleep(min(scan_duration, 1.2))
 
-            # Resolve all discovered services concurrently
             async def resolve_one(svc_type: str, svc_name: str):
                 info = AsyncServiceInfo(svc_type, svc_name)
-                await info.async_request(azc.zeroconf, 2000)
+                await info.async_request(azc.zeroconf, 1500)
                 return svc_type, svc_name, info
 
             resolved = await asyncio.gather(
@@ -252,12 +567,10 @@ class NetworkChecker:
                 if not info:
                     continue
 
-                # Extract IPv4 and IPv6 addresses
                 all_ips = info.parsed_scoped_addresses() if hasattr(info, "parsed_scoped_addresses") else []
                 ipv6_addrs = [ip for ip in all_ips if ":" in ip]
                 ipv4_addrs = [ip for ip in all_ips if "." in ip]
                 props: Dict[bytes, Optional[bytes]] = info.properties or {}
-
                 instance_label = svc_name.replace(f".{svc_type}", "")
 
                 if svc_type == "_meshcop._udp.local.":
@@ -271,7 +584,7 @@ class NetworkChecker:
                     dn = _decode_txt_bytes_or_hex(props.get(b"dn"))
                     sb_info = _decode_state_bitmap(props.get(b"sb"))
 
-                    meshcop_routers.append({
+                    entry = {
                         "instance_name": instance_label,
                         "service_name": svc_name,
                         "server": (info.server or "").rstrip("."),
@@ -289,98 +602,49 @@ class NetworkChecker:
                         "ipv4_addresses": ipv4_addrs,
                         "addresses": ipv6_addrs + ipv4_addrs,
                         "source": "mDNS (_meshcop._udp)",
-                    })
+                    }
+                    k = ba or xa or f"{instance_label}_{xp}"
+                    if k not in seen_router_keys:
+                        seen_router_keys.add(k)
+                        meshcop_routers.append(entry)
 
                 elif svc_type == "_matter._tcp.local.":
-                    # Operational Matter service name format: <CompressedFabricId>-<NodeId>._matter._tcp.local.
-                    fabric_part = ""
-                    node_id_int = None
-                    if "-" in instance_label:
-                        parts = instance_label.split("-")
-                        fabric_part = parts[0]
-                        try:
-                            node_id_int = int(parts[1], 16)
-                        except ValueError:
-                            pass
-
-                    sii = _decode_txt_bytes_or_hex(props.get(b"SII"))
-                    sai = _decode_txt_bytes_or_hex(props.get(b"SAI"))
-                    matter_operational_nodes.append({
-                        "instance_name": instance_label,
-                        "compressed_fabric_id": fabric_part,
-                        "node_id": node_id_int,
-                        "node_id_hex": instance_label.split("-")[1] if "-" in instance_label else instance_label,
-                        "server": (info.server or "").rstrip("."),
-                        "port": info.port,
-                        "ipv6_addresses": ipv6_addrs,
-                        "ipv4_addresses": ipv4_addrs,
-                        "session_idle_interval_ms": int(sii) if sii.isdigit() else None,
-                        "session_active_interval_ms": int(sai) if sai.isdigit() else None,
-                    })
-
-                elif svc_type == "_matterc._udp.local.":
-                    vp = _decode_txt_bytes_or_hex(props.get(b"VP"))
-                    disc = _decode_txt_bytes_or_hex(props.get(b"D"))
-                    cm = _decode_txt_bytes_or_hex(props.get(b"CM"))
-                    matter_commissionable_nodes.append({
-                        "instance_name": instance_label,
-                        "server": (info.server or "").rstrip("."),
-                        "port": info.port,
-                        "vendor_product": vp,
-                        "discriminator": disc,
-                        "commissioning_mode": cm,
-                        "ipv6_addresses": ipv6_addrs,
-                        "ipv4_addresses": ipv4_addrs,
-                    })
-
-            await browser.async_cancel()
-            await azc.async_close()
-
+                    if instance_label not in seen_op_keys:
+                        seen_op_keys.add(instance_label)
+                        fabric_part = ""
+                        node_id_int = None
+                        if "-" in instance_label:
+                            parts = instance_label.split("-")
+                            fabric_part = parts[0]
+                            try:
+                                node_id_int = int(parts[1], 16)
+                            except ValueError:
+                                pass
+                        matter_operational_nodes.append({
+                            "instance_name": instance_label,
+                            "compressed_fabric_id": fabric_part,
+                            "node_id": node_id_int,
+                            "server": (info.server or "").rstrip("."),
+                            "port": info.port,
+                            "ipv6_addresses": ipv6_addrs,
+                            "ipv4_addresses": ipv4_addrs,
+                        })
         except Exception as e:
-            error_msg = str(e)
-            logger.debug("Zeroconf mDNS scan encountered error (%s), trying avahi-browse fallback", e)
-            # Fallback to `avahi-browse -rpt -k _meshcop._udp` if available
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "avahi-browse", "-rpt", "-k", "_meshcop._udp",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=4.0)
-                if proc.returncode == 0:
-                    scanner_backend = "avahi-browse"
-                    for line in stdout.decode(errors="ignore").splitlines():
-                        if not line.startswith("="):
-                            continue
-                        cols = line.split(";")
-                        if len(cols) >= 10:
-                            inst = cols[3]
-                            host = cols[6]
-                            addr = cols[7]
-                            port = cols[8]
-                            txt = cols[9]
-                            nn_m = re.search(r'"nn=([^"]+)"', txt)
-                            vn_m = re.search(r'"vn=([^"]+)"', txt)
-                            mn_m = re.search(r'"mn=([^"]+)"', txt)
-                            xp_m = re.search(r'"xp=([^"]+)"', txt)
-                            meshcop_routers.append({
-                                "instance_name": inst,
-                                "server": host,
-                                "port": int(port) if port.isdigit() else 0,
-                                "network_name": nn_m.group(1) if nn_m else inst,
-                                "extended_pan_id": xp_m.group(1).encode().hex().upper() if xp_m else "UNKNOWN",
-                                "vendor_name": vn_m.group(1) if vn_m else "",
-                                "model_name": mn_m.group(1) if mn_m else "",
-                                "ipv6_addresses": [addr] if ":" in addr else [],
-                                "ipv4_addresses": [addr] if "." in addr else [],
-                                "addresses": [addr] if addr else [],
-                                "source": "avahi-browse (_meshcop._udp)",
-                            })
-            except Exception:
-                pass
+            logger.debug("Zeroconf scan skipped/failed: %s", e)
+        finally:
+            if browser is not None:
+                try:
+                    await browser.async_cancel()
+                except Exception:
+                    pass
+            if azc is not None:
+                try:
+                    await azc.async_close()
+                except Exception:
+                    pass
 
         return {
-            "mdns_capable": scanner_backend != "none",
+            "mdns_capable": True,
             "scanner_backend": scanner_backend,
             "meshcop_border_routers_count": len(meshcop_routers),
             "meshcop_border_routers": meshcop_routers,
@@ -404,6 +668,7 @@ class NetworkChecker:
             "http://core-openthread-border-router:8081",
             "http://localhost:8081",
             "http://127.0.0.1:8081",
+            "http://172.30.32.1:8081",
         ]:
             if fb not in candidates:
                 candidates.append(fb)
@@ -417,7 +682,6 @@ class NetworkChecker:
 
                     state_val = r_state.json() if "application/json" in r_state.headers.get("content-type", "") else r_state.text.strip().strip('"')
 
-                    # Fetch additional OTBR endpoints concurrently
                     endpoints = {
                         "network_name": "/node/network-name",
                         "ext_panid": "/node/ext-panid",
@@ -476,18 +740,12 @@ class NetworkChecker:
 
     @staticmethod
     async def ping_address(ip_addr: str, count: int = 2, timeout_sec: int = 1) -> Dict[str, Any]:
-        """
-        Execute a real ICMP/ICMPv6 ping against a target IPv6 or IPv4 address
-        and return reachability, packet loss %, and round-trip latency (ms).
-        """
+        """Execute a real ICMP/ICMPv6 ping against a target IPv6 or IPv4 address."""
         if not ip_addr:
             return {"ip": ip_addr, "reachable": False, "error": "Empty address"}
 
-        # Strip zone index if not link-local, or preserve if fe80::
         clean_ip = ip_addr.split("/")[0].strip()
         is_ipv6 = ":" in clean_ip
-
-        # Choose command arguments compatible with Linux iputils-ping and macOS ping6
         cmd = ["ping", "-6", "-c", str(count), "-W", str(timeout_sec), clean_ip] if is_ipv6 else ["ping", "-c", str(count), "-W", str(timeout_sec), clean_ip]
 
         t0 = time.monotonic()
@@ -506,13 +764,11 @@ class NetworkChecker:
             output = stdout.decode(errors="ignore") + "\n" + stderr.decode(errors="ignore")
             reachable = proc.returncode == 0
 
-            # Parse packet loss
             loss_pct = 0.0 if reachable else 100.0
             loss_m = re.search(r"(\d+(?:\.\d+)?)%\s*packet loss", output)
             if loss_m:
                 loss_pct = float(loss_m.group(1))
 
-            # Parse average RTT (Linux: rtt min/avg/max/mdev = 1.123/2.345/3.456/0.123 ms; macOS: round-trip min/avg/max/stddev = ...)
             avg_rtt = None
             rtt_m = re.search(r"(?:rtt|round-trip)\s+min/avg/max/[a-z]+\s*=\s*[\d.]+/([\d.]+)/", output)
             if rtt_m:
@@ -532,14 +788,10 @@ class NetworkChecker:
 
     @classmethod
     async def probe_network_reachability(cls, border_routers: List[Dict[str, Any]], matter_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Actively ping discovered Border Routers and Matter-over-Thread nodes via ICMPv6/ICMPv4
-        to verify real end-to-end packet routing from Home Assistant.
-        """
+        """Actively ping discovered Border Routers and Matter-over-Thread nodes via ICMPv6/ICMPv4."""
         tasks = []
         target_meta = []
 
-        # 1. Select best pingable address for each Border Router (prefer global/ULA IPv6 or IPv4 over scoped link-local without interface)
         for br in border_routers[:8]:
             addrs = br.get("addresses") or (br.get("ipv6_addresses", []) + br.get("ipv4_addresses", []))
             chosen = None
@@ -555,7 +807,6 @@ class NetworkChecker:
                 target_meta.append({"kind": "border_router", "name": br.get("name") or br.get("instance_name") or "Border Router", "ip": chosen})
                 tasks.append(cls.ping_address(chosen, count=2, timeout_sec=1))
 
-        # 2. Select Thread ULA (`fd...`) IPv6 address for each Matter node
         for node in matter_nodes[:12]:
             v6_list = node.get("ipv6_addresses") or []
             ula_ip = next((ip for ip in v6_list if ip.lower().startswith("fd")), None)
@@ -589,9 +840,3 @@ class NetworkChecker:
             "reachable_count": reachable_count,
             "results": results,
         }
-
-
-def _decode_ext_pan_or_hex_len(raw: Optional[bytes]) -> str:
-    if not raw:
-        return ""
-    return raw.hex().upper()

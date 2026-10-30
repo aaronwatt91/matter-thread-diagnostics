@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Matter & Thread AI Diagnostics</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2.0.1">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -15,7 +15,7 @@
       <div class="header-left">
         <div class="logo-icon"><i class="fa-solid fa-network-wired"></i></div>
         <div>
-          <h1>Matter & Thread AI Diagnostics <span class="badge badge-info" style="font-size: 11px; vertical-align: middle;">v2.0 Real Scanner</span></h1>
+          <h1>Matter & Thread AI Diagnostics <span class="badge badge-info" style="font-size: 11px; vertical-align: middle;">v2.0.1 Real Scanner</span></h1>
           <p class="subtitle"><span class="badge badge-ha"><i class="fa-solid fa-microchip"></i> Home Assistant OS</span> Live mDNS • Cluster 0x0035 Telemetry • IPv6 Pings • AI Diagnostics</p>
         </div>
       </div>
@@ -31,7 +31,7 @@
     <!-- PROMINENT NETWORK SELECTOR & SCANNER BAR -->
     <section class="card" style="padding: 16px 20px; margin-bottom: 20px; border: 1px solid rgba(3, 169, 244, 0.45); background: linear-gradient(180deg, rgba(3, 169, 244, 0.08), rgba(31, 41, 55, 0.95));">
       <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
-        <div style="flex: 1; min-width: 280px;">
+        <div style="flex: 1; min-width: 260px;">
           <label for="top-thread-network" style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 6px;">
             <i class="fa-solid fa-tower-cell"></i> 1. Select Thread Network to Inspect
           </label>
@@ -116,7 +116,7 @@
         <div class="card-header-flex">
           <div>
             <h3><i class="fa-solid fa-tower-broadcast"></i> Discovered Thread Border Routers (mDNS <code>_meshcop._udp</code>, HA &amp; OTBR)</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Live Border Routers advertising on your LAN with their actual Extended PAN ID, Channel, Mesh-Local Prefix, and ICMPv6 reachability.</p>
+            <p class="section-desc" style="margin-bottom: 0;">Live Border Routers detected on your network with their Extended PAN ID, Channel, Mesh-Local Prefix, and ICMPv6 reachability.</p>
           </div>
           <span id="br-table-count" class="badge badge-info">0 Routers</span>
         </div>
@@ -278,10 +278,30 @@
     <section id="tab-ai" class="tab-content">
       <div class="ai-studio-panel">
         <div class="ai-controls card">
-          <h3><i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine</h3>
-          <p class="section-desc">Sends your real scanned telemetry (selected Thread network, mDNS Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your configured AI model for specific remediation steps.</p>
+          <div class="card-header-flex">
+            <div>
+              <h3><i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine</h3>
+              <p class="section-desc" style="margin-bottom: 0;">Sends your real scanned telemetry (selected Thread network, Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your chosen AI model.</p>
+            </div>
+            <!-- Quick Model Switcher right inside AI Studio -->
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <select id="studio-provider" class="form-control" style="width: auto; padding: 6px 10px; font-size: 12px;">
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic Claude</option>
+              </select>
+              <select id="studio-model" class="form-control" style="width: auto; padding: 6px 10px; font-size: 12px;">
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+              </select>
+            </div>
+          </div>
           
-          <div class="form-group">
+          <div class="form-group" style="margin-top: 14px;">
             <label for="user-symptoms">Observed Symptoms / Questions for AI (Optional):</label>
             <textarea id="user-symptoms" rows="2" placeholder="e.g. Node 4 drops offline overnight, my Apple TV and HA ZBT-1 show different PAN IDs, or pings to fd00:: addresses time out..."></textarea>
           </div>
@@ -332,15 +352,15 @@
     <section id="tab-settings" class="tab-content">
       <div class="card settings-card">
         <h3><i class="fa-solid fa-sliders"></i> AI Provider &amp; Endpoint Configuration</h3>
-        <p class="section-desc">Choose your Cloud AI provider and enter your API key. Keys are stored locally inside Home Assistant's persistent <code>/data</code> volume.</p>
+        <p class="section-desc">Choose your Cloud AI provider and model. Switching provider or model saves automatically.</p>
 
         <form id="settings-form">
           <div class="form-group">
             <label for="cfg-provider">AI Provider:</label>
             <select id="cfg-provider" class="form-control">
               <option value="gemini">Google Gemini (Recommended - Fast &amp; Free Tier Available)</option>
-              <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-              <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet / Haiku)</option>
+              <option value="openai">OpenAI (GPT-4o / GPT-4o-mini / o3-mini)</option>
+              <option value="anthropic">Anthropic Claude (Claude 3.7 / 3.5 Sonnet &amp; Haiku)</option>
             </select>
           </div>
 
@@ -350,7 +370,9 @@
               <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended / Default)</option>
               <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
               <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
               <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+              <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
             </select>
           </div>
 
@@ -431,6 +453,6 @@
     </section>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.0.1"></script>
 </body>
 </html>

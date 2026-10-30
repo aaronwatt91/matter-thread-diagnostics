@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.1] - 2026-10-30
+
+### Fixed: Network Discovery in `host_network: true` Mode & Instant AI Model Switching
+- **Fixed Supervisor DNS & Virtual-Host Routing under `host_network: true`**:
+  - When `host_network: true` is active in Home Assistant OS, the container shares the host network namespace where Docker's internal `supervisor` DNS entry is absent and Supervisor's nginx proxy (`172.30.32.2`) requires `Host: supervisor` on HTTP and WebSocket requests.
+  - Added automatic `/etc/hosts` mapping (`172.30.32.2 supervisor` and `172.30.32.1 homeassistant`) in `run.sh` on startup and explicit `Host: supervisor` headers in `HAClient` for both REST (`httpx`) and WebSocket (`websockets`) connections to `172.30.32.2`.
+  - Added `HASSIO_TOKEN` and `/run/s6/container_environment/SUPERVISOR_TOKEN` fallbacks so `SUPERVISOR_TOKEN` is always discovered.
+- **Zero-Dependency Raw UDP DNS-SD mDNS Scanner & Multi-Source Network Discovery**:
+  - Added a pure-Python UDP DNS-SD packet scanner (`_scan_mdns_via_udp_sockets`, `_build_mdns_ptr_query`, `_parse_mdns_packet`) querying `224.0.0.251:5353` for `_meshcop._udp.local.`, `_matter._tcp.local.`, and `_matterc._udp.local.` from an ephemeral UDP socket (no port 5353 conflict with host `avahi-daemon` / `mdns-repeater`) alongside `AsyncZeroconf`.
+  - Isolated optional `thread/get_dataset_tlv` calls so any unsupported command never drops datasets returned by `thread/list_datasets`, and isolated all discovery tasks with `return_exceptions=True`.
+  - Restored Home Assistant Device Registry and `/api/states` Border Router hardware discovery (Google Nest Wifi Pro, Nest Hub, Apple TV 4K, HomePod, SkyConnect/ZBT-1) as stage 6 in `get_all_available_thread_networks()` and `detect_split_networks()`.
+- **Fixed AI Provider & Model Switching**:
+  - Removed forced model normalization that overwrote user-selected models (such as `gemini-3.8-flash`), preserving the exact selected model across `config.py` and `ai_engine.py` while keeping automatic HTTP 404 fallback in `_call_gemini`.
+  - Added instant auto-save to `/api/config` whenever the AI Provider or AI Model dropdown is changed in either the **Settings** tab or the new quick model switcher bar in the **AI Diagnostics Studio** tab.
+  - Fixed `testAIConnection()` and `runAIDiagnostics()` so they always persist and pass the active `ai_provider` and `ai_model` even when API keys are already saved on disk.
+  - Added `Cache-Control: no-store` middleware so Home Assistant Ingress always serves the latest frontend assets.
+
 ## [2.0.0] - 2026-10-30
 
 ### Major Overhaul: Real Multi-Protocol Network Scanner & Matter Cluster `0x0035` Telemetry

@@ -170,11 +170,17 @@ def test_evaluate_node_link_quality():
 def test_ai_diagnostic_engine_key_and_model_validation():
     engine_gemini = AIDiagnosticEngine(provider="gemini", model="gemini-3.8-flash", gemini_key="AIzaSyDummyKeyTest")
     assert engine_gemini.has_valid_key() is True
-    # Legacy 3.8 alias should normalize to real gemini-2.5-flash
-    assert engine_gemini.model == "gemini-2.5-flash"
+    # User-selected model is preserved verbatim
+    assert engine_gemini.model == "gemini-3.8-flash"
 
-    engine_openai = AIDiagnosticEngine(provider="openai", openai_key="")
+    engine_gemini_25 = AIDiagnosticEngine(provider="gemini", model="gemini-2.5-pro", gemini_key="AIzaSyDummyKeyTest")
+    assert engine_gemini_25.model == "gemini-2.5-pro"
+
+    engine_openai = AIDiagnosticEngine(provider="openai", model="o3-mini", openai_key="")
     assert engine_openai.has_valid_key() is False
+    assert engine_openai.model == "o3-mini"
 
-    engine_claude = AIDiagnosticEngine(provider="anthropic", anthropic_key="sk-ant-validtestkey")
+    engine_claude = AIDiagnosticEngine(provider="anthropic", model="claude-3-7-sonnet-latest", anthropic_key="sk-ant-validtestkey")
     assert engine_claude.has_valid_key() is True
+    assert engine_claude.model == "claude-3-7-sonnet-latest"
+

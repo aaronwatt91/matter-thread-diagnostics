@@ -207,6 +207,55 @@ class ThreadAnalyzer:
             all_discovered_routers.append(entry)
             networks.setdefault(ext_pan_id, []).append(entry)
 
+        # Also inspect HA Device Registry for registered Thread Border Router hardware (Nest Wifi Pro, Apple TV/HomePod)
+        # that did not appear in mDNS discovery yet (e.g., if multicast is filtered or credentials aren't synced)
+        if device_registry:
+            for d in device_registry:
+                if not isinstance(d, dict):
+                    continue
+                model_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
+                if "wifi pro" in model_str or ("nest" in model_str and ("router" in model_str or "point" in model_str or "hub" in model_str)):
+                    found_nest_wifi_pro = True
+                    name = d.get("name_by_user") or d.get("name") or "Google Nest Wifi Pro"
+                    if not any(r.get("type") == "nest" or "nest" in (r.get("name") or "").lower() for r in all_discovered_routers):
+                        entry = {
+                            "name": name,
+                            "model": d.get("model") or "Nest Wifi Pro",
+                            "brand": "Google",
+                            "type": "nest",
+                            "server": d.get("id"),
+                            "network_name": "Google Nest Thread Mesh",
+                            "extended_pan_id": "NEST_TBR_DETECTED",
+                            "channel": None,
+                            "pan_id": None,
+                            "ext_address": None,
+                            "border_agent_id": None,
+                            "addresses": [],
+                            "source": "HA Device Registry (No mDNS seen yet)",
+                        }
+                        all_discovered_routers.append(entry)
+                        networks.setdefault("NEST_TBR_DETECTED", []).append(entry)
+                elif "apple tv" in model_str or "homepod" in model_str:
+                    name = d.get("name_by_user") or d.get("name") or ("Apple HomePod" if "homepod" in model_str else "Apple TV 4K")
+                    if not any(r.get("type") == "apple" or "apple" in (r.get("name") or "").lower() or "homepod" in (r.get("name") or "").lower() for r in all_discovered_routers):
+                        entry = {
+                            "name": name,
+                            "model": d.get("model") or ("HomePod" if "homepod" in model_str else "Apple TV 4K"),
+                            "brand": "Apple",
+                            "type": "apple",
+                            "server": d.get("id"),
+                            "network_name": "Apple Thread Mesh",
+                            "extended_pan_id": "APPLE_TBR_DETECTED",
+                            "channel": None,
+                            "pan_id": None,
+                            "ext_address": None,
+                            "border_agent_id": None,
+                            "addresses": [],
+                            "source": "HA Device Registry (No mDNS seen yet)",
+                        }
+                        all_discovered_routers.append(entry)
+                        networks.setdefault("APPLE_TBR_DETECTED", []).append(entry)
+
         # Also include configured HA datasets that have no live Border Router currently advertising them
         for ds in active_datasets or []:
             if not isinstance(ds, dict):

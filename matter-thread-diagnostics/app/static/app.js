@@ -1,8 +1,8 @@
 /**
- * Frontend logic for Matter & Thread AI Diagnostics v2.0
+ * Frontend logic for Matter & Thread AI Diagnostics v2.0.1
  * Handles Home Assistant Ingress base path, live multi-protocol network scanning
  * (mDNS _meshcop._udp, HA Thread TLV, Matter Cluster 0x0035, OTBR, IPv6 pings),
- * interactive Cluster 0x0035 tables, SVG mesh topology, and AI root-cause analysis.
+ * instant AI provider/model switching, interactive Cluster 0x0035 tables, and SVG topology.
  */
 
 const BASE_URL = window.location.pathname.endsWith('/')
@@ -16,6 +16,27 @@ function apiPath(endpoint) {
 
 let currentTelemetry = null;
 let availableThreadNetworks = [];
+
+const MODEL_OPTIONS_BY_PROVIDER = {
+  gemini: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (Recommended / Default)" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o (Recommended)" },
+    { value: "gpt-4o-mini", label: "GPT-4o-mini" },
+    { value: "o3-mini", label: "OpenAI o3-mini" },
+  ],
+  anthropic: [
+    { value: "claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet" },
+    { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet (Recommended)" },
+    { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
+  ],
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
@@ -50,7 +71,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (box && currentTelemetry) {
         box.value = JSON.stringify(currentTelemetry, null, 2);
       } else if (box) {
-        box.value = "No scan telemetry cached yet. Click 'Scan Selected Network' first.";
+        box.value = "No scan telemetry cached yet. Click '2. Scan Selected Network' first.";
       }
     });
   }
@@ -171,6 +192,7 @@ async function fetchStatus() {
     const data = await res.json();
 
     const provider = data.ai_provider || "gemini";
+    const model = data.ai_model || "gemini-2.5-flash";
     const hasKey =
       (provider === "gemini" && data.has_gemini_key) ||
       (provider === "openai" && data.has_openai_key) ||
@@ -178,21 +200,18 @@ async function fetchStatus() {
 
     if (hasKey) {
       badge.className = "badge badge-success";
-      badge.innerHTML = `<i class="fa-solid fa-check"></i> ${data.ai_model || provider} Ready`;
+      badge.innerHTML = `<i class="fa-solid fa-check"></i> ${model} Ready`;
     } else {
       badge.className = "badge badge-warning";
-      badge.innerHTML = `<i class="fa-solid fa-key"></i> API Key Needed (${provider})`;
+      badge.innerHTML = `<i class="fa-solid fa-key"></i> Key Needed (${model})`;
     }
 
-    const providerSelect = document.getElementById("cfg-provider");
-    if (providerSelect) {
-      providerSelect.value = provider;
-      toggleKeyInputs(provider);
+    const reportBadge = document.getElementById("report-model-badge");
+    if (reportBadge) {
+      reportBadge.innerText = `${provider.toUpperCase()} (${model})`;
     }
-    const modelInput = document.getElementById("cfg-model");
-    if (modelInput && data.ai_model) {
-      modelInput.value = data.ai_model;
-    }
+
+    syncProviderAndModelSelects(provider, model);
 
     const matterUrlInput = document.getElementById("cfg-matter-url");
     if (matterUrlInput && data.matter_server_url) matterUrlInput.value = data.matter_server_url;
@@ -216,11 +235,118 @@ async function fetchStatus() {
   }
 }
 
+function populateModelSelectElement(selectElem, provider, selectedModel) {
+  if (!selectElem) return;
+  const opts = MODEL_OPTIONS_BY_PROVIDER[provider] || MODEL_OPTIONS_BY_PROVIDER.gemini;
+  selectElem.innerHTML = "";
+  let found = false;
+  opts.forEach(o => {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.label;
+    if (o.value === selectedModel) found = true;
+    selectElem.appendChild(opt);
+  });
+  if (selectedModel && !found) {
+    const customOpt = document.createElement("option");
+    customOpt.value = selectedModel;
+    customOpt.textContent = selectedModel;
+    selectElem.appendChild(customOpt);
+  }
+  if (selectedModel && (found || selectElem.querySelector(`option[value="${selectedModel}"]`))) {
+    selectElem.value = selectedModel;
+  } else if (opts.length > 0) {
+    selectElem.value = opts[0].value;
+  }
+}
+
+function syncProviderAndModelSelects(provider, selectedModel) {
+  const cfgProvider = document.getElementById("cfg-provider");
+  const cfgModel = document.getElementById("cfg-model");
+  const studioProvider = document.getElementById("studio-provider");
+  const studioModel = document.getElementById("studio-model");
+
+  if (cfgProvider) cfgProvider.value = provider;
+  if (studioProvider) studioProvider.value = provider;
+
+  document.getElementById("group-gemini-key")?.classList.toggle("hidden", provider !== "gemini");
+  document.getElementById("group-openai-key")?.classList.toggle("hidden", provider !== "openai");
+  document.getElementById("group-anthropic-key")?.classList.toggle("hidden", provider !== "anthropic");
+
+  const defaultForProvider = (MODEL_OPTIONS_BY_PROVIDER[provider] || MODEL_OPTIONS_BY_PROVIDER.gemini)[0].value;
+  const targetModel = selectedModel || defaultForProvider;
+
+  populateModelSelectElement(cfgModel, provider, targetModel);
+  populateModelSelectElement(studioModel, provider, targetModel);
+}
+
+async function saveProviderAndModelImmediate(provider, model) {
+  const statusText = document.getElementById("settings-save-status");
+  if (statusText) statusText.innerText = "Switching model...";
+  try {
+    const res = await fetch(apiPath("/api/config"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ai_provider: provider,
+        ai_model: model,
+      }),
+    });
+    if (res.ok) {
+      if (statusText) {
+        statusText.innerText = `✓ Active model: ${model}`;
+        setTimeout(() => { statusText.innerText = ""; }, 2500);
+      }
+      await fetchStatus();
+    }
+  } catch (err) {
+    console.error("Failed auto-saving model change:", err);
+  }
+}
+
 function initSettingsForm() {
-  const providerSelect = document.getElementById("cfg-provider");
-  if (providerSelect) {
-    providerSelect.addEventListener("change", (e) => {
-      toggleKeyInputs(e.target.value);
+  const cfgProvider = document.getElementById("cfg-provider");
+  const cfgModel = document.getElementById("cfg-model");
+  const studioProvider = document.getElementById("studio-provider");
+  const studioModel = document.getElementById("studio-model");
+
+  // Settings Tab Provider Change -> update model list and auto-save immediately
+  if (cfgProvider) {
+    cfgProvider.addEventListener("change", (e) => {
+      const newProv = e.target.value;
+      const defaultModel = (MODEL_OPTIONS_BY_PROVIDER[newProv] || MODEL_OPTIONS_BY_PROVIDER.gemini)[0].value;
+      syncProviderAndModelSelects(newProv, defaultModel);
+      saveProviderAndModelImmediate(newProv, defaultModel);
+    });
+  }
+
+  // Settings Tab Model Change -> sync and auto-save immediately
+  if (cfgModel) {
+    cfgModel.addEventListener("change", (e) => {
+      const newModel = e.target.value;
+      const prov = cfgProvider ? cfgProvider.value : "gemini";
+      if (studioModel) studioModel.value = newModel;
+      saveProviderAndModelImmediate(prov, newModel);
+    });
+  }
+
+  // AI Studio Tab Provider Change -> update model list and auto-save immediately
+  if (studioProvider) {
+    studioProvider.addEventListener("change", (e) => {
+      const newProv = e.target.value;
+      const defaultModel = (MODEL_OPTIONS_BY_PROVIDER[newProv] || MODEL_OPTIONS_BY_PROVIDER.gemini)[0].value;
+      syncProviderAndModelSelects(newProv, defaultModel);
+      saveProviderAndModelImmediate(newProv, defaultModel);
+    });
+  }
+
+  // AI Studio Tab Model Change -> sync and auto-save immediately
+  if (studioModel) {
+    studioModel.addEventListener("change", (e) => {
+      const newModel = e.target.value;
+      const prov = studioProvider ? studioProvider.value : "gemini";
+      if (cfgModel) cfgModel.value = newModel;
+      saveProviderAndModelImmediate(prov, newModel);
     });
   }
 
@@ -267,7 +393,7 @@ function initSettingsForm() {
     btnTest.addEventListener("click", async () => {
       const testResult = document.getElementById("ai-test-result");
       testResult.className = "";
-      testResult.innerHTML = `<span style="color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Testing AI API connection...</span>`;
+      testResult.innerHTML = `<span style="color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Saving current selection &amp; testing AI API connection...</span>`;
 
       const providerVal = document.getElementById("cfg-provider").value;
       const modelVal = document.getElementById("cfg-model").value;
@@ -275,61 +401,32 @@ function initSettingsForm() {
       const openaiVal = document.getElementById("cfg-openai-key").value;
       const anthropicVal = document.getElementById("cfg-anthropic-key").value;
 
-      if (geminiVal || openaiVal || anthropicVal) {
-        await fetch(apiPath("/api/config"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ai_provider: providerVal,
-            ai_model: modelVal,
-            gemini_api_key: geminiVal || undefined,
-            openai_api_key: openaiVal || undefined,
-            anthropic_api_key: anthropicVal || undefined,
-          }),
-        });
-      }
+      // Always save provider & model (plus any non-empty key) before testing
+      await fetch(apiPath("/api/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ai_provider: providerVal,
+          ai_model: modelVal,
+          gemini_api_key: geminiVal || undefined,
+          openai_api_key: openaiVal || undefined,
+          anthropic_api_key: anthropicVal || undefined,
+        }),
+      });
 
       try {
         const res = await fetch(apiPath("/api/test_ai"), { method: "POST" });
         const data = await res.json();
         if (data.success) {
-          testResult.innerHTML = `<span class="badge badge-success"><i class="fa-solid fa-check"></i> ${data.message}</span>`;
+          testResult.innerHTML = `<span class="badge badge-success"><i class="fa-solid fa-check"></i> ${escapeHtml(data.message)}</span>`;
           fetchStatus();
         } else {
-          testResult.innerHTML = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error:</span> <span style="color:var(--color-danger); margin-left:6px;">${data.error}</span>`;
+          testResult.innerHTML = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> Error:</span> <span style="color:var(--color-danger); margin-left:6px;">${escapeHtml(data.error)}</span>`;
         }
       } catch (err) {
-        testResult.innerHTML = `<span style="color:var(--color-danger);">Network test error: ${err.message}</span>`;
+        testResult.innerHTML = `<span style="color:var(--color-danger);">Network test error: ${escapeHtml(err.message)}</span>`;
       }
     });
-  }
-}
-
-function toggleKeyInputs(provider) {
-  document.getElementById("group-gemini-key").classList.toggle("hidden", provider !== "gemini");
-  document.getElementById("group-openai-key").classList.toggle("hidden", provider !== "openai");
-  document.getElementById("group-anthropic-key").classList.toggle("hidden", provider !== "anthropic");
-
-  const modelSelect = document.getElementById("cfg-model");
-  if (modelSelect) {
-    if (provider === "gemini") {
-      modelSelect.innerHTML = `
-        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended / Default)</option>
-        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-      `;
-    } else if (provider === "openai") {
-      modelSelect.innerHTML = `
-        <option value="gpt-4o">GPT-4o (Recommended)</option>
-        <option value="gpt-4o-mini">GPT-4o-mini</option>
-      `;
-    } else if (provider === "anthropic") {
-      modelSelect.innerHTML = `
-        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Recommended)</option>
-        <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
-      `;
-    }
   }
 }
 
@@ -356,6 +453,7 @@ async function loadThreadNetworks() {
   const btnTopRefresh = document.getElementById("btn-top-refresh-nets");
   const btnCfgRefresh = document.getElementById("btn-refresh-thread-networks");
   const countStatus = document.getElementById("thread-networks-count-status");
+  const topFeedback = document.getElementById("top-scan-feedback");
 
   if (btnTopRefresh) {
     btnTopRefresh.disabled = true;
@@ -365,13 +463,17 @@ async function loadThreadNetworks() {
     btnCfgRefresh.disabled = true;
     btnCfgRefresh.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Refreshing...`;
   }
+  if (topFeedback) {
+    topFeedback.style.color = "#38bdf8";
+    topFeedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Querying HA datasets, mDNS (_meshcop._udp), OTBR &amp; Device Registry...`;
+  }
 
   try {
     const res = await fetch(apiPath("/api/thread/networks"));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     availableThreadNetworks = data.networks || [];
-    const selectedId = data.selected_network || "";
+    const selectedId = data.selected_network !== undefined ? data.selected_network : (topSelect ? topSelect.value : "");
 
     populateNetworkDropdown(topSelect, availableThreadNetworks, selectedId);
     populateNetworkDropdown(cfgSelect, availableThreadNetworks, selectedId);
@@ -379,15 +481,26 @@ async function loadThreadNetworks() {
     updateThreadNetworkDetails(selectedId);
     updateSelectedNetworkStrip(selectedId);
 
+    if (topFeedback) {
+      topFeedback.style.color = availableThreadNetworks.length > 0 ? "var(--color-success)" : "var(--color-warning)";
+      topFeedback.innerHTML = availableThreadNetworks.length > 0
+        ? `✓ Found ${availableThreadNetworks.length} Thread network(s)`
+        : `0 Thread networks returned — click '2. Scan Selected Network' to run full deep probe`;
+    }
+
     if (countStatus) {
       if (availableThreadNetworks.length === 0) {
-        countStatus.innerHTML = `<span style="color:var(--color-warning);"><i class="fa-solid fa-circle-info"></i> No Thread networks detected yet via HA datasets, mDNS (_meshcop._udp), or OTBR.</span>`;
+        countStatus.innerHTML = `<span style="color:var(--color-warning);"><i class="fa-solid fa-circle-info"></i> No Thread datasets found yet. Click "Scan Selected Network" to run a full probe.</span>`;
       } else {
-        countStatus.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Discovered ${availableThreadNetworks.length} live Thread network(s).</span>`;
+        countStatus.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Found ${availableThreadNetworks.length} Thread network(s) in Home Assistant.</span>`;
       }
     }
   } catch (err) {
     console.error("Failed to load thread networks:", err);
+    if (topFeedback) {
+      topFeedback.style.color = "var(--color-danger)";
+      topFeedback.innerHTML = `Discovery error: ${err.message}`;
+    }
     if (countStatus) {
       countStatus.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-triangle-exclamation"></i> Error querying networks: ${err.message}</span>`;
     }
@@ -412,13 +525,17 @@ function populateNetworkDropdown(selectElem, networks, selectedId) {
     const xpanShort = net.extended_pan_id ? `XPAN: ${net.extended_pan_id}` : "";
     const chStr = net.channel ? `Ch ${net.channel}` : "";
     const prefStr = net.preferred ? "★ Preferred" : "";
-    const rCount = net.routers && net.routers.length ? `${net.routers.length} TBR(s)` : "";
-    const nCount = net.matter_node_count ? `${net.matter_node_count} Matter Node(s)` : "";
-    const metaParts = [xpanShort, chStr, prefStr, rCount, nCount].filter(Boolean).join(" | ");
+    const rCount = net.routers && net.routers.length ? `[${net.routers.join(", ")}]` : "";
+    const nCount = net.matter_node_count ? `${net.matter_node_count} Node(s)` : "";
+    const metaParts = [chStr, prefStr, rCount, nCount, xpanShort].filter(Boolean).join(" • ");
     opt.textContent = metaParts ? `${net.name} (${metaParts})` : net.name;
     selectElem.appendChild(opt);
   });
-  selectElem.value = selectedId || "";
+  if (selectedId && networks.some(n => n.id === selectedId || n.extended_pan_id === selectedId)) {
+    selectElem.value = selectedId;
+  } else {
+    selectElem.value = "";
+  }
 }
 
 function updateSelectedNetworkStrip(selectedId) {
@@ -428,26 +545,26 @@ function updateSelectedNetworkStrip(selectedId) {
   if (!selectedId) {
     const netCount = availableThreadNetworks.length;
     badgesContainer.innerHTML = `
-      <span class="badge badge-info"><i class="fa-solid fa-globe"></i> Mode: All Networks (${netCount} discovered)</span>
-      <span>Select a specific Thread network above and click <strong>Scan Selected Network</strong> to filter &amp; verify all nodes against its Extended PAN ID.</span>
+      <span class="badge badge-info"><i class="fa-solid fa-globe"></i> Scope: All Networks (${netCount} discovered)</span>
+      <span>Select a specific Thread network above and click <strong>2. Scan Selected Network</strong> to filter &amp; verify all nodes against its Extended PAN ID.</span>
     `;
     return;
   }
 
   const net = availableThreadNetworks.find(n => n.id === selectedId || n.extended_pan_id === selectedId);
   if (!net) {
-    badgesContainer.innerHTML = `<span class="badge badge-info">Selected Target: ${selectedId}</span>`;
+    badgesContainer.innerHTML = `<span class="badge badge-info">Selected Target: ${escapeHtml(selectedId)}</span>`;
     return;
   }
 
-  const routersText = net.routers && net.routers.length ? net.routers.join(", ") : "No mDNS Border Router seen yet";
+  const routersText = net.routers && net.routers.length ? net.routers.join(", ") : "None via mDNS yet";
   badgesContainer.innerHTML = `
-    <span class="badge badge-success"><i class="fa-solid fa-satellite-dish"></i> Target: ${net.name}</span>
-    <span class="badge badge-info">Ext PAN ID: <code>${net.extended_pan_id || 'UNKNOWN'}</code></span>
+    <span class="badge badge-success"><i class="fa-solid fa-satellite-dish"></i> Target: ${escapeHtml(net.name)}</span>
+    <span class="badge badge-info">Ext PAN ID: <code>${escapeHtml(net.extended_pan_id || 'UNKNOWN')}</code></span>
     ${net.channel ? `<span class="badge badge-ha">Channel ${net.channel}</span>` : ''}
-    ${net.pan_id ? `<span class="badge" style="background:#374151;">PAN: ${net.pan_id}</span>` : ''}
-    ${net.mesh_local_prefix ? `<span class="badge" style="background:#374151;">Prefix: <code>${net.mesh_local_prefix}</code></span>` : ''}
-    <span style="color:var(--text-muted);">Border Routers: <strong>${routersText}</strong></span>
+    ${net.pan_id ? `<span class="badge" style="background:#374151;">PAN: ${escapeHtml(String(net.pan_id))}</span>` : ''}
+    ${net.mesh_local_prefix ? `<span class="badge" style="background:#374151;">Prefix: <code>${escapeHtml(net.mesh_local_prefix)}</code></span>` : ''}
+    <span style="color:var(--text-muted);">Border Routers: <strong>${escapeHtml(routersText)}</strong></span>
   `;
 }
 
@@ -471,13 +588,13 @@ function updateThreadNetworkDetails(selectedId) {
   const routersList = net.routers && net.routers.length ? net.routers.join(", ") : "None detected via mDNS yet";
   detailsBox.innerHTML = `
     <div style="font-size: 13px; line-height: 1.6;">
-      <div><strong>Network Name:</strong> ${net.name}</div>
-      <div><strong>Extended PAN ID:</strong> <code>${net.extended_pan_id || 'UNKNOWN'}</code></div>
-      <div><strong>PAN ID:</strong> <code>${net.pan_id || 'UNKNOWN'}</code></div>
+      <div><strong>Network Name:</strong> ${escapeHtml(net.name)}</div>
+      <div><strong>Extended PAN ID:</strong> <code>${escapeHtml(net.extended_pan_id || 'UNKNOWN')}</code></div>
+      <div><strong>PAN ID:</strong> <code>${escapeHtml(String(net.pan_id || 'UNKNOWN'))}</code></div>
       <div><strong>Channel:</strong> ${net.channel ? `Channel ${net.channel} (2.4 GHz 802.15.4)` : 'Auto / Unknown'}</div>
-      <div><strong>Mesh-Local IPv6 Prefix:</strong> <code>${net.mesh_local_prefix || 'Not decoded'}</code></div>
-      <div><strong>Source:</strong> ${net.source}</div>
-      <div><strong>Active Border Routers:</strong> ${routersList}</div>
+      <div><strong>Mesh-Local IPv6 Prefix:</strong> <code>${escapeHtml(net.mesh_local_prefix || 'Not decoded')}</code></div>
+      <div><strong>Source:</strong> ${escapeHtml(net.source)}</div>
+      <div><strong>Active Border Routers:</strong> ${escapeHtml(routersList)}</div>
     </div>
   `;
 }
@@ -532,11 +649,11 @@ async function scanSelectedNetwork(switchToScanTab = false) {
 
     const brCount = currentTelemetry?.telemetry?.border_routers_count || 0;
     const nodeCount = currentTelemetry?.telemetry?.matter_server?.nodes?.length || 0;
-    const pingCount = currentTelemetry?.telemetry?.reachability_probes?.reachable_count || 0;
+    const netCount = availableThreadNetworks.length;
 
     if (topFeedback) {
       topFeedback.style.color = "var(--color-success)";
-      topFeedback.innerHTML = `✓ Scan complete: ${brCount} Border Router(s), ${nodeCount} Matter Node(s), ${pingCount} IPv6 Ping(s) OK`;
+      topFeedback.innerHTML = `✓ Scan complete: ${netCount} Network(s), ${brCount} Border Router(s), ${nodeCount} Matter Node(s)`;
     }
     if (cfgFeedback) {
       cfgFeedback.style.color = "var(--color-success)";
@@ -571,6 +688,19 @@ async function fetchLiveDiagnostics() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     currentTelemetry = data;
+
+    // Also populate network dropdowns from the full telemetry payload if networks were found
+    if (data.available_thread_networks && data.available_thread_networks.length > 0) {
+      availableThreadNetworks = data.available_thread_networks;
+      const topSelect = document.getElementById("top-thread-network");
+      const cfgSelect = document.getElementById("cfg-thread-network");
+      const selectedId = data.selected_target_network?.id || (topSelect ? topSelect.value : "");
+      populateNetworkDropdown(topSelect, availableThreadNetworks, selectedId);
+      populateNetworkDropdown(cfgSelect, availableThreadNetworks, selectedId);
+      updateSelectedNetworkStrip(selectedId);
+      updateThreadNetworkDetails(selectedId);
+    }
+
     renderKPIs(data);
     renderRulesAndTables(data);
     if (data.topology) {
@@ -611,7 +741,7 @@ function renderKPIs(data) {
     splitDesc.innerText = `${splitRule.distinct_network_count} separate Extended PAN IDs`;
   } else if (brCount === 0) {
     splitElem.innerHTML = `<span class="badge badge-warning">0 Routers</span>`;
-    splitDesc.innerText = "No mDNS Border Routers found";
+    splitDesc.innerText = "Click Scan to probe network";
   } else {
     splitElem.innerHTML = `<span class="badge badge-success">${brCount} TBR(s) Synced</span>`;
     splitDesc.innerText = "Unified Extended PAN ID";
@@ -632,8 +762,8 @@ function renderKPIs(data) {
     rfElem.innerHTML = `<span class="badge badge-info">Channel ${ch}</span>`;
     rfDesc.innerText = rfRule.interference_description || "Guard band channel";
   } else {
-    rfElem.innerHTML = `<span class="badge badge-warning">Ch Unknown</span>`;
-    rfDesc.innerText = "No active channel reported";
+    rfElem.innerHTML = `<span class="badge badge-warning">Ch Auto</span>`;
+    rfDesc.innerText = "Channel determined by TBR";
   }
 
   // 4. IPv6 & Pings
@@ -674,8 +804,7 @@ function renderRulesAndTables(data) {
       tbodyBr.innerHTML = `
         <tr>
           <td colspan="7" style="padding: 18px; color: var(--text-muted); text-align: center;">
-            No Thread Border Routers discovered via mDNS (<code>_meshcop._udp.local.</code>), Home Assistant WebSocket, or OTBR REST API.<br>
-            <small>Ensure this add-on runs with <code>host_network: true</code> and your Border Routers (Apple TV, HomePod, Nest Wifi Pro, ZBT-1) are on the same LAN.</small>
+            No Thread Border Routers discovered yet. Click <strong>2. Scan Selected Network</strong> above to probe mDNS (<code>_meshcop._udp</code>), HA Thread, and Device Registry.
           </td>
         </tr>
       `;
@@ -820,7 +949,6 @@ function renderRulesAndTables(data) {
         `;
       }).join("");
 
-      // Attach live ping handlers
       document.querySelectorAll(".btn-ping-node").forEach(btn => {
         btn.addEventListener("click", () => {
           const nodeId = parseInt(btn.getAttribute("data-node-id"), 10);
@@ -968,6 +1096,8 @@ async function runAIDiagnosis() {
   const resultsCard = document.getElementById("ai-results-container");
   const reportBody = document.getElementById("ai-report-body");
   const userNotes = document.getElementById("user-symptoms").value;
+  const studioProvider = document.getElementById("studio-provider")?.value || document.getElementById("cfg-provider")?.value;
+  const studioModel = document.getElementById("studio-model")?.value || document.getElementById("cfg-model")?.value;
 
   loading.classList.remove("hidden");
   resultsCard.classList.add("hidden");
@@ -979,6 +1109,8 @@ async function runAIDiagnosis() {
       body: JSON.stringify({
         user_notes: userNotes,
         use_cached_scan: true,
+        ai_provider: studioProvider,
+        ai_model: studioModel,
       }),
     });
 
@@ -995,6 +1127,7 @@ async function runAIDiagnosis() {
     if (data.ai_result && data.ai_result.success) {
       document.getElementById("report-model-badge").innerText = `${data.ai_result.provider.toUpperCase()} (${data.ai_result.model})`;
       reportBody.innerHTML = marked.parse(data.ai_result.analysis);
+      fetchStatus();
     } else {
       const errMsg = (data.ai_result && data.ai_result.error) || "AI diagnosis could not be completed.";
       reportBody.innerHTML = `
@@ -1017,6 +1150,9 @@ async function runManualLogAnalysis() {
     return;
   }
 
+  const studioProvider = document.getElementById("studio-provider")?.value || document.getElementById("cfg-provider")?.value;
+  const studioModel = document.getElementById("studio-model")?.value || document.getElementById("cfg-model")?.value;
+
   activateTab("tab-ai");
   const loading = document.getElementById("ai-loading-indicator");
   const resultsCard = document.getElementById("ai-results-container");
@@ -1029,7 +1165,11 @@ async function runManualLogAnalysis() {
     const res = await fetch(apiPath("/api/manual/analyze"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ log_content: logContent }),
+      body: JSON.stringify({
+        log_content: logContent,
+        ai_provider: studioProvider,
+        ai_model: studioModel,
+      }),
     });
 
     const data = await res.json();
@@ -1123,7 +1263,6 @@ function renderSvgTopology(nodes, edges) {
     return;
   }
 
-  // Three-tier hierarchy: Border Routers (top), Thread Routers (middle), End Devices (bottom)
   const borderRouters = nodes.filter(n => n.type === "border_router");
   const routerNodes = nodes.filter(n => n.type === "router");
   const endDevices = nodes.filter(n => n.type !== "border_router" && n.type !== "router");
@@ -1153,7 +1292,6 @@ function renderSvgTopology(nodes, edges) {
     layoutRow(combinedDevices, 290, width - 140);
   }
 
-  // Render edges
   edges.forEach(e => {
     const src = nodeMap[e.source];
     const tgt = nodeMap[e.target];
@@ -1185,7 +1323,6 @@ function renderSvgTopology(nodes, edges) {
     }
   });
 
-  // Render nodes
   Object.values(nodeMap).forEach(n => {
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.cursor = "pointer";

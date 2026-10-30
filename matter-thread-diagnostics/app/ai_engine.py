@@ -60,21 +60,20 @@ class AIDiagnosticEngine:
         self.anthropic_key = anthropic_key.strip().strip('"').strip("'") if anthropic_key else ""
 
     def _normalize_model(self, provider: str, model: str) -> str:
-        """Map model aliases to valid, active provider model IDs."""
-        m = (model or "").strip().lower()
+        """Preserve user-selected model, providing sensible defaults only when blank."""
+        m = (model or "").strip()
         if provider == "gemini":
-            # Map legacy/non-existent 3.8/3-flash aliases to real gemini-2.5-flash
-            if not m or m == "gemini" or "3.8" in m or "38" in m or "3-flash" in m:
+            if not m or m.lower() == "gemini" or not m.lower().startswith("gemini"):
                 return "gemini-2.5-flash"
             return m
         elif provider == "openai":
-            if "mini" in m:
-                return "gpt-4o-mini"
-            return m if m.startswith("gpt-") or m.startswith("o") else "gpt-4o"
+            if not m or (not m.lower().startswith("gpt-") and not m.lower().startswith("o")):
+                return "gpt-4o"
+            return m
         elif provider == "anthropic":
-            if "haiku" in m:
-                return "claude-3-5-haiku-20241022"
-            return m if m.startswith("claude-") else "claude-3-5-sonnet-20241022"
+            if not m or not m.lower().startswith("claude-"):
+                return "claude-3-5-sonnet-20241022"
+            return m
         return m or "gemini-2.5-flash"
 
     def has_valid_key(self) -> bool:
