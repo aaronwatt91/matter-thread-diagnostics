@@ -166,6 +166,17 @@ def test_evaluate_node_link_quality():
     assert len(result["offline_nodes"]) == 1
     assert result["health_score"] < 80
 
+    # Verify OpenThread 2-bit Link Quality scale (0-3) where lqi=3 (Excellent) and lqi=2 (Good) are 100% healthy
+    ot_nodes = [
+        {"node_id": 13, "product_name": "Node 13", "available": True, "rssi": -51, "lqi": 3},
+        {"node_id": 14, "product_name": "Node 14", "available": True, "rssi": -58, "lqi": 3},
+        {"node_id": 16, "product_name": "Node 16", "available": True, "rssi": -62, "lqi": 2},
+    ]
+    ot_res = ThreadAnalyzer.evaluate_node_link_quality(ot_nodes)
+    assert ot_res["healthy_count"] == 3
+    assert ot_res["weak_count"] == 0
+    assert ot_res["health_score"] == 100
+
 
 def test_ai_diagnostic_engine_key_and_model_validation():
     engine_gemini = AIDiagnosticEngine(provider="gemini", model="gemini-3.8-flash", gemini_key="AIzaSyDummyKeyTest")

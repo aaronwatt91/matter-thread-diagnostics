@@ -8,6 +8,7 @@ OTBR REST API querying, and active ICMPv6 reachability probing.
 import asyncio
 import json
 import os
+import re
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -25,7 +26,26 @@ from network_checker import NetworkChecker
 from ai_engine import AIDiagnosticEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+# Prevent httpx / httpcore from logging full request URLs at INFO level
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("matter_thread_ai.main")
+
+_SECRET_PATTERNS = [
+    (re.compile(r"AIza[0-9A-Za-z\-_]{15,}"), "AIza***REDACTED***"),
+    (re.compile(r"sk-[0-9A-Za-z\-_]{15,}"), "sk-***REDACTED***"),
+    (re.compile(r"([?&]key=)[^&\s\"']+"), r"\1***REDACTED***"),
+]
+
+
+def _redact_secrets(text: str) -> str:
+    """Scrub any API keys or tokens from log strings before storing or exporting."""
+    if not text:
+        return text
+    out = text
+    for pat, repl in _SECRET_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
 
 
 class _RingBufferLogHandler(logging.Handler):
@@ -38,7 +58,7 @@ class _RingBufferLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.buffer.append(self.format(record))
+            self.buffer.append(_redact_secrets(self.format(record)))
         except Exception:
             pass
 
@@ -46,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.6")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.7")
 
 
 @app.middleware("http")
@@ -574,13 +594,13 @@ async def _build_diagnostic_log_bundle() -> Dict[str, Any]:
         json.dumps(telemetry_data, indent=2, default=str),
         "",
     ]
-    bundle_text = "\n".join(sections)
+    bundle_text = _redact_secrets("\n".join(sections))
     return {
         "timestamp": now_iso,
         "bundle_text": bundle_text,
-        "addon_logs": addon_internal_logs,
-        "matter_server_logs": matter_logs,
-        "otbr_logs": otbr_logs,
+        "addon_logs": _redact_secrets(addon_internal_logs),
+        "matter_server_logs": _redact_secrets(matter_logs),
+        "otbr_logs": _redact_secrets(otbr_logs),
     }
 
 

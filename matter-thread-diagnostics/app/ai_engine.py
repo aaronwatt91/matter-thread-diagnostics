@@ -24,8 +24,9 @@ Deep Matter & Thread Domain Knowledge to apply:
    - Google Nest Wifi Pro / Nest Hub, Apple TV 4K / HomePod, and Home Assistant (Connect ZBT-1 / SkyConnect OTBR) each act as Thread Border Routers.
    - Compare the `extended_pan_id` across all discovered Border Routers and Matter nodes. If multiple Extended PAN IDs exist, or if nodes are stranded on a different Extended PAN ID than the selected target network, explain exactly which devices are desynced and how to unify them.
 2. MATTER CLUSTER 0x0035 LINK & TOPOLOGY DIAGNOSTICS:
-   - Inspect each node's `routing_role`, `rloc16`, `rssi` (dBm), `lqi` (0-255), `neighbor_table`, and `telemetry_counters` (`parent_change_count`, `detached_role_count`).
-   - RSSI below -82 dBm or LQI below 64 indicates high RF attenuation; recommend adding a mains-powered Matter-over-Thread router (e.g. smart plug) between the Border Router and the weak node.
+   - Inspect each node's `routing_role`, `rloc16`, `rssi` (dBm), `lqi`, `neighbor_table`, and `telemetry_counters` (`parent_change_count`, `detached_role_count`).
+   - Note on LQI scales: OpenThread NeighborTable entries can report either 2-bit OpenThread Link Quality (`0-3`, where `3` is maximum/excellent link quality and `2` is good) or 8-bit IEEE 802.15.4 LQI (`0-255`, where `< 64` is weak). Never treat `lqi: 2` or `lqi: 3` as weak!
+   - RSSI below -82 dBm (or LQI `0/3` or `< 64/255` when on the 0-255 scale) indicates high RF attenuation; recommend adding a mains-powered Matter-over-Thread router (e.g. smart plug) between the Border Router and the weak node.
    - High `parent_change_count` or `detached_role_count` on Sleepy End Devices (SED/ICD) indicates unstable parent router links or Border Router reboots.
 3. RF INTERFERENCE (Wi-Fi 2.4 GHz vs Thread 802.15.4):
    - Thread channels 11-14 overlap Wi-Fi Ch 1; 16-19 overlap Wi-Fi Ch 6; 21-24 overlap Wi-Fi Ch 11; Channel 25/26 are clear of standard 20 MHz Wi-Fi channels.
@@ -318,7 +319,7 @@ class AIDiagnosticEngine:
             return []
         url = "https://generativelanguage.googleapis.com/v1beta/models"
         headers = {"x-goog-api-key": self.gemini_key.strip()}
-        params = {"key": self.gemini_key.strip(), "pageSize": 100}
+        params = {"pageSize": 100}
         try:
             r = await client.get(url, headers=headers, params=params, timeout=10.0)
             if r.status_code != 200:
@@ -419,7 +420,7 @@ class AIDiagnosticEngine:
         Returns (http_status_code, response_text, error_message).
         """
         stream_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent"
-        stream_params = {"key": self.gemini_key.strip(), "alt": "sse"}
+        stream_params = {"alt": "sse"}
 
         try:
             chunks: List[str] = []
@@ -464,8 +465,7 @@ class AIDiagnosticEngine:
 
         # Fallback to standard generateContent
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        params = {"key": self.gemini_key.strip()}
-        r = await client.post(url, json=payload, headers=headers, params=params)
+        r = await client.post(url, json=payload, headers=headers)
         if r.status_code != 200:
             err_text = r.text
             try:

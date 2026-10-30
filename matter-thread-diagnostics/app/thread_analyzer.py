@@ -474,6 +474,32 @@ class ThreadAnalyzer:
         }
 
     @staticmethod
+    def _is_weak_lqi(lqi: Optional[int], rssi: Optional[int] = None) -> bool:
+        """
+        Determine whether an LQI metric indicates a weak RF link, properly distinguishing between:
+        - OpenThread 2-bit Link Quality scale (0..3): 3 = Maximum/Excellent, 2 = Good, 1 = Marginal, 0 = No link.
+        - IEEE 802.15.4 8-bit LQI scale (4..255): < 64 = Weak.
+        """
+        if lqi is None:
+            return False
+        if 0 <= lqi <= 3:
+            if lqi == 0:
+                return True
+            if lqi == 1:
+                return rssi is None or rssi < -82
+            return False  # lqi 2 or 3 is Good / Excellent on OpenThread 0-3 scale!
+        return lqi < 64
+
+    @staticmethod
+    def _format_lqi(lqi: Optional[int]) -> str:
+        """Format LQI with the appropriate scale denominator (0-3 OpenThread Link Quality vs 0-255 802.15.4 LQI)."""
+        if lqi is None:
+            return ""
+        if 0 <= lqi <= 3:
+            return f"{lqi}/3"
+        return f"{lqi}/255"
+
+    @staticmethod
     def evaluate_node_link_quality(
         nodes: List[Dict[str, Any]],
         target_network_id: Optional[str] = None,
@@ -514,6 +540,9 @@ class ThreadAnalyzer:
                     "reason": f"Joined to XPAN {node_xpan} instead of selected target {tid_upper}",
                 })
 
+            weak_rssi = rssi is not None and rssi < -82
+            weak_lqi = ThreadAnalyzer._is_weak_lqi(lqi, rssi)
+
             if not is_avail:
                 offline_nodes.append({
                     "node_id": node_id,
@@ -524,12 +553,12 @@ class ThreadAnalyzer:
                     "extended_pan_id": node_xpan,
                     "reason": f"Unreachable / Offline (Detached count: {detach_count}, Parent changes: {parent_changes})" if (detach_count or parent_changes) else "Unreachable / Ping Timeout",
                 })
-            elif (rssi is not None and rssi < -82) or (lqi is not None and lqi < 64):
+            elif weak_rssi or weak_lqi:
                 reason_parts = []
-                if rssi is not None and rssi < -82:
+                if weak_rssi:
                     reason_parts.append(f"Weak RSSI ({rssi} dBm < -82 dBm)")
-                if lqi is not None and lqi < 64:
-                    reason_parts.append(f"Low LQI ({lqi}/255)")
+                if weak_lqi:
+                    reason_parts.append(f"Low LQI ({ThreadAnalyzer._format_lqi(lqi)})")
                 if parent_changes > 5:
                     reason_parts.append(f"Frequent parent switches ({parent_changes})")
                 weak_nodes.append({
@@ -606,7 +635,10 @@ class ThreadAnalyzer:
                 norm = max(0.0, min(1.0, (-45.0 - float(rssi_val)) / 50.0))
                 return int(70 + norm * 155)
             if lqi_val is not None:
-                norm = max(0.0, min(1.0, 1.0 - (float(lqi_val) / 255.0)))
+                if 0 <= lqi_val <= 3:
+                    norm = max(0.0, min(1.0, (3.0 - float(lqi_val)) / 3.0))
+                else:
+                    norm = max(0.0, min(1.0, 1.0 - (float(lqi_val) / 255.0)))
                 return int(75 + norm * 145)
             return 140
 
@@ -767,7 +799,7 @@ class ThreadAnalyzer:
             n_ext = (n.get("ext_address") or "").upper()
             v6_addrs = n.get("ipv6_addresses") or []
 
-            is_weak = (rssi is not None and rssi < -82) or (lqi is not None and lqi < 64)
+            is_weak = (rssi is not None and rssi < -82) or ThreadAnalyzer._is_weak_lqi(lqi, rssi)
             status = "online" if avail else "offline"
             if avail and is_weak:
                 status = "weak"
@@ -785,7 +817,7 @@ class ThreadAnalyzer:
                 is_target_match = (n_xpan == target_xpan or target_xpan in n_xpan)
 
             rssi_str = f"{rssi} dBm" if rssi is not None else "N/A"
-            lqi_str = f"LQI {lqi}" if lqi is not None else ""
+            lqi_str = f"LQI {ThreadAnalyzer._format_lqi(lqi)}" if lqi is not None else ""
             ping_str = ""
             for ip in v6_addrs:
                 if ip in ping_by_ip:
@@ -834,7 +866,7 @@ class ThreadAnalyzer:
                         seen_edges.add(edge_key)
                         nb_rssi = nb.get("last_rssi") if nb.get("last_rssi") is not None else nb.get("average_rssi")
                         nb_lqi = nb.get("lqi")
-                        lbl = f"{nb_rssi} dBm" if nb_rssi is not None else (f"LQI {nb_lqi}" if nb_lqi is not None else "Thread Link")
+                        lbl = f"{nb_rssi} dBm" if nb_rssi is not None else (f"LQI {ThreadAnalyzer._format_lqi(nb_lqi)}" if nb_lqi is not None else "Thread Link")
                         graph_edges.append({
                             "source": peer_gid,
                             "target": gid,

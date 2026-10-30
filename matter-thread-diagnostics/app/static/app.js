@@ -982,7 +982,12 @@ function renderRulesAndTables(data) {
     // Role / State filter
     if (currentNodeRoleFilter === "online" && !n.available) return false;
     if (currentNodeRoleFilter === "issues") {
-      const isWeak = (n.rssi !== null && n.rssi !== undefined && n.rssi < -82) || (n.lqi !== null && n.lqi !== undefined && n.lqi < 64);
+      const weakLqi = n.lqi !== null && n.lqi !== undefined && (
+        n.lqi === 0 ||
+        (n.lqi === 1 && (n.rssi === null || n.rssi === undefined || n.rssi < -82)) ||
+        (n.lqi > 3 && n.lqi < 64)
+      );
+      const isWeak = (n.rssi !== null && n.rssi !== undefined && n.rssi < -82) || weakLqi;
       if (n.available && !isWeak) return false;
     } else if (currentNodeRoleFilter === "router") {
       const roleStr = (n.routing_role || "").toLowerCase();
@@ -1067,14 +1072,15 @@ function renderRulesAndTables(data) {
         const nbCount = (n.neighbor_table || []).length;
 
         let signalBadge = `<span style="color:var(--text-muted);">N/A</span>`;
+        const lqiFmt = (lqi !== null && lqi !== undefined) ? (lqi <= 3 ? `${lqi}/3` : `${lqi}/255`) : "";
         if (rssi !== null && rssi !== undefined) {
           const sigClass = rssi < -82 ? "badge-danger" : (rssi < -72 ? "badge-warning" : "badge-success");
           signalBadge = `<span class="badge ${sigClass}">${rssi} dBm</span>`;
-          if (lqi !== null && lqi !== undefined) {
-            signalBadge += ` <small style="color:var(--text-muted);">LQI ${lqi}</small>`;
+          if (lqiFmt) {
+            signalBadge += ` <small style="color:var(--text-muted);">LQI ${lqiFmt}</small>`;
           }
-        } else if (lqi !== null && lqi !== undefined) {
-          signalBadge = `<span class="badge badge-info">LQI ${lqi}/255</span>`;
+        } else if (lqiFmt) {
+          signalBadge = `<span class="badge badge-info">LQI ${lqiFmt}</span>`;
         }
 
         return `

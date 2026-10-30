@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.7] - 2026-10-30
+
+### Fixed: API Key Redaction in Logs, Supervisor `hassio_role: manager` for Log Access & OpenThread 0–3 LQI Scale
+- **Eliminated API Key Exposure in `httpx` Logs & Diagnostic Bundles**:
+  - Removed `"key"` URL query parameters from all Gemini `ListModels`, `:streamGenerateContent`, and `:generateContent` calls in `app/ai_engine.py`, passing the API key strictly via the `x-goog-api-key` HTTP header so it never appears in any request URL.
+  - Set `httpx` and `httpcore` loggers to `WARNING` and added regex secret scrubbing (`_redact_secrets`) in `_RingBufferLogHandler` and `_build_diagnostic_log_bundle()`.
+- **Fixed Supervisor API `403 Forbidden` When Reading Matter Server & OTBR Logs**:
+  - Added `hassio_role: manager` alongside `hassio_api: true` in `config.yaml` so Home Assistant Supervisor permits reading `/addons/core_matter_server/logs` and `/addons/core_openthread_border_router/logs` (populating sections `[3]` and `[4]` of the downloaded diagnostic log bundle).
+- **Fixed OpenThread Link Quality (`0–3`) vs IEEE 802.15.4 LQI (`0–255`) Scoring Scale**:
+  - Updated `ThreadAnalyzer._is_weak_lqi()`, `ThreadAnalyzer._format_lqi()`, `ThreadAnalyzer.evaluate_node_link_quality()`, `ThreadAnalyzer.build_real_mesh_topology()`, and `app/static/app.js` to properly distinguish OpenThread 2-bit Link Quality (`0–3`, where `3/3` is maximum/excellent and `2/3` is good) from 8-bit 802.15.4 LQI (`0–255`), preventing healthy nodes reporting `lqi: 3` from being falsely penalized as `"Low LQI (3/255)"`.
+
 ## [2.0.6] - 2026-10-30
 
 ### Added: Full Diagnostic Log & Telemetry Bundle Download (`Download Logs` Button)
