@@ -20,7 +20,7 @@ PERSISTENT_SETTINGS_FILES = [
 
 class AppConfig(BaseModel):
     ai_provider: str = "gemini"  # gemini, openai, anthropic
-    ai_model: str = "gemini-3.8-flash"
+    ai_model: str = "gemini-2.5-flash"
     gemini_api_key: str = ""
     openai_api_key: str = ""
     anthropic_api_key: str = ""
@@ -59,7 +59,9 @@ class AppConfig(BaseModel):
 
         # 3. Allow override from environment variables
         ai_provider = os.environ.get("AI_PROVIDER", data.get("ai_provider", "gemini"))
-        ai_model = os.environ.get("AI_MODEL", data.get("ai_model", "gemini-3.8-flash"))
+        ai_model = os.environ.get("AI_MODEL", data.get("ai_model", "gemini-2.5-flash"))
+        if ai_model in ("gemini-3.8-flash", "gemini-3-flash"):
+            ai_model = "gemini-2.5-flash"
         gemini_api_key = os.environ.get("GEMINI_API_KEY", data.get("gemini_api_key", ""))
         openai_api_key = os.environ.get("OPENAI_API_KEY", data.get("openai_api_key", ""))
         anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", data.get("anthropic_api_key", ""))

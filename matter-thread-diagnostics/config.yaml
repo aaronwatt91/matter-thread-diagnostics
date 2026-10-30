@@ -1,7 +1,7 @@
 name: "Matter & Thread AI Diagnostics"
 slug: "matter_thread_ai_diagnostics"
-version: "1.2.1"
-description: "AI-powered diagnostic engine for Matter-over-Thread mesh stability, border router synchronization, and IPv6 reachability on Home Assistant Green."
+version: "2.0.0"
+description: "Real-time Matter-over-Thread network scanner, Cluster 0x0035 telemetry inspector, mDNS Border Router discovery, IPv6 reachability tester, and AI diagnostic engine for Home Assistant."
 url: "https://github.com/aaronwatt91/matter-thread-diagnostics"
 arch:
   - aarch64
@@ -9,6 +9,7 @@ arch:
 startup: application
 boot: auto
 init: false
+host_network: true
 ingress: true
 ingress_port: 8099
 panel_icon: "mdi:resistor-nodes"
@@ -19,7 +20,7 @@ stage: stable
 
 options:
   ai_provider: "gemini"
-  ai_model: "gemini-3.8-flash"
+  ai_model: "gemini-2.5-flash"
   gemini_api_key: ""
   openai_api_key: ""
   anthropic_api_key: ""

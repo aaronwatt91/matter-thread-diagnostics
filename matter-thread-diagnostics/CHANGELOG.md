@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.0.0] - 2026-10-30
+
+### Major Overhaul: Real Multi-Protocol Network Scanner & Matter Cluster `0x0035` Telemetry
+- **Enabled `host_network: true` in `config.yaml`**:
+  - Allows the add-on container to access the host's real IPv6 routing table (`fd00::/8` Thread ULA prefixes), Neighbor Discovery cache, LAN mDNS multicast traffic, and direct ICMPv6 ping sockets.
+- **Fixed `python-matter-server` WebSocket Handshake & Added Full Cluster `0x0035` (Thread Network Diagnostics) Parser**:
+  - Properly consumes the initial unsolicited `ServerInfoMessage` greeting and matches command responses by `message_id`.
+  - Extracts real flat attributes from commissioned Matter nodes:
+    - **Basic Info (`0/40/*`)**: Vendor, Product, NodeLabel, Firmware Version, Serial Number.
+    - **General Diagnostics (`0/51/*`)**: Network interfaces, hardware MAC address, and decoded IPv6 ULA (`fd00::/8`) / link-local addresses.
+    - **Thread Network Diagnostics (`0/53/*` — Cluster `0x0035`)**: Channel (`0/53/0`), Routing Role (`0/53/1` — Leader, Router, REED, EndDevice, SleepyEndDevice), Network Name (`0/53/2`), PAN ID (`0/53/3`), Extended PAN ID (`0/53/4`), Mesh-Local Prefix (`0/53/5`), Overrun Count (`0/53/6`), full **Neighbor Table (`0/53/7`)** with real `averageRssi`, `lastRssi`, `lqi`, frame/message error rates, full **Route Table (`0/53/8`)**, error counters (`DetachedRoleCount`, `ParentChangeCount`, `AttachAttemptCount`), Extended MAC (`0/53/62`), and `RLOC16` (`0/53/63`).
+  - Cross-references Router `NeighborTable` child entries so Sleepy End Devices (SED/ICDs) inherit their parent router's measured RSSI, LQI, and `parent_rloc16`.
+  - Added on-demand **Live Node Ping** (`POST /api/matter/ping_node`) testing both `python-matter-server` `ping_node` and ICMPv6 `ping -6`.
+- **Real mDNS / Zeroconf Scanner (`_meshcop._udp.local.`, `_matter._tcp.local.`, `_matterc._udp.local.`)**:
+  - Replaced the static placeholder with a real `AsyncZeroconf` + `avahi-browse` scanner that decodes binary/ASCII MeshCoP TXT records (`nn`, `xp`, `vn`, `mn`, `tv`, `xa`, `ba`, `sb` state bitmap) and resolves Border Router IPv6/IPv4 addresses.
+- **Fixed Home Assistant `thread/discover_routers` Streaming Subscription & Added Thread Dataset TLV Decoder**:
+  - Properly subscribes to Home Assistant's `thread/discover_routers` event stream (`router_discovered` events) instead of closing after the initial `result: null` ACK.
+  - Queries `thread/get_dataset_tlv` for each dataset and decodes raw Thread 1.3 Operational Dataset TLVs (`Channel`, `PAN ID`, `Extended PAN ID`, `Network Name`, `Mesh-Local Prefix`).
+  - Removed all fake `"GOOGLE_THREAD_MESH"` / `"APPLE_THREAD_MESH"` entity-name string fabrications.
+- **Added OpenThread Border Router (OTBR) REST API Inspector (`:8081`)**:
+  - Queries `/node/state`, `/node/network-name`, `/node/ext-panid`, `/node/ext-address`, `/node/rloc16`, `/node/leader-data`, and `/node/dataset/active`.
+- **Real Topology Builder & Prominent Top-Bar Network Scanner UI**:
+  -Replaced round-robin fake topology edges with true IEEE 802.15.4 Extended Address, `NeighborTable`, and `RLOC16` (`0xFC00` router mask) link resolution.
+  - Added a top-level **Select Thread Network -> Scan Selected Network -> Ask AI to Fix Issues** workflow bar and live Border Router / Matter Cluster `0x0035` tables.
+  - Fixed default Gemini model from non-existent `gemini-3.8-flash` to `gemini-2.5-flash` with automatic 404 model fallback.
+
 ## [1.2.1] - 2026-10-30
 
 ### Fixed

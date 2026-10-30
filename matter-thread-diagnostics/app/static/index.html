@@ -15,18 +15,51 @@
       <div class="header-left">
         <div class="logo-icon"><i class="fa-solid fa-network-wired"></i></div>
         <div>
-          <h1>Matter & Thread AI Diagnostics</h1>
-          <p class="subtitle"><span class="badge badge-ha"><i class="fa-solid fa-microchip"></i> Home Assistant Green</span> AI-Powered Mesh Health & Troubleshooting</p>
+          <h1>Matter & Thread AI Diagnostics <span class="badge badge-info" style="font-size: 11px; vertical-align: middle;">v2.0 Real Scanner</span></h1>
+          <p class="subtitle"><span class="badge badge-ha"><i class="fa-solid fa-microchip"></i> Home Assistant OS</span> Live mDNS • Cluster 0x0035 Telemetry • IPv6 Pings • AI Diagnostics</p>
         </div>
       </div>
       <div class="header-right">
         <div id="ai-status-badge" class="badge badge-warning">
           <i class="fa-solid fa-circle-notch fa-spin"></i> Checking AI...
         </div>
-        <button id="btn-refresh" class="btn btn-secondary" title="Refresh Live Data"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-        <button id="btn-open-settings" class="btn btn-icon" title="Settings"><i class="fa-solid fa-gear"></i></button>
+        <button id="btn-refresh" class="btn btn-secondary" title="Run Full Live Scan"><i class="fa-solid fa-satellite-dish"></i> Full Scan</button>
+        <button id="btn-open-settings" class="btn btn-icon" title="Settings & API Keys"><i class="fa-solid fa-gear"></i></button>
       </div>
     </header>
+
+    <!-- PROMINENT NETWORK SELECTOR & SCANNER BAR -->
+    <section class="card" style="padding: 16px 20px; margin-bottom: 20px; border: 1px solid rgba(3, 169, 244, 0.45); background: linear-gradient(180deg, rgba(3, 169, 244, 0.08), rgba(31, 41, 55, 0.95));">
+      <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 280px;">
+          <label for="top-thread-network" style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 6px;">
+            <i class="fa-solid fa-tower-cell"></i> 1. Select Thread Network to Inspect
+          </label>
+          <select id="top-thread-network" class="form-control" style="font-weight: 600;">
+            <option value="">All Discovered Thread Networks (Full Mesh Scan)</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button type="button" id="btn-top-refresh-nets" class="btn btn-secondary" title="Discover Thread networks via HA, mDNS & OTBR">
+            <i class="fa-solid fa-magnifying-glass-chart"></i> Discover Networks
+          </button>
+          <button type="button" id="btn-top-scan" class="btn btn-primary" title="Scan selected Thread network across mDNS, Matter Cluster 0x0035, OTBR, and IPv6">
+            <i class="fa-solid fa-satellite-dish"></i> 2. Scan Selected Network
+          </button>
+          <button type="button" id="btn-top-ai" class="btn btn-outline" style="border-color: #10b981; color: #34d399;" title="Send live scan telemetry to AI for root-cause troubleshooting">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> 3. Ask AI to Fix Issues
+          </button>
+        </div>
+      </div>
+
+      <!-- Selected Network Live Metadata Strip -->
+      <div id="selected-network-strip" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text-muted);">
+        <div id="selected-network-badges" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span><i class="fa-solid fa-circle-info"></i> Scanning for local Thread Border Routers, datasets, and Matter nodes...</span>
+        </div>
+        <div id="top-scan-feedback" style="font-weight: 600;"></div>
+      </div>
+    </section>
 
     <!-- Top KPI Cards -->
     <section class="kpi-grid">
@@ -45,7 +78,7 @@
           <i class="fa-solid fa-circle-nodes kpi-icon"></i>
         </div>
         <div class="kpi-value" id="split-status">--</div>
-        <div class="kpi-status" id="split-desc">Checking PAN IDs...</div>
+        <div class="kpi-status" id="split-desc">Checking Extended PAN IDs...</div>
       </div>
 
       <div class="kpi-card" id="kpi-rf">
@@ -54,115 +87,90 @@
           <i class="fa-solid fa-wifi kpi-icon"></i>
         </div>
         <div class="kpi-value" id="rf-status">--</div>
-        <div class="kpi-status" id="rf-desc">Checking Channel overlap...</div>
+        <div class="kpi-status" id="rf-desc">Checking 802.15.4 Channel...</div>
       </div>
 
       <div class="kpi-card" id="kpi-ipv6">
         <div class="kpi-header">
-          <span class="kpi-title">IPv6 Thread Routes</span>
+          <span class="kpi-title">IPv6 ULA & Ping Probes</span>
           <i class="fa-solid fa-route kpi-icon"></i>
         </div>
         <div class="kpi-value" id="ipv6-status">--</div>
-        <div class="kpi-status" id="ipv6-desc">Checking ULA prefix...</div>
+        <div class="kpi-status" id="ipv6-desc">Checking fd00::/8 routes...</div>
       </div>
     </section>
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-      <button class="tab-btn active" data-tab="tab-ai"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio</button>
+      <button class="tab-btn active" data-tab="tab-rules"><i class="fa-solid fa-microscope"></i> Live Scan & Nodes (Cluster 0x0035)</button>
       <button class="tab-btn" data-tab="tab-topology"><i class="fa-solid fa-diagram-project"></i> Live Mesh Topology</button>
-      <button class="tab-btn" data-tab="tab-rules"><i class="fa-solid fa-list-check"></i> Rule & Network Breakdown</button>
-      <button class="tab-btn" data-tab="tab-manual"><i class="fa-solid fa-file-code"></i> Log & Diagnostic Analyzer</button>
+      <button class="tab-btn" data-tab="tab-ai"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio</button>
+      <button class="tab-btn" data-tab="tab-manual"><i class="fa-solid fa-file-code"></i> Log & Raw JSON Analyzer</button>
       <button class="tab-btn" data-tab="tab-settings"><i class="fa-solid fa-sliders"></i> Settings & API Keys</button>
     </nav>
 
-    <!-- Active Target Thread Network Banner -->
-    <div id="active-network-banner" style="display: none; margin-bottom: 16px; padding: 10px 16px; background: rgba(3, 169, 244, 0.12); border: 1px solid rgba(3, 169, 244, 0.4); border-radius: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-      <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
-        <i class="fa-solid fa-satellite-dish" style="color: var(--ha-primary-color); font-size: 16px;"></i>
-        <span><strong>Target Thread Network:</strong> <span id="active-network-name">--</span></span>
-        <span id="active-network-pan" class="badge badge-info" style="font-size: 11px;"></span>
-        <span id="active-network-channel" class="badge" style="background: rgba(255,255,255,0.1); font-size: 11px;"></span>
-      </div>
-      <div style="display: flex; gap: 8px;">
-        <button type="button" id="btn-banner-rescan" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> Scan</button>
-        <button type="button" id="btn-banner-change" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-sliders"></i> Change Network</button>
-      </div>
-    </div>
-
-    <!-- TAB 1: AI Diagnostics Studio -->
-    <section id="tab-ai" class="tab-content active">
-      <div class="ai-studio-panel">
-        <div class="ai-controls card">
-          <h3><i class="fa-solid fa-robot"></i> Run AI Diagnosis</h3>
-          <p class="section-desc">The AI will analyze your Thread mesh topology, Border Router synchronization, Wi-Fi channel coexistence, IPv6 routing, and Matter server telemetry.</p>
-          
-          <div class="form-group">
-            <label for="user-symptoms">Observed Symptoms / User Notes (Optional):</label>
-            <textarea id="user-symptoms" rows="2" placeholder="e.g. Eve sensor takes 10s to respond, Nanoleaf bulb drops offline after router reboot, or Apple Home device won't pair to HA..."></textarea>
-          </div>
-
-          <div class="action-buttons">
-            <button id="btn-run-ai" class="btn btn-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> Run AI Diagnosis</button>
-          </div>
-        </div>
-
-        <div id="ai-loading-indicator" class="loading-container hidden">
-          <div class="spinner"></div>
-          <p id="loading-text">Analyzing Matter fabrics, Thread datasets, and RF interference...</p>
-        </div>
-
-        <div id="ai-results-container" class="card ai-report-card hidden">
-          <div class="report-header">
-            <h3><i class="fa-solid fa-clipboard-check"></i> AI Diagnostic Report</h3>
-            <span id="report-model-badge" class="badge badge-info">Gemini 2.0 Flash</span>
-          </div>
-          <div id="ai-report-body" class="markdown-body">
-            <!-- Rendered by marked.js -->
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- TAB 2: Topology Graph -->
-    <section id="tab-topology" class="tab-content">
+    <!-- TAB 1: Live Scan, Border Routers, Matter Cluster 0x0035 Nodes & Rules -->
+    <section id="tab-rules" class="tab-content active">
+      <!-- Discovered Border Routers Table -->
       <div class="card">
         <div class="card-header-flex">
           <div>
-            <h3><i class="fa-solid fa-diagram-project"></i> Interactive Thread Mesh Topology</h3>
-            <p class="section-desc">Visualizes Border Routers (Nest Wifi Pro, Apple TV, SkyConnect), Leader Routers, and End Devices.</p>
+            <h3><i class="fa-solid fa-tower-broadcast"></i> Discovered Thread Border Routers (mDNS <code>_meshcop._udp</code>, HA &amp; OTBR)</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Live Border Routers advertising on your LAN with their actual Extended PAN ID, Channel, Mesh-Local Prefix, and ICMPv6 reachability.</p>
           </div>
-          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-            <button id="btn-refresh-topology" class="btn btn-primary" title="Re-scan and refresh Thread mesh topology"><i class="fa-solid fa-arrows-rotate"></i> Refresh Topology</button>
-          </div>
+          <span id="br-table-count" class="badge badge-info">0 Routers</span>
         </div>
-
-        <div class="topology-legend" style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-bottom: 12px;">
-          <span><span class="dot" style="background: #4285F4;"></span> Google Nest Wifi Pro</span>
-          <span><span class="dot" style="background: #94a3b8;"></span> Apple TV / HomePod</span>
-          <span><span class="dot" style="background: #03A9F4;"></span> HA Green / SkyConnect</span>
-          <span><span class="dot dot-router"></span> Mains Router</span>
-          <span><span class="dot dot-end"></span> Battery Sensor</span>
-          <span><span class="dot dot-weak"></span> Weak Link</span>
-          <span><span class="dot dot-offline"></span> Offline</span>
-        </div>
-
-        <div id="topology-canvas-container">
-          <svg id="mesh-svg" width="100%" height="450"></svg>
-        </div>
-        <div id="topology-status-bar" style="font-size: 12px; color: var(--text-muted); margin-top: 8px; display: flex; justify-content: space-between;">
-          <span id="topology-last-scan">Ready to scan mesh</span>
-          <span id="topology-router-count"></span>
-        </div>
-        <div id="node-inspector" class="node-inspector-panel hidden">
-          <h4 id="inspector-title">Device Inspector</h4>
-          <div id="inspector-content">Click a node to inspect its attributes, IPv6 address, and RF status.</div>
+        <div style="overflow-x: auto;">
+          <table id="table-border-routers" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted);">
+                <th style="padding: 10px 8px;">Border Router</th>
+                <th style="padding: 10px 8px;">Thread Network</th>
+                <th style="padding: 10px 8px;">Extended PAN ID</th>
+                <th style="padding: 10px 8px;">Channel / PAN</th>
+                <th style="padding: 10px 8px;">IPv6 / IPv4 Address</th>
+                <th style="padding: 10px 8px;">Discovery Source</th>
+                <th style="padding: 10px 8px;">Ping RTT</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-border-routers">
+              <tr><td colspan="7" style="padding: 16px; color: var(--text-muted); text-align: center;">Scanning for Thread Border Routers...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
-    </section>
 
-    <!-- TAB 3: Rules & Network Breakdown -->
-    <section id="tab-rules" class="tab-content">
+      <!-- Commissioned Matter Nodes (Cluster 0x0035) Table -->
+      <div class="card">
+        <div class="card-header-flex">
+          <div>
+            <h3><i class="fa-solid fa-microchip"></i> Commissioned Matter Nodes &amp; Thread Cluster <code>0x0035</code> Telemetry</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Real-time attributes queried from <code>python-matter-server</code>: Routing Role, RLOC16, Extended PAN ID, Neighbor Table RSSI/LQI, Parent RLOC16, and live Ping test.</p>
+          </div>
+          <span id="matter-table-count" class="badge badge-info">0 Nodes</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table id="table-matter-nodes" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted);">
+                <th style="padding: 10px 8px;">ID</th>
+                <th style="padding: 10px 8px;">Device / Vendor</th>
+                <th style="padding: 10px 8px;">Role &amp; RLOC16</th>
+                <th style="padding: 10px 8px;">Extended PAN ID</th>
+                <th style="padding: 10px 8px;">RF Signal (RSSI / LQI)</th>
+                <th style="padding: 10px 8px;">Neighbors / Counters</th>
+                <th style="padding: 10px 8px;">Thread IPv6 ULA</th>
+                <th style="padding: 10px 8px;">Live Test</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-matter-nodes">
+              <tr><td colspan="8" style="padding: 16px; color: var(--text-muted); text-align: center;">Querying Matter Server WebSocket...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4 Deterministic Diagnostic Rule Cards -->
       <div class="rules-grid">
         <!-- Split Network Card -->
         <div class="card rule-card">
@@ -170,7 +178,7 @@
             <i class="fa-solid fa-arrows-split-up-and-left rule-icon"></i>
             <div>
               <h4>1. Multi-Border Router Synchronization</h4>
-              <p class="rule-subtitle">Thread 1.3 Split Mesh Detection</p>
+              <p class="rule-subtitle">Thread 1.3/1.4 Extended PAN ID &amp; Dataset Verification</p>
             </div>
             <span id="rule-badge-split" class="badge">--</span>
           </div>
@@ -184,7 +192,7 @@
             <i class="fa-solid fa-tower-broadcast rule-icon"></i>
             <div>
               <h4>2. 2.4 GHz RF Coexistence</h4>
-              <p class="rule-subtitle">Thread vs 20MHz Wi-Fi Channels (1, 6, 11)</p>
+              <p class="rule-subtitle">Thread 802.15.4 Channel vs 20MHz Wi-Fi (1, 6, 11)</p>
             </div>
             <span id="rule-badge-rf" class="badge">--</span>
           </div>
@@ -194,7 +202,7 @@
               <span class="rf-zone z1">Wi-Fi Ch 1 (Thread 11-14)</span>
               <span class="rf-zone z2">Wi-Fi Ch 6 (Thread 16-19)</span>
               <span class="rf-zone z3">Wi-Fi Ch 11 (Thread 21-24)</span>
-              <span class="rf-zone z-safe">Thread Ch 25 (Clean)</span>
+              <span class="rf-zone z-safe">Thread Ch 25-26 (Clean)</span>
             </div>
           </div>
         </div>
@@ -204,8 +212,8 @@
           <div class="rule-card-header">
             <i class="fa-solid fa-globe rule-icon"></i>
             <div>
-              <h4>3. IPv6 ULA & RIO Route Advertisements</h4>
-              <p class="rule-subtitle">Host Kernel Route to Thread Prefix (fd00::/8)</p>
+              <h4>3. Host Kernel IPv6 ULA Routes &amp; ICMPv6 Pings</h4>
+              <p class="rule-subtitle">Kernel Route Table (<code>ip -6 route</code>) &amp; Active Reachability</p>
             </div>
             <span id="rule-badge-ipv6" class="badge">--</span>
           </div>
@@ -213,13 +221,13 @@
           <div id="ipv6-routes-detail" class="detail-box mono-box"></div>
         </div>
 
-        <!-- Node Quality Card -->
+        <!-- Node Quality & Logs Card -->
         <div class="card rule-card">
           <div class="rule-card-header">
             <i class="fa-solid fa-signal rule-icon"></i>
             <div>
-              <h4>4. Node Link Attenuation & ICD Health</h4>
-              <p class="rule-subtitle">LQI, RSSI (&lt; -82 dBm), and Sleepy Polling</p>
+              <h4>4. Node Link Quality &amp; Server Logs</h4>
+              <p class="rule-subtitle">Cluster 0x0035 Attenuation, ICD Health &amp; Add-on Errors</p>
             </div>
             <span id="rule-badge-nodes" class="badge">--</span>
           </div>
@@ -229,32 +237,108 @@
       </div>
     </section>
 
-    <!-- TAB 4: Manual Log Analyzer -->
-    <section id="tab-manual" class="tab-content">
+    <!-- TAB 2: Topology Graph -->
+    <section id="tab-topology" class="tab-content">
       <div class="card">
-        <h3><i class="fa-solid fa-file-code"></i> External Diagnostic Log & JSON Analyzer</h3>
-        <p class="section-desc">Paste Matter server logs, OpenThread Border Router logs, or Apple/Google Home Thread JSON diagnostics for deep AI analysis.</p>
-        
-        <div class="form-group">
-          <label for="manual-log-input">Paste Logs or Diagnostics JSON:</label>
-          <textarea id="manual-log-input" rows="12" class="mono-textarea" placeholder="Paste python-matter-server log excerpts, 'ot-ctl' terminal output, or Home Assistant diagnostics JSON here..."></textarea>
+        <div class="card-header-flex">
+          <div>
+            <h3><i class="fa-solid fa-diagram-project"></i> Real Thread Mesh Topology (Cluster <code>0x0035</code> Neighbor &amp; RLOC16 Links)</h3>
+            <p class="section-desc">Constructed from live IEEE 802.15.4 Extended Addresses, RLOC16 parent-child bitmasks (<code>0xFC00</code>), and Neighbor Tables.</p>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <button id="btn-refresh-topology" class="btn btn-primary" title="Re-scan and refresh Thread mesh topology"><i class="fa-solid fa-arrows-rotate"></i> Rescan Topology</button>
+          </div>
         </div>
 
-        <button id="btn-analyze-manual" class="btn btn-primary"><i class="fa-solid fa-magnifying-glass"></i> Diagnose Logs with AI</button>
+        <div class="topology-legend" style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-bottom: 12px;">
+          <span><span class="dot" style="background: #4285F4;"></span> Google Nest Border Router</span>
+          <span><span class="dot" style="background: #94a3b8;"></span> Apple TV / HomePod TBR</span>
+          <span><span class="dot" style="background: #03A9F4;"></span> HA OTBR (ZBT-1 / SkyConnect)</span>
+          <span><span class="dot dot-router"></span> Thread Router / REED</span>
+          <span><span class="dot dot-end"></span> End Device / Sleepy (SED)</span>
+          <span><span class="dot dot-weak"></span> Weak Link (&lt; -82 dBm)</span>
+          <span><span class="dot dot-offline"></span> Offline / Unreachable</span>
+        </div>
+
+        <div id="topology-canvas-container">
+          <svg id="mesh-svg" width="100%" height="460"></svg>
+        </div>
+        <div id="topology-status-bar" style="font-size: 12px; color: var(--text-muted); margin-top: 8px; display: flex; justify-content: space-between;">
+          <span id="topology-last-scan">Ready to scan mesh</span>
+          <span id="topology-router-count"></span>
+        </div>
+        <div id="node-inspector" class="node-inspector-panel hidden">
+          <h4 id="inspector-title">Device Inspector</h4>
+          <div id="inspector-content">Click a node to inspect its real Cluster 0x0035 attributes, RLOC16, IPv6 address, and RF link status.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: AI Diagnostics Studio -->
+    <section id="tab-ai" class="tab-content">
+      <div class="ai-studio-panel">
+        <div class="ai-controls card">
+          <h3><i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine</h3>
+          <p class="section-desc">Sends your real scanned telemetry (selected Thread network, mDNS Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your configured AI model for specific remediation steps.</p>
+          
+          <div class="form-group">
+            <label for="user-symptoms">Observed Symptoms / Questions for AI (Optional):</label>
+            <textarea id="user-symptoms" rows="2" placeholder="e.g. Node 4 drops offline overnight, my Apple TV and HA ZBT-1 show different PAN IDs, or pings to fd00:: addresses time out..."></textarea>
+          </div>
+
+          <div class="action-buttons">
+            <button id="btn-run-ai" class="btn btn-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> Run AI Diagnosis on Live Scan</button>
+          </div>
+        </div>
+
+        <div id="ai-loading-indicator" class="loading-container hidden">
+          <div class="spinner"></div>
+          <p id="loading-text">Analyzing live Matter Cluster 0x0035 telemetry, Thread datasets, and IPv6 routing...</p>
+        </div>
+
+        <div id="ai-results-container" class="card ai-report-card hidden">
+          <div class="report-header">
+            <h3><i class="fa-solid fa-clipboard-check"></i> AI Diagnostic Report</h3>
+            <span id="report-model-badge" class="badge badge-info">Gemini 2.5 Flash</span>
+          </div>
+          <div id="ai-report-body" class="markdown-body">
+            <!-- Rendered by marked.js -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Manual Log & Raw Telemetry Analyzer -->
+    <section id="tab-manual" class="tab-content">
+      <div class="card">
+        <div class="card-header-flex">
+          <div>
+            <h3><i class="fa-solid fa-file-code"></i> Raw Telemetry Inspector &amp; Log Analyzer</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Load the raw JSON from your latest live network scan or paste external Matter/OTBR logs for AI analysis.</p>
+          </div>
+          <button type="button" id="btn-load-raw-scan" class="btn btn-secondary" style="font-size: 12px;"><i class="fa-solid fa-download"></i> Load Latest Live Scan JSON</button>
+        </div>
+        
+        <div class="form-group" style="margin-top: 14px;">
+          <label for="manual-log-input">Raw Scan Telemetry JSON or Diagnostic Logs:</label>
+          <textarea id="manual-log-input" rows="14" class="mono-textarea" placeholder="Click 'Load Latest Live Scan JSON' above to inspect the exact raw telemetry collected from your network, or paste python-matter-server / ot-ctl logs here..."></textarea>
+        </div>
+
+        <button id="btn-analyze-manual" class="btn btn-primary"><i class="fa-solid fa-magnifying-glass"></i> Diagnose with AI</button>
       </div>
     </section>
 
     <!-- TAB 5: Settings -->
     <section id="tab-settings" class="tab-content">
       <div class="card settings-card">
-        <h3><i class="fa-solid fa-sliders"></i> AI Configuration</h3>
-        <p class="section-desc">Choose your preferred Cloud AI provider and enter your API key. Keys are securely stored inside Home Assistant.</p>
+        <h3><i class="fa-solid fa-sliders"></i> AI Provider &amp; Endpoint Configuration</h3>
+        <p class="section-desc">Choose your Cloud AI provider and enter your API key. Keys are stored locally inside Home Assistant's persistent <code>/data</code> volume.</p>
 
         <form id="settings-form">
           <div class="form-group">
             <label for="cfg-provider">AI Provider:</label>
             <select id="cfg-provider" class="form-control">
-              <option value="gemini">Google Gemini (Recommended - Fast & Cost-effective)</option>
+              <option value="gemini">Google Gemini (Recommended - Fast &amp; Free Tier Available)</option>
               <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
               <option value="anthropic">Anthropic Claude (Claude 3.5 Sonnet / Haiku)</option>
             </select>
@@ -263,9 +347,9 @@
           <div class="form-group">
             <label for="cfg-model">Model:</label>
             <select id="cfg-model" class="form-control">
-              <option value="gemini-3.8-flash">Gemini 3.8 Flash (Recommended / Default)</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended / Default)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
               <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
             </select>
           </div>
@@ -276,7 +360,7 @@
               <input type="password" id="cfg-gemini-key" class="form-control" placeholder="AIzaSy...">
               <button type="button" class="btn-toggle-pw" data-target="cfg-gemini-key"><i class="fa-solid fa-eye"></i></button>
             </div>
-            <small class="help-text">Get a free Gemini API key at <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</small>
+            <small class="help-text">Get a Gemini API key at <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</small>
           </div>
 
           <div class="form-group hidden" id="group-openai-key">
@@ -300,6 +384,13 @@
           <div class="form-group">
             <label for="cfg-matter-url">Matter Server WebSocket URL:</label>
             <input type="text" id="cfg-matter-url" class="form-control" value="ws://core-matter-server:5580/ws">
+            <small class="help-text">Automatically falls back to <code>ws://localhost:5580/ws</code> if running in host network mode.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-otbr-url">OpenThread Border Router (OTBR) REST URL:</label>
+            <input type="text" id="cfg-otbr-url" class="form-control" value="http://core-openthread-border-router:8081">
+            <small class="help-text">Automatically falls back to <code>http://localhost:8081</code> when OTBR runs on host network.</small>
           </div>
 
           <div class="form-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -308,34 +399,32 @@
             <span id="settings-save-status" class="save-feedback"></span>
           </div>
           <div id="ai-test-result" style="margin-top: 14px; font-size: 13px;" class="hidden"></div>
-
         </form>
       </div>
 
-      <!-- Thread Network Selection Card -->
+      <!-- Thread Network Selection Card (Synced with Top Scanner Bar) -->
       <div class="card settings-card" style="margin-top: 20px;">
         <div class="card-header-flex">
           <div>
-            <h3><i class="fa-solid fa-diagram-project"></i> Home Assistant Thread Networks</h3>
-            <p class="section-desc">Select which Thread network to scan and evaluate. This list is queried directly from Home Assistant's Thread datasets and Border Routers.</p>
+            <h3><i class="fa-solid fa-diagram-project"></i> Discovered Thread Networks</h3>
+            <p class="section-desc">Select which Thread network to scan and evaluate. Synchronized with the top Network Scanner bar.</p>
           </div>
-          <button type="button" id="btn-refresh-thread-networks" class="btn btn-outline" style="font-size: 12px; padding: 6px 12px;" title="Reload Thread networks from Home Assistant"><i class="fa-solid fa-arrows-rotate"></i> Refresh Network List</button>
+          <button type="button" id="btn-refresh-thread-networks" class="btn btn-outline" style="font-size: 12px; padding: 6px 12px;"><i class="fa-solid fa-arrows-rotate"></i> Refresh Network List</button>
         </div>
 
         <div class="form-group" style="margin-top: 14px;">
           <label for="cfg-thread-network">Available Thread Networks:</label>
           <select id="cfg-thread-network" class="form-control">
-            <option value="">Auto-Detect / All Available Networks (Default)</option>
+            <option value="">All Discovered Thread Networks (Full Mesh Scan)</option>
           </select>
-          <small class="help-text" id="thread-network-help">Includes Google Nest Wifi Pro, Apple TV 4K/HomePod, and Home Assistant datasets.</small>
           <div id="thread-networks-count-status" style="font-size: 12px; margin-top: 6px; color: var(--text-muted);"></div>
         </div>
 
         <div id="thread-network-details-box" class="detail-box" style="margin-top: 12px; display: none;"></div>
 
         <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-          <button type="button" id="btn-scan-selected-network" class="btn btn-primary"><i class="fa-solid fa-satellite-dish"></i> Scan</button>
-          <button type="button" id="btn-reset-thread-network" class="btn btn-outline"><i class="fa-solid fa-rotate-left"></i> Reset to Auto-Detect</button>
+          <button type="button" id="btn-scan-selected-network" class="btn btn-primary"><i class="fa-solid fa-satellite-dish"></i> Scan Selected Network</button>
+          <button type="button" id="btn-reset-thread-network" class="btn btn-outline"><i class="fa-solid fa-rotate-left"></i> Reset to All Networks</button>
           <span id="scan-feedback" class="save-feedback"></span>
         </div>
       </div>
