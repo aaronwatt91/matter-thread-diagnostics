@@ -111,11 +111,13 @@ class ThreadAnalyzer:
 
     @classmethod
     def detect_split_networks(cls, border_routers: List[Dict[str, Any]],
-                               active_datasets: List[Dict[str, Any]],
-                               device_registry: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                              active_datasets: List[Dict[str, Any]],
+                              device_registry: Optional[List[Dict[str, Any]]] = None,
+                              target_network_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Detect if multiple Thread Border Routers (Nest Wifi Pro, Apple TV, SkyConnect)
         are operating on separate/split Thread networks instead of forming a single mesh.
+        Optionally evaluates against a user-selected target Thread network.
         """
         networks: Dict[str, List[Dict[str, Any]]] = {}
         all_discovered_routers: List[Dict[str, Any]] = []
@@ -224,6 +226,22 @@ class ThreadAnalyzer:
         num_distinct_networks = len(valid_network_keys)
         is_split = num_distinct_networks > 1
 
+        # Evaluate against selected target network if provided
+        target_matched = []
+        target_mismatched = []
+        if target_network_id:
+            tid_upper = target_network_id.upper()
+            tid_lower = target_network_id.lower()
+            for r in all_discovered_routers:
+                rxpan = (r.get("extended_pan_id") or "").upper()
+                rname = (r.get("network_name") or r.get("name") or "").lower()
+                matches = (tid_upper in rxpan or tid_lower in rname or target_network_id == r.get("server"))
+                r["is_target_network"] = matches
+                if matches:
+                    target_matched.append(r)
+                else:
+                    target_mismatched.append(r)
+
         # Build custom summary and step-by-step guidance
         if is_split:
             if found_nest_wifi_pro:
@@ -257,6 +275,10 @@ class ThreadAnalyzer:
                 summary = "Thread Border Routers appear synchronized on a single Extended PAN ID."
                 recommendation = "Thread mesh synchronization is healthy."
 
+        if target_network_id and target_mismatched:
+            mismatched_names = ", ".join(f"{r['name']} ({r.get('extended_pan_id', '')[:8]}...)" for r in target_mismatched)
+            summary += f" [Target Network Notice: {len(target_mismatched)} router(s) ({mismatched_names}) are not joined to selected network '{target_network_id}']"
+
         return {
             "is_split_network": is_split,
             "distinct_network_count": max(num_distinct_networks, 1),
@@ -264,6 +286,9 @@ class ThreadAnalyzer:
             "all_discovered_routers": all_discovered_routers,
             "found_nest_wifi_pro": found_nest_wifi_pro,
             "found_ha_router": found_ha_router,
+            "target_network_id": target_network_id,
+            "target_matched_count": len(target_matched),
+            "target_mismatched_count": len(target_mismatched),
             "summary": summary,
             "recommendation": recommendation
         }

@@ -76,6 +76,20 @@
       <button class="tab-btn" data-tab="tab-settings"><i class="fa-solid fa-sliders"></i> Settings & API Keys</button>
     </nav>
 
+    <!-- Active Target Thread Network Banner -->
+    <div id="active-network-banner" style="display: none; margin-bottom: 16px; padding: 10px 16px; background: rgba(3, 169, 244, 0.12); border: 1px solid rgba(3, 169, 244, 0.4); border-radius: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+        <i class="fa-solid fa-satellite-dish" style="color: var(--ha-primary-color); font-size: 16px;"></i>
+        <span><strong>Target Thread Network:</strong> <span id="active-network-name">--</span></span>
+        <span id="active-network-pan" class="badge badge-info" style="font-size: 11px;"></span>
+        <span id="active-network-channel" class="badge" style="background: rgba(255,255,255,0.1); font-size: 11px;"></span>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" id="btn-banner-rescan" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> Re-Scan</button>
+        <button type="button" id="btn-banner-change" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-sliders"></i> Change Network</button>
+      </div>
+    </div>
+
     <!-- TAB 1: AI Diagnostics Studio -->
     <section id="tab-ai" class="tab-content active">
       <div class="ai-studio-panel">
@@ -296,6 +310,33 @@
           <div id="ai-test-result" style="margin-top: 14px; font-size: 13px;" class="hidden"></div>
 
         </form>
+      </div>
+
+      <!-- Thread Network Selection Card -->
+      <div class="card settings-card" style="margin-top: 20px;">
+        <div class="card-header-flex">
+          <div>
+            <h3><i class="fa-solid fa-diagram-project"></i> Home Assistant Thread Networks</h3>
+            <p class="section-desc">Select which Thread network to scan and evaluate. This list is queried directly from Home Assistant's Thread datasets and Border Routers.</p>
+          </div>
+          <button type="button" id="btn-refresh-thread-networks" class="btn btn-outline" style="font-size: 12px; padding: 6px 12px;" title="Reload Thread networks from Home Assistant"><i class="fa-solid fa-arrows-rotate"></i> Refresh Network List</button>
+        </div>
+
+        <div class="form-group" style="margin-top: 14px;">
+          <label for="cfg-thread-network">Available Thread Networks:</label>
+          <select id="cfg-thread-network" class="form-control">
+            <option value="">Auto-Detect / All Available Networks (Default)</option>
+          </select>
+          <small class="help-text" id="thread-network-help">Includes Google Nest Wifi Pro, Apple TV 4K/HomePod, and Home Assistant datasets.</small>
+        </div>
+
+        <div id="thread-network-details-box" class="detail-box" style="margin-top: 12px; display: none;"></div>
+
+        <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button type="button" id="btn-scan-selected-network" class="btn btn-primary"><i class="fa-solid fa-satellite-dish"></i> Scan My Actual Network</button>
+          <button type="button" id="btn-reset-thread-network" class="btn btn-outline"><i class="fa-solid fa-rotate-left"></i> Reset to Auto-Detect</button>
+          <span id="scan-feedback" class="save-feedback"></span>
+        </div>
       </div>
     </section>
   </div>

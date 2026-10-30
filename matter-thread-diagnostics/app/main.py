@@ -22,7 +22,7 @@ from ai_engine import AIDiagnosticEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("matter_thread_ai.main")
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="1.1.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="1.2.0")
 
 # Setup clients
 ha_client = HAClient(
@@ -45,6 +45,11 @@ class ConfigUpdateRequest(BaseModel):
     anthropic_api_key: Optional[str] = None
     matter_server_url: Optional[str] = None
     otbr_url: Optional[str] = None
+    target_thread_network: Optional[str] = None
+
+
+class SelectThreadNetworkRequest(BaseModel):
+    network_id: str
 
 
 class RunDiagnosisRequest(BaseModel):
@@ -73,6 +78,7 @@ async def get_status():
         "anthropic_key_preview": (config.anthropic_api_key[:8] + "...") if config.anthropic_api_key else "",
         "matter_server_url": config.matter_server_url,
         "otbr_url": config.otbr_url,
+        "target_thread_network": config.target_thread_network,
     }
 
 
@@ -87,7 +93,30 @@ async def update_config(req: ConfigUpdateRequest):
         "has_gemini_key": bool(config.gemini_api_key),
         "has_openai_key": bool(config.openai_api_key),
         "has_anthropic_key": bool(config.anthropic_api_key),
+        "target_thread_network": config.target_thread_network,
     }}
+
+
+@app.get("/api/thread/networks")
+async def get_thread_networks():
+    """Return all Thread networks available in Home Assistant."""
+    networks = await ha_client.get_all_available_thread_networks()
+    return {
+        "networks": networks,
+        "selected_network": config.target_thread_network
+    }
+
+
+@app.post("/api/thread/select_and_scan")
+async def select_and_scan_network(req: SelectThreadNetworkRequest):
+    """Save selected target Thread network and run full fresh network scan."""
+    config.save_options({"target_thread_network": req.network_id})
+    telemetry = await gather_full_telemetry()
+    return {
+        "status": "ok",
+        "selected_network": config.target_thread_network,
+        "telemetry": telemetry
+    }
 
 
 @app.post("/api/test_ai")
@@ -123,24 +152,21 @@ async def gather_full_telemetry() -> Dict[str, Any]:
     thread_datasets_res = await ha_client.get_thread_datasets()
     thread_routers_res = await ha_client.get_thread_routers()
     device_registry = await ha_client.get_device_registry()
+    available_networks = await ha_client.get_all_available_thread_networks()
 
     # 4. Host Network & IPv6
     ipv6_inspection = await NetworkChecker.inspect_ipv6_routes()
     mdns_info = await NetworkChecker.inspect_mdns_discovery()
 
-    # 5. Extract active thread channel from dataset or default
-    active_channel = None
+    # 5. Extract datasets list
     datasets_list = []
     if isinstance(thread_datasets_res, dict):
         res_data = thread_datasets_res.get("result", {})
         if isinstance(res_data, dict) and "datasets" in res_data:
-            datasets_list = res_data["datasets"]
+            d_items = res_data["datasets"]
+            datasets_list = d_items if isinstance(d_items, list) else list(d_items.values())
         elif isinstance(res_data, list):
             datasets_list = res_data
-        for d in datasets_list:
-            if d.get("channel"):
-                active_channel = d.get("channel")
-                break
 
     # 6. Extract Thread Border Routers (Nest Wifi Pro, Apple TV, SkyConnect)
     routers_list = []
@@ -151,13 +177,42 @@ async def gather_full_telemetry() -> Dict[str, Any]:
         elif isinstance(r_data, list):
             routers_list = r_data
 
-    # 7. Recent logs
+    # 7. Identify active target network & channel
+    target_net = None
+    target_id = config.target_thread_network
+    if target_id:
+        for net in available_networks:
+            if net.get("id") == target_id or net.get("extended_pan_id") == target_id or net.get("name") == target_id:
+                target_net = net
+                break
+
+    # Prioritize active channel from selected target network, then dataset, then routers
+    active_channel = None
+    if target_net and target_net.get("channel"):
+        active_channel = target_net["channel"]
+    else:
+        for d in datasets_list:
+            if d.get("channel"):
+                active_channel = d.get("channel")
+                break
+        if not active_channel:
+            for r in routers_list:
+                if r.get("channel"):
+                    active_channel = r.get("channel")
+                    break
+
+    # 8. Recent logs
     matter_logs = await ha_client.get_addon_logs("core_matter_server", lines=100)
     otbr_logs = await ha_client.get_addon_logs("core_openthread_border_router", lines=100)
 
-    # 8. Deterministic analysis (integrating Nest Wifi Pro recognition)
+    # 9. Deterministic analysis (integrating target network evaluation)
     rf_analysis = ThreadAnalyzer.analyze_rf_coexistence(active_channel)
-    split_net_analysis = ThreadAnalyzer.detect_split_networks(routers_list, datasets_list, device_registry=device_registry)
+    split_net_analysis = ThreadAnalyzer.detect_split_networks(
+        routers_list,
+        datasets_list,
+        device_registry=device_registry,
+        target_network_id=target_id
+    )
     node_quality = ThreadAnalyzer.evaluate_node_link_quality(matter_info.get("nodes", []))
 
     # Calculate overall pre-heuristic health score (0-100)
@@ -175,6 +230,8 @@ async def gather_full_telemetry() -> Dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "hardware_platform": "Home Assistant Green (Cortex-A55, HAOS)",
         "summary_score": base_score,
+        "selected_target_network": target_net,
+        "available_thread_networks": available_networks,
         "rule_evaluations": {
             "split_network": split_net_analysis,
             "rf_coexistence": rf_analysis,
@@ -248,13 +305,16 @@ async def get_topology():
     """
     Return dynamic graph data (nodes & edges) for the interactive mesh visualization.
     Uses strictly 100% real live discovered Border Routers and Matter nodes.
+    Highlights nodes that belong to the active target network.
     """
     telemetry = await gather_full_telemetry()
     matter_nodes = telemetry["telemetry"]["matter_server"].get("nodes", [])
     discovered_routers = telemetry["rule_evaluations"]["split_network"].get("all_discovered_routers", [])
+    target_net = telemetry.get("selected_target_network")
+    target_id = config.target_thread_network
     
     if not discovered_routers and not matter_nodes:
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": [], "target_network": target_net}
 
     graph_nodes = []
     graph_edges = []
@@ -273,13 +333,27 @@ async def get_topology():
         node_id = f"br_{r_type}_{idx}"
         br_node_ids.append(node_id)
 
-        details = f"Model: {r_model} | Brand: {r_brand} | Mesh: {r_net} | PAN: {r_xpan[:8]}... | Ch: {r_ch}"
+        is_target_match = True
+        status = "online"
+        if target_id and target_net:
+            target_xpan = (target_net.get("extended_pan_id") or "").upper()
+            target_name = (target_net.get("name") or "").lower()
+            if target_xpan and target_xpan != "UNKNOWN":
+                is_target_match = (r_xpan.upper() == target_xpan)
+            else:
+                is_target_match = (target_name in r_net.lower() or target_name in r_name.lower())
+            if not is_target_match:
+                status = "warning"
+
+        target_badge = " [TARGET]" if (target_id and is_target_match) else (" [DESYNCED/SPLIT]" if (target_id and not is_target_match) else "")
+        details = f"Model: {r_model} | Brand: {r_brand} | Mesh: {r_net}{target_badge} | PAN: {r_xpan[:8]}... | Ch: {r_ch}"
         graph_nodes.append({
             "id": node_id,
             "label": r_name,
             "type": "border_router",
             "vendor": r_type,
-            "status": "online",
+            "status": status,
+            "is_target": is_target_match,
             "details": details
         })
 
@@ -327,7 +401,7 @@ async def get_topology():
                 "status": "warning" if status in ("offline", "weak") else "ok"
             })
 
-    return {"nodes": graph_nodes, "edges": graph_edges}
+    return {"nodes": graph_nodes, "edges": graph_edges, "target_network": target_net}
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -166,3 +166,137 @@ class HAClient:
     async def get_matter_diagnostics(self) -> Dict[str, Any]:
         """Fetch matter integration diagnostics if available."""
         return await self.query_ha_websocket({"type": "matter/diagnostics"})
+
+    async def get_all_available_thread_networks(self) -> List[Dict[str, Any]]:
+        """
+        Aggregate and normalize all Thread networks available in Home Assistant:
+        1. Datasets stored in Home Assistant (thread/list_datasets)
+        2. Networks discovered from active Border Routers (thread/discover_routers)
+        3. Networks associated with registered Thread hardware in device registry
+        """
+        networks_map: Dict[str, Dict[str, Any]] = {}
+
+        # 1. Fetch datasets from HA
+        try:
+            datasets_res = await self.get_thread_datasets()
+            datasets_list = []
+            if isinstance(datasets_res, dict):
+                res_data = datasets_res.get("result", {})
+                if isinstance(res_data, dict) and "datasets" in res_data:
+                    d_items = res_data["datasets"]
+                    if isinstance(d_items, list):
+                        datasets_list = d_items
+                    elif isinstance(d_items, dict):
+                        datasets_list = list(d_items.values())
+                elif isinstance(res_data, list):
+                    datasets_list = res_data
+                elif isinstance(res_data, dict) and ("dataset_id" in res_data or "extended_pan_id" in res_data):
+                    datasets_list = [res_data]
+
+            for ds in datasets_list:
+                ds_id = str(ds.get("dataset_id") or "")
+                xpan = str(ds.get("extended_pan_id") or "").upper().replace(":", "").replace("0X", "")
+                net_name = ds.get("name") or ds.get("network_name") or (f"Thread Network ({xpan[:6]}...)" if xpan else "Home Assistant Thread Network")
+                is_pref = bool(ds.get("preferred", False))
+                ch = ds.get("channel")
+                pan_id = ds.get("pan_id")
+                pan_str = hex(pan_id) if isinstance(pan_id, int) else str(pan_id or "")
+
+                key = xpan if xpan and xpan != "UNKNOWN" else (ds_id or net_name)
+                networks_map[key] = {
+                    "id": key,
+                    "dataset_id": ds_id,
+                    "name": net_name,
+                    "extended_pan_id": xpan,
+                    "pan_id": pan_str,
+                    "channel": ch,
+                    "preferred": is_pref,
+                    "source": "Home Assistant Dataset" + (" ★ Preferred" if is_pref else ""),
+                    "routers": []
+                }
+        except Exception as e:
+            logger.warning("Error fetching Thread datasets: %s", e)
+
+        # 2. Fetch discovered routers from HA
+        try:
+            routers_res = await self.get_thread_routers()
+            routers_list = []
+            if isinstance(routers_res, dict):
+                r_data = routers_res.get("result", {})
+                if isinstance(r_data, dict) and "routers" in r_data:
+                    routers_list = r_data["routers"]
+                elif isinstance(r_data, list):
+                    routers_list = r_data
+
+            for r in routers_list:
+                xpan = str(r.get("extended_pan_id") or r.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
+                net_name = r.get("network_name") or r.get("name") or (f"Thread Network ({xpan[:6]}...)" if xpan else "Thread Mesh")
+                brand = r.get("brand_name") or r.get("vendor_name") or ""
+                model = r.get("model_name") or r.get("model") or "Border Router"
+                r_name = f"{brand} {model}".strip() if (brand or model) else "Border Router"
+                ch = r.get("channel")
+                pan_id = r.get("pan_id")
+                pan_str = hex(pan_id) if isinstance(pan_id, int) else str(pan_id or "")
+
+                key = xpan if xpan and xpan != "UNKNOWN" else net_name
+                if key not in networks_map:
+                    networks_map[key] = {
+                        "id": key,
+                        "dataset_id": "",
+                        "name": net_name,
+                        "extended_pan_id": xpan,
+                        "pan_id": pan_str,
+                        "channel": ch,
+                        "preferred": False,
+                        "source": f"Live Border Router ({r_name})",
+                        "routers": [r_name]
+                    }
+                else:
+                    if r_name not in networks_map[key]["routers"]:
+                        networks_map[key]["routers"].append(r_name)
+                    if not networks_map[key].get("channel") and ch:
+                        networks_map[key]["channel"] = ch
+                    if not networks_map[key].get("pan_id") and pan_str:
+                        networks_map[key]["pan_id"] = pan_str
+        except Exception as e:
+            logger.warning("Error discovering Thread routers: %s", e)
+
+        # 3. Check device registry for any hardware that wasn't found yet
+        try:
+            device_registry = await self.get_device_registry()
+            for d in device_registry:
+                m_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
+                if "wifi pro" in m_str or ("nest" in m_str and ("router" in m_str or "point" in m_str)):
+                    name = d.get("name") or "Google Nest Wifi Pro"
+                    has_nest = any("nest" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", [])) for n in networks_map.values())
+                    if not has_nest:
+                        networks_map["GOOGLE_NEST_MESH"] = {
+                            "id": "GOOGLE_NEST_MESH",
+                            "dataset_id": "",
+                            "name": f"Google Nest Thread Mesh ({name})",
+                            "extended_pan_id": "GOOGLE_THREAD_MESH",
+                            "pan_id": "",
+                            "channel": None,
+                            "preferred": False,
+                            "source": "Home Assistant Device Registry",
+                            "routers": [name]
+                        }
+                elif "apple tv" in m_str or "homepod" in m_str:
+                    name = d.get("name") or "Apple TV / HomePod"
+                    has_apple = any("apple" in n["name"].lower() or any("apple" in r.lower() for r in n.get("routers", [])) for n in networks_map.values())
+                    if not has_apple:
+                        networks_map["APPLE_THREAD_MESH"] = {
+                            "id": "APPLE_THREAD_MESH",
+                            "dataset_id": "",
+                            "name": f"Apple Thread Mesh ({name})",
+                            "extended_pan_id": "APPLE_THREAD_MESH",
+                            "pan_id": "",
+                            "channel": None,
+                            "preferred": False,
+                            "source": "Home Assistant Device Registry",
+                            "routers": [name]
+                        }
+        except Exception as e:
+            logger.warning("Error reading device registry: %s", e)
+
+        return list(networks_map.values())

@@ -21,11 +21,13 @@ document.addEventListener("DOMContentLoaded", () => {
   initPasswordToggles();
   fetchStatus();
   fetchLiveDiagnostics();
+  loadThreadNetworks();
   initTopology();
 
   document.getElementById("btn-refresh").addEventListener("click", () => {
     fetchStatus();
     fetchLiveDiagnostics();
+    loadThreadNetworks();
   });
 
   document.getElementById("btn-open-settings").addEventListener("click", () => {
@@ -52,6 +54,56 @@ document.addEventListener("DOMContentLoaded", () => {
         btnRefreshTopo.disabled = false;
         btnRefreshTopo.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Refresh Topology`;
       }, 1000);
+    });
+  }
+
+  const btnRefreshNetworks = document.getElementById("btn-refresh-thread-networks");
+  if (btnRefreshNetworks) {
+    btnRefreshNetworks.addEventListener("click", () => {
+      loadThreadNetworks();
+    });
+  }
+
+  const selectNetwork = document.getElementById("cfg-thread-network");
+  if (selectNetwork) {
+    selectNetwork.addEventListener("change", (e) => {
+      updateThreadNetworkDetails(e.target.value);
+    });
+  }
+
+  const btnScanNetwork = document.getElementById("btn-scan-selected-network");
+  if (btnScanNetwork) {
+    btnScanNetwork.addEventListener("click", () => {
+      scanSelectedNetwork();
+    });
+  }
+
+  const btnResetNetwork = document.getElementById("btn-reset-thread-network");
+  if (btnResetNetwork) {
+    btnResetNetwork.addEventListener("click", () => {
+      const sel = document.getElementById("cfg-thread-network");
+      if (sel) sel.value = "";
+      updateThreadNetworkDetails("");
+      scanSelectedNetwork();
+    });
+  }
+
+  const btnBannerRescan = document.getElementById("btn-banner-rescan");
+  if (btnBannerRescan) {
+    btnBannerRescan.addEventListener("click", () => {
+      scanSelectedNetwork();
+    });
+  }
+
+  const btnBannerChange = document.getElementById("btn-banner-change");
+  if (btnBannerChange) {
+    btnBannerChange.addEventListener("click", () => {
+      activateTab("tab-settings");
+      const sel = document.getElementById("cfg-thread-network");
+      if (sel) {
+        sel.focus();
+        sel.scrollIntoView({ behavior: "smooth" });
+      }
     });
   }
 });
@@ -150,6 +202,7 @@ function initSettingsForm() {
         openai_api_key: document.getElementById("cfg-openai-key").value || undefined,
         anthropic_api_key: document.getElementById("cfg-anthropic-key").value || undefined,
         matter_server_url: document.getElementById("cfg-matter-url").value || undefined,
+        target_thread_network: document.getElementById("cfg-thread-network") ? document.getElementById("cfg-thread-network").value : undefined,
       };
 
       try {
@@ -251,6 +304,143 @@ function initPasswordToggles() {
       }
     });
   });
+}
+
+/* Thread Networks Management */
+let availableThreadNetworks = [];
+
+async function loadThreadNetworks() {
+  const select = document.getElementById("cfg-thread-network");
+  const refreshBtn = document.getElementById("btn-refresh-thread-networks");
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Refreshing...`;
+  }
+  try {
+    const res = await fetch(apiPath("/api/thread/networks"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    availableThreadNetworks = data.networks || [];
+    
+    if (select) {
+      select.innerHTML = `<option value="">Auto-Detect / All Available Networks (Default)</option>`;
+      availableThreadNetworks.forEach(net => {
+        const opt = document.createElement("option");
+        opt.value = net.id;
+        const chStr = net.channel ? `(Ch ${net.channel})` : '';
+        const prefStr = net.preferred ? '★ Preferred' : '';
+        const rCount = (net.routers && net.routers.length) ? `[${net.routers.join(', ')}]` : '';
+        opt.textContent = `${net.name} ${chStr} ${prefStr} ${rCount}`.trim();
+        select.appendChild(opt);
+      });
+      select.value = data.selected_network || "";
+      updateThreadNetworkDetails(select.value);
+    }
+    updateActiveNetworkBanner(data.selected_network);
+  } catch (err) {
+    console.error("Failed to load thread networks:", err);
+  } finally {
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Refresh Network List`;
+    }
+  }
+}
+
+function updateThreadNetworkDetails(selectedId) {
+  const detailsBox = document.getElementById("thread-network-details-box");
+  if (!detailsBox) return;
+
+  if (!selectedId) {
+    detailsBox.style.display = "none";
+    detailsBox.innerHTML = "";
+    return;
+  }
+
+  const net = availableThreadNetworks.find(n => n.id === selectedId || n.extended_pan_id === selectedId);
+  if (!net) {
+    detailsBox.style.display = "none";
+    return;
+  }
+
+  detailsBox.style.display = "block";
+  const routersList = (net.routers && net.routers.length) ? net.routers.join(", ") : "None detected via mDNS yet";
+  detailsBox.innerHTML = `
+    <div style="font-size: 13px; line-height: 1.6;">
+      <div><strong>Network Name:</strong> ${net.name}</div>
+      <div><strong>Extended PAN ID:</strong> <code>${net.extended_pan_id || 'UNKNOWN'}</code></div>
+      <div><strong>PAN ID:</strong> <code>${net.pan_id || 'UNKNOWN'}</code></div>
+      <div><strong>Channel:</strong> ${net.channel ? `Channel ${net.channel} (2.4 GHz 802.15.4)` : 'Unknown'}</div>
+      <div><strong>Source:</strong> ${net.source}</div>
+      <div><strong>Active Border Routers:</strong> ${routersList}</div>
+    </div>
+  `;
+}
+
+async function scanSelectedNetwork() {
+  const select = document.getElementById("cfg-thread-network");
+  const feedback = document.getElementById("scan-feedback");
+  const selectedId = select ? select.value : "";
+
+  if (feedback) {
+    feedback.style.color = "var(--ha-primary-color)";
+    feedback.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Scanning actual network telemetry...`;
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/thread/select_and_scan"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ network_id: selectedId })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    
+    // Re-fetch live telemetry and topology
+    await fetchLiveDiagnostics();
+    await fetchAndRenderTopology();
+    updateActiveNetworkBanner(selectedId);
+
+    if (feedback) {
+      feedback.style.color = "var(--color-success)";
+      feedback.innerHTML = `✓ Actual network scanned successfully!`;
+      setTimeout(() => { feedback.innerHTML = ""; }, 4000);
+    }
+
+    // Switch to Live Mesh Topology tab to show live results immediately
+    activateTab("tab-topology");
+  } catch (err) {
+    if (feedback) {
+      feedback.style.color = "var(--color-danger)";
+      feedback.innerHTML = `Scan failed: ${err.message}`;
+    }
+  }
+}
+
+function updateActiveNetworkBanner(selectedId) {
+  const banner = document.getElementById("active-network-banner");
+  const nameElem = document.getElementById("active-network-name");
+  const panElem = document.getElementById("active-network-pan");
+  const chElem = document.getElementById("active-network-channel");
+
+  if (!banner) return;
+
+  if (!selectedId) {
+    banner.style.display = "none";
+    return;
+  }
+
+  const net = availableThreadNetworks.find(n => n.id === selectedId || n.extended_pan_id === selectedId);
+  banner.style.display = "flex";
+  if (net) {
+    nameElem.innerText = net.name;
+    panElem.innerText = `PAN: ${net.extended_pan_id ? net.extended_pan_id.slice(0, 8) + '...' : 'Unknown'}`;
+    chElem.innerText = net.channel ? `Ch ${net.channel}` : 'Auto';
+  } else {
+    nameElem.innerText = selectedId;
+    panElem.innerText = "";
+    chElem.innerText = "";
+  }
 }
 
 /* API: Telemetry & Rules */
@@ -487,6 +677,10 @@ async function fetchAndRenderTopology() {
     const data = await res.json();
     renderSvgTopology(data.nodes || [], data.edges || []);
 
+    if (data.target_network) {
+      updateActiveNetworkBanner(data.target_network.id);
+    }
+
     const brs = (data.nodes || []).filter(n => n.type === "border_router");
     const scanElem = document.getElementById("topology-last-scan");
     const countElem = document.getElementById("topology-router-count");
@@ -642,6 +836,19 @@ function renderSvgTopology(nodes, edges) {
     if (n.status === "weak") fillColor = "#f59e0b";
     if (n.status === "offline") fillColor = "#ef4444";
 
+    if (n.is_target) {
+      const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      halo.setAttribute("cx", n.x);
+      halo.setAttribute("cy", n.y);
+      halo.setAttribute("r", r + 6);
+      halo.setAttribute("fill", "none");
+      halo.setAttribute("stroke", "#38bdf8");
+      halo.setAttribute("stroke-width", "2.5");
+      halo.setAttribute("stroke-dasharray", "4,3");
+      halo.setAttribute("opacity", "0.9");
+      g.appendChild(halo);
+    }
+
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", n.x);
     circle.setAttribute("cy", n.y);
@@ -683,6 +890,7 @@ function showNodeInspector(node) {
   content.innerHTML = `
     <div style="font-size: 13px; line-height: 1.6;">
       <div><strong>Status:</strong> <span class="badge badge-${node.status === 'online' ? 'success' : (node.status === 'weak' ? 'warning' : 'danger')}">${node.status.toUpperCase()}</span></div>
+      ${node.is_target !== undefined ? `<div><strong>Target Match:</strong> <span class="badge badge-${node.is_target ? 'success' : 'warning'}">${node.is_target ? '✓ Active Target Network' : '⚠ Different/Split Network'}</span></div>` : ''}
       <div><strong>Role:</strong> ${isBR ? (isNest ? 'Google Nest Thread Border Router' : 'Thread Border Router') : (node.type === 'end_device' ? 'Battery Sleepy End Device (ICD)' : 'Mains-Powered Thread Router')}</div>
       <div><strong>Details:</strong> ${node.details || 'N/A'}</div>
       ${isNest ? `

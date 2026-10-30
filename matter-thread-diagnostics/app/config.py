@@ -27,6 +27,7 @@ class AppConfig(BaseModel):
     matter_server_url: str = "ws://core-matter-server:5580/ws"
     otbr_url: str = "http://core-openthread-border-router:8081"
     log_level: str = "info"
+    target_thread_network: str = ""
     supervisor_token: Optional[str] = None
     supervisor_url: str = "http://supervisor"
     ha_url: str = "http://supervisor/core"
@@ -65,6 +66,7 @@ class AppConfig(BaseModel):
         matter_server_url = os.environ.get("MATTER_SERVER_URL", data.get("matter_server_url", "ws://core-matter-server:5580/ws"))
         otbr_url = os.environ.get("OTBR_URL", data.get("otbr_url", "http://core-openthread-border-router:8081"))
         log_level = os.environ.get("LOG_LEVEL", data.get("log_level", "info"))
+        target_thread_network = os.environ.get("TARGET_THREAD_NETWORK", data.get("target_thread_network", ""))
 
         supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
         supervisor_url = os.environ.get("SUPERVISOR_URL", "http://supervisor")
@@ -84,6 +86,7 @@ class AppConfig(BaseModel):
             matter_server_url=matter_server_url,
             otbr_url=otbr_url,
             log_level=log_level,
+            target_thread_network=target_thread_network,
             supervisor_token=supervisor_token,
             supervisor_url=supervisor_url,
             ha_url=ha_url,
@@ -92,7 +95,7 @@ class AppConfig(BaseModel):
     def save_options(self, updates: Dict[str, Any]) -> None:
         """Save updated options to memory and persist to disk."""
         for k, v in updates.items():
-            if hasattr(self, k) and v is not None and v != "":
+            if hasattr(self, k) and v is not None:
                 if isinstance(v, str):
                     v = v.strip().strip('"').strip("'")
                 setattr(self, k, v)

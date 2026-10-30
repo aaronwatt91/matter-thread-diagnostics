@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0] - 2026-10-30
+
+### Added
+- **Thread Network Selection Dropdown in Settings**:
+  - Live dropdown selector in the Settings tab listing all Thread networks available in Home Assistant.
+  - Aggregates configured datasets (`thread/list_datasets`), live discovered border routers (`thread/discover_routers`), and registered hardware (Nest Wifi Pro, Apple TV 4K, HomePod, SkyConnect).
+  - Displays complete network metadata: Network Name, Extended PAN ID, PAN ID, 802.15.4 Channel, Preferred status (★), and active Border Routers.
+- **Target Network Scanning ("Scan My Actual Network")**:
+  - Added dedicated **"Scan My Actual Network"** button to immediately evaluate telemetry and mesh health against the selected Thread network.
+  - Automatically targets and isolates the selected network's channel for RF coexistence calculations and flags foreign or split-mesh border routers operating on different Extended PAN IDs.
+  - Added visual target highlighting in the interactive SVG topology graph and device inspector.
+  - Added persistent Target Network Banner on the dashboard with quick re-scan and network switching controls.
+
 ## [1.1.0] - 2026-10-30
 
 ### Changed & Streamlined
