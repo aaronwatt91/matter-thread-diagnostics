@@ -199,6 +199,24 @@ async def ping_matter_node(req: PingNodeRequest):
     }
 
 
+@app.get("/api/ai/models")
+async def get_ai_models():
+    """Fetch live available AI models from the configured provider (e.g. Google ModelService.ListModels)."""
+    engine = AIDiagnosticEngine(
+        provider=config.ai_provider,
+        model=config.ai_model,
+        gemini_key=config.gemini_api_key,
+        openai_key=config.openai_api_key,
+        anthropic_key=config.anthropic_api_key,
+    )
+    models = await engine.list_available_models()
+    return {
+        "provider": config.ai_provider,
+        "selected_model": config.ai_model,
+        "models": models,
+    }
+
+
 @app.post("/api/test_ai")
 async def test_ai_connection():
     """Test AI connection and API key."""

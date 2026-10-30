@@ -30,12 +30,10 @@ let topologyPhysicsState = {
 
 const MODEL_OPTIONS_BY_PROVIDER = {
   gemini: [
-    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (Recommended / Default)" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (Recommended / Fast)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { value: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash (Auto-resolves via ListModels)" },
   ],
   openai: [
     { value: "gpt-4o", label: "GPT-4o (Recommended)" },
@@ -284,6 +282,7 @@ async function fetchStatus() {
     }
 
     syncProviderAndModelSelects(provider, model);
+    fetchLiveAIModels(provider, model);
 
     const matterUrlInput = document.getElementById("cfg-matter-url");
     if (matterUrlInput && data.matter_server_url) matterUrlInput.value = data.matter_server_url;
@@ -350,6 +349,35 @@ function syncProviderAndModelSelects(provider, selectedModel) {
 
   populateModelSelectElement(cfgModel, provider, targetModel);
   populateModelSelectElement(studioModel, provider, targetModel);
+}
+
+async function fetchLiveAIModels(provider, selectedModel) {
+  try {
+    const res = await fetch(apiPath("/api/ai/models"));
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.models && Array.isArray(data.models) && data.models.length > 0 && data.provider === provider) {
+      const existing = MODEL_OPTIONS_BY_PROVIDER[provider] || [];
+      const seen = new Set();
+      const merged = [];
+      data.models.forEach((m) => {
+        if (m.value && !seen.has(m.value)) {
+          seen.add(m.value);
+          merged.push(m);
+        }
+      });
+      existing.forEach((m) => {
+        if (m.value && !seen.has(m.value)) {
+          seen.add(m.value);
+          merged.push(m);
+        }
+      });
+      MODEL_OPTIONS_BY_PROVIDER[provider] = merged;
+      const activeModel = selectedModel || data.selected_model;
+      populateModelSelectElement(document.getElementById("cfg-model"), provider, activeModel);
+      populateModelSelectElement(document.getElementById("studio-model"), provider, activeModel);
+    }
+  } catch (_) {}
 }
 
 async function saveProviderAndModelImmediate(provider, model) {

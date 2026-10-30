@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.5] - 2026-10-30
+
+### Fixed: Dynamic `ModelService.ListModels` Resolution, Removed Retired `gemini-1.5-flash` Fallback & SSE Streaming
+- **Why `Google Error 404 (gemini-1.5-flash)` Appeared When `gemini-3.8-flash` Was Set**:
+  - Previously, when `models/gemini-3.8-flash` returned HTTP 404 from Google's `v1beta` endpoint, `_call_gemini` iterated through a hardcoded fallback array ending in `"gemini-1.5-flash"`. Because `gemini-1.5-flash` is retired in 2026, the final attempt failed with `404 (gemini-1.5-flash)` and reported `gemini-1.5-flash` in the error instead of the user's selected model.
+- **Live Google `ModelService.ListModels` Discovery (`GET /v1beta/models`)**:
+  - Added `_fetch_live_gemini_models()` and `GET /api/ai/models` to query Google's `ListModels` API using your configured API key and populate the Settings and AI Studio dropdowns with the exact `generateContent` models active on your account (sorted with `gemini-3*` and `gemini-2.5*` first).
+  - Removed retired `gemini-1.5-flash` / `gemini-1.5-pro` / `gemini-2.0-flash` from fallback lists. If a model alias like `gemini-3.8-flash` returns 404, `_call_gemini` now queries `ListModels` live to resolve the closest active `gemini-3*` or `gemini-2.5*` model on your account.
+- **SSE Streaming (`:streamGenerateContent?alt=sse`) & Zero-Latency Flash Thinking**:
+  - Switched Gemini generation to Server-Sent Events streaming (`:streamGenerateContent?alt=sse`) with `thinkingBudget: 0` on Flash models so response chunks start arriving in ~1–2 seconds and never hit idle TCP `ReadTimeout`.
+
 ## [2.0.4] - 2026-10-30
 
 ### Fixed: Gemini `ReadTimeout` under `host_network: true` & Fast Thinking Budget

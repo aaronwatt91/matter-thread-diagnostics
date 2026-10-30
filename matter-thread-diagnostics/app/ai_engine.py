@@ -309,42 +309,221 @@ class AIDiagnosticEngine:
             f"Please analyze the following real diagnostic scan collected from the user's Home Assistant Matter & Thread network:\n"
             f"{notes_section}\n"
             f"```json\n{data_json}\n```\n\n"
-            f"Diagnose all Matter-over-Thread issues found in this scan and provide a specific, actionable troubleshooting report."
+            f"Diagnose all Matter-over-Thread issues found in this scan and provide a concise, specific, actionable troubleshooting report (under 600 words)."
         )
+
+    async def _fetch_live_gemini_models(self, client: httpx.AsyncClient) -> List[Dict[str, str]]:
+        """Query Google ModelService.ListModels (`GET /v1beta/models`) to discover exact model IDs supported on this API key."""
+        if not self.gemini_key:
+            return []
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        headers = {"x-goog-api-key": self.gemini_key.strip()}
+        params = {"key": self.gemini_key.strip(), "pageSize": 100}
+        try:
+            r = await client.get(url, headers=headers, params=params, timeout=10.0)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            raw_models = data.get("models", [])
+            out: List[Dict[str, str]] = []
+            skip_keywords = ("embedding", "imagen", "veo", "tts", "audio", "aqa", "bison", "gecko", "learnlm", "robotics", "computer-use", "image-generation", "1.0", "1.5")
+            for m in raw_models:
+                if not isinstance(m, dict):
+                    continue
+                methods = m.get("supportedGenerationMethods") or []
+                if "generateContent" not in methods:
+                    continue
+                full_name = str(m.get("name") or "")
+                short_id = full_name.replace("models/", "").strip()
+                if not short_id.startswith("gemini"):
+                    continue
+                if any(kw in short_id.lower() for kw in skip_keywords):
+                    continue
+                disp = str(m.get("displayName") or short_id)
+                out.append({"value": short_id, "label": f"{disp} ({short_id})" if short_id not in disp else disp})
+
+            # Sort newest/best families first: gemini-3*, then gemini-2.5*, then flash before pro
+            def _sort_key(item: Dict[str, str]):
+                v = item["value"].lower()
+                tier = 0 if "gemini-3" in v else (1 if "gemini-2.5" in v else 2)
+                sub = 0 if "flash" in v and "lite" not in v else (1 if "pro" in v else 2)
+                return (tier, sub, v)
+
+            out.sort(key=_sort_key)
+            return out
+        except Exception as e:
+            logger.debug("ListModels lookup failed: %s", e)
+            return []
+
+    async def list_available_models(self) -> List[Dict[str, str]]:
+        """Return live available models for the current provider."""
+        if self.provider == "gemini" and self.has_valid_key():
+            transport = _ipv4_transport()
+            kwargs: Dict[str, Any] = {"timeout": httpx.Timeout(10.0)}
+            if transport is not None:
+                kwargs["transport"] = transport
+            async with httpx.AsyncClient(**kwargs) as client:
+                live = await self._fetch_live_gemini_models(client)
+                if live:
+                    return live
+        return []
+
+    def _pick_best_live_gemini_model(self, requested: str, live_models: List[Dict[str, str]]) -> List[str]:
+        """Given the user's requested model (e.g. 'gemini-3.8-flash') and live ListModels output, rank the closest live model IDs."""
+        req_low = (requested or "").lower()
+        live_ids = [m["value"] for m in live_models if m.get("value")]
+        ranked: List[str] = []
+
+        # 1. Exact match in live models
+        if requested in live_ids:
+            ranked.append(requested)
+
+        # 2. If user asked for a Gemini 3 model (e.g. gemini-3.8-flash), prefer live gemini-3* flash/pro models first
+        if "gemini-3" in req_low or "3." in req_low:
+            want_pro = "pro" in req_low
+            for lid in live_ids:
+                if "gemini-3" in lid.lower() and (("pro" in lid.lower()) == want_pro) and lid not in ranked:
+                    ranked.append(lid)
+            for lid in live_ids:
+                if "gemini-3" in lid.lower() and lid not in ranked:
+                    ranked.append(lid)
+
+        # 3. Prefer gemini-2.5-flash / gemini-2.5-pro from live models
+        for pref in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest"]:
+            if pref in live_ids and pref not in ranked:
+                ranked.append(pref)
+
+        # 4. Any remaining live flash/pro model
+        for lid in live_ids:
+            if lid not in ranked:
+                ranked.append(lid)
+
+        # 5. If ListModels returned nothing, fallback to active 2.5 models (NEVER dead 1.5 models)
+        if not ranked:
+            for fb in ["gemini-2.5-flash", "gemini-2.5-pro"]:
+                if fb not in ranked:
+                    ranked.append(fb)
+
+        return ranked
+
+    async def _stream_or_post_gemini(
+        self,
+        client: httpx.AsyncClient,
+        model_name: str,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+    ) -> tuple[int, str, str]:
+        """
+        Execute Gemini generation using SSE streaming (`:streamGenerateContent?alt=sse`) first so chunks
+        arrive within ~1-2 seconds and never hit idle TCP ReadTimeout, falling back to `:generateContent` if needed.
+        Returns (http_status_code, response_text, error_message).
+        """
+        stream_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent"
+        stream_params = {"key": self.gemini_key.strip(), "alt": "sse"}
+
+        try:
+            chunks: List[str] = []
+            thought_chunks: List[str] = []
+            async with client.stream("POST", stream_url, json=payload, headers=headers, params=stream_params) as resp:
+                if resp.status_code != 200:
+                    raw_err = (await resp.aread()).decode("utf-8", errors="ignore")
+                    err_msg = raw_err
+                    try:
+                        err_json = json.loads(raw_err)
+                        err_msg = err_json.get("error", {}).get("message", raw_err)
+                    except Exception:
+                        pass
+                    return resp.status_code, "", err_msg
+
+                async for line in resp.aiter_lines():
+                    line_s = line.strip()
+                    if not line_s.startswith("data:"):
+                        continue
+                    data_str = line_s[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        ev = json.loads(data_str)
+                        for cand in ev.get("candidates") or []:
+                            for part in (cand.get("content") or {}).get("parts") or []:
+                                if isinstance(part, dict) and part.get("text"):
+                                    if part.get("thought"):
+                                        thought_chunks.append(part["text"])
+                                    else:
+                                        chunks.append(part["text"])
+                    except Exception:
+                        continue
+
+            final_text = "".join(chunks).strip() or "".join(thought_chunks).strip()
+            if final_text:
+                return 200, final_text, ""
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError):
+            raise
+        except Exception as e:
+            logger.debug("SSE stream fallback to generateContent for %s: %s", model_name, e)
+
+        # Fallback to standard generateContent
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        params = {"key": self.gemini_key.strip()}
+        r = await client.post(url, json=payload, headers=headers, params=params)
+        if r.status_code != 200:
+            err_text = r.text
+            try:
+                err_json = r.json()
+                err_text = err_json.get("error", {}).get("message", err_text)
+            except Exception:
+                pass
+            return r.status_code, "", err_text
+
+        res_data = r.json()
+        candidates = res_data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                non_thought = [p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought") and p.get("text")]
+                if non_thought:
+                    return 200, "\n".join(non_thought), ""
+                all_t = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
+                if all_t:
+                    return 200, "\n".join(all_t), ""
+        return 200, "No response text generated by Gemini.", ""
 
     async def _call_gemini(self, prompt: str) -> str:
         """
-        Call Google Gemini REST API over IPv4 transport with capped thinking budget on 2.5 models
-        and automatic model fallback on 404 or timeout.
+        Call Google Gemini API with the user's selected model first.
+        If the selected model name returns 404 on v1beta, dynamically query Google's `ListModels` API
+        to resolve the exact live Gemini 3 / 2.5 model ID supported by the user's API key.
+        Never falls back to retired gemini-1.5 models.
         """
-        candidate_models: List[str] = []
-        for m in [self.model, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]:
-            if m and m not in candidate_models:
-                candidate_models.append(m)
-
+        requested_model = self.model or "gemini-2.5-flash"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": self.gemini_key.strip(),
         }
-        params = {"key": self.gemini_key.strip()}
 
-        last_err = None
         transport = _ipv4_transport()
         client_kwargs: Dict[str, Any] = {"timeout": CLIENT_TIMEOUT}
         if transport is not None:
             client_kwargs["transport"] = transport
 
         async with httpx.AsyncClient(**client_kwargs) as client:
-            for model_name in candidate_models:
+            # Start with the exact model selected by the user in Settings / AI Studio
+            candidate_models: List[str] = [requested_model]
+            live_models_fetched = False
+            last_err = None
+
+            idx = 0
+            while idx < len(candidate_models):
+                model_name = candidate_models[idx]
+                idx += 1
+
                 gen_cfg: Dict[str, Any] = {
                     "temperature": 0.2,
-                    "maxOutputTokens": 4096,
+                    "maxOutputTokens": 2500,
                 }
-                # Cap thinking budget on Gemini 2.5 models so they respond in ~3-6s instead of timing out
-                if "2.5-flash" in model_name.lower():
-                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 512}
-                elif "2.5-pro" in model_name.lower():
-                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 1024}
+                # Disable slow internal chain-of-thought on Flash models so streaming starts in <1s
+                if "flash" in model_name.lower() and ("2.5" in model_name.lower() or "3" in model_name.lower()):
+                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
 
                 payload = {
                     "contents": [
@@ -356,48 +535,49 @@ class AIDiagnosticEngine:
                     "generationConfig": gen_cfg,
                 }
 
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
                 try:
-                    r = await client.post(url, json=payload, headers=headers, params=params)
-                    # If a model rejects thinkingConfig (400), retry immediately without thinkingConfig
-                    if r.status_code == 400 and "thinkingConfig" in gen_cfg:
+                    status_code, text_out, err_msg = await self._stream_or_post_gemini(client, model_name, payload, headers)
+                    # If model rejects thinkingConfig (HTTP 400), retry immediately without thinkingConfig
+                    if status_code == 400 and "thinkingConfig" in gen_cfg:
                         gen_cfg.pop("thinkingConfig", None)
-                        r = await client.post(url, json=payload, headers=headers, params=params)
+                        status_code, text_out, err_msg = await self._stream_or_post_gemini(client, model_name, payload, headers)
                 except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError) as tex:
                     last_err = f"{type(tex).__name__} on {model_name}"
-                    logger.warning("Gemini model '%s' timed out (%s), falling back to next model", model_name, tex)
-                    if model_name != candidate_models[-1]:
+                    logger.warning("Gemini model '%s' timed out (%s)", model_name, tex)
+                    if not live_models_fetched:
+                        live_models_fetched = True
+                        live_list = await self._fetch_live_gemini_models(client)
+                        for alt in self._pick_best_live_gemini_model(requested_model, live_list):
+                            if alt not in candidate_models:
+                                candidate_models.append(alt)
+                    if idx < len(candidate_models):
                         continue
                     raise
 
-                if r.status_code in (404, 429, 503) and model_name != candidate_models[-1]:
-                    logger.warning("Gemini model '%s' returned HTTP %s, falling back to next available model", model_name, r.status_code)
-                    continue
-                if r.status_code != 200:
-                    err_text = r.text
-                    try:
-                        err_json = r.json()
-                        err_text = err_json.get("error", {}).get("message", err_text)
-                    except Exception:
-                        pass
-                    last_err = f"Google Error {r.status_code} ({model_name}): {err_text}"
-                    raise RuntimeError(last_err)
+                if status_code == 200:
+                    if model_name != requested_model:
+                        self.model = f"{requested_model} → {model_name}"
+                    else:
+                        self.model = model_name
+                    return text_out
 
-                self.model = model_name
-                res_data = r.json()
-                candidates = res_data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        non_thought_texts = [p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought") and p.get("text")]
-                        if non_thought_texts:
-                            return "\n".join(non_thought_texts)
-                        all_texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
-                        if all_texts:
-                            return "\n".join(all_texts)
-                return "No response text generated by Gemini."
+                last_err = f"Google Error {status_code} ({model_name}): {err_msg}"
 
-        raise RuntimeError(last_err or "Failed to call Gemini API")
+                # If the exact model string returned 404 (or 429/503), query ListModels dynamically once
+                if status_code in (404, 429, 503):
+                    if not live_models_fetched:
+                        live_models_fetched = True
+                        live_list = await self._fetch_live_gemini_models(client)
+                        for alt in self._pick_best_live_gemini_model(requested_model, live_list):
+                            if alt not in candidate_models:
+                                candidate_models.append(alt)
+                    if idx < len(candidate_models):
+                        logger.warning("Model '%s' returned %s, trying live model '%s'", model_name, status_code, candidate_models[idx])
+                        continue
+
+                raise RuntimeError(last_err)
+
+        raise RuntimeError(last_err or f"Failed to call Gemini API with model '{requested_model}'")
 
     async def _call_openai(self, prompt: str) -> str:
         """Call OpenAI Chat Completions REST API over IPv4 transport."""

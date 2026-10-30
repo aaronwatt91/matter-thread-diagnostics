@@ -173,6 +173,16 @@ def test_ai_diagnostic_engine_key_and_model_validation():
     # User-selected model is preserved verbatim
     assert engine_gemini.model == "gemini-3.8-flash"
 
+    # Verify live ListModels ranking resolves gemini-3.8-flash to live gemini-3* / gemini-2.5* and never dead 1.5
+    live_sample = [
+        {"value": "gemini-3-flash-preview", "label": "Gemini 3 Flash Preview"},
+        {"value": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
+        {"value": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
+    ]
+    ranked = engine_gemini._pick_best_live_gemini_model("gemini-3.8-flash", live_sample)
+    assert ranked[0] == "gemini-3-flash-preview"
+    assert "gemini-1.5-flash" not in ranked
+
     engine_gemini_25 = AIDiagnosticEngine(provider="gemini", model="gemini-2.5-pro", gemini_key="AIzaSyDummyKeyTest")
     assert engine_gemini_25.model == "gemini-2.5-pro"
 
