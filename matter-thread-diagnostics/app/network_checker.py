@@ -91,14 +91,14 @@ def _encode_dns_name(name: str) -> bytes:
     return bytes(out)
 
 
-def _build_mdns_ptr_query(service_names: List[str], unicast_response: bool = True) -> bytes:
-    """Build a multi-question DNS PTR query packet for mDNS (224.0.0.251:5353)."""
+def _build_mdns_ptr_query(service_names: List[str], unicast_response: bool = True, qtype: int = 12) -> bytes:
+    """Build a multi-question DNS query packet for mDNS (224.0.0.251:5353). Default QTYPE=12 (PTR)."""
     header = struct.pack(">HHHHHH", 0x0000, 0x0000, len(service_names), 0, 0, 0)
     q_bytes = bytearray()
     qclass = 0x8001 if unicast_response else 0x0001  # IN class, bit 15 = QU (unicast response)
     for svc in service_names:
         q_bytes.extend(_encode_dns_name(svc))
-        q_bytes.extend(struct.pack(">HH", 12, qclass))  # QTYPE 12 = PTR
+        q_bytes.extend(struct.pack(">HH", qtype, qclass))
     return header + bytes(q_bytes)
 
 
@@ -253,6 +253,7 @@ async def _scan_mdns_via_udp_sockets(duration: float = 1.6) -> Dict[str, Any]:
         txt_records: Dict[str, Dict[bytes, bytes]] = {}
         a_records: Dict[str, List[str]] = {}
         aaaa_records: Dict[str, List[str]] = {}
+        queried_instances = set()
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + duration
@@ -265,6 +266,17 @@ async def _scan_mdns_via_udp_sockets(duration: float = 1.6) -> Dict[str, Any]:
                         parsed = _parse_mdns_packet(data, addr[0])
                         for svc_name, target_inst in parsed["ptr"]:
                             ptr_records.append((svc_name, target_inst, addr[0]))
+                            # If TXT wasn't bundled in the PTR reply (common on Apple HomePod/Apple TV),
+                            # immediately query TXT (16) and ANY (255) for that instance name
+                            if target_inst not in txt_records and target_inst not in queried_instances:
+                                queried_instances.add(target_inst)
+                                try:
+                                    q_txt = _build_mdns_ptr_query([target_inst], unicast_response=True, qtype=16)
+                                    q_any = _build_mdns_ptr_query([target_inst], unicast_response=True, qtype=255)
+                                    sock.sendto(q_txt, (addr[0], 5353))
+                                    sock.sendto(q_any, ("224.0.0.251", 5353))
+                                except Exception:
+                                    pass
                         srv_records.update(parsed["srv"])
                         for k, v in parsed["txt"].items():
                             txt_records.setdefault(k, {}).update(v)
@@ -316,6 +328,10 @@ async def _scan_mdns_via_udp_sockets(duration: float = 1.6) -> Dict[str, Any]:
                 dn = _decode_txt_bytes_or_hex(props.get(b"dn"))
                 sb_info = _decode_state_bitmap(props.get(b"sb"))
 
+                routable_v6 = [ip for ip in v6_list if not ip.lower().startswith("fe80")]
+                linklocal_v6 = [ip for ip in v6_list if ip.lower().startswith("fe80")]
+                ordered_addrs = v4_list + routable_v6 + linklocal_v6
+
                 meshcop_list.append({
                     "instance_name": inst_short,
                     "service_name": inst_full,
@@ -332,7 +348,7 @@ async def _scan_mdns_via_udp_sockets(duration: float = 1.6) -> Dict[str, Any]:
                     "state_bitmap": sb_info,
                     "ipv6_addresses": v6_list,
                     "ipv4_addresses": v4_list,
-                    "addresses": v6_list + v4_list,
+                    "addresses": ordered_addrs,
                     "source": "Live UDP mDNS (_meshcop._udp)",
                 })
             elif "_matter._tcp" in svc_name or "_matter._tcp" in inst_full:
@@ -584,6 +600,10 @@ class NetworkChecker:
                     dn = _decode_txt_bytes_or_hex(props.get(b"dn"))
                     sb_info = _decode_state_bitmap(props.get(b"sb"))
 
+                    routable_v6 = [ip for ip in ipv6_addrs if not ip.lower().startswith("fe80")]
+                    linklocal_v6 = [ip for ip in ipv6_addrs if ip.lower().startswith("fe80")]
+                    ordered_addrs = ipv4_addrs + routable_v6 + linklocal_v6
+
                     entry = {
                         "instance_name": instance_label,
                         "service_name": svc_name,
@@ -600,11 +620,33 @@ class NetworkChecker:
                         "state_bitmap": sb_info,
                         "ipv6_addresses": ipv6_addrs,
                         "ipv4_addresses": ipv4_addrs,
-                        "addresses": ipv6_addrs + ipv4_addrs,
+                        "addresses": ordered_addrs,
                         "source": "mDNS (_meshcop._udp)",
                     }
-                    k = ba or xa or f"{instance_label}_{xp}"
-                    if k not in seen_router_keys:
+                    # Check if this router already exists in meshcop_routers (by instance_name, ba, xa, or shared IP)
+                    existing_match = None
+                    for ex in meshcop_routers:
+                        if (
+                            (instance_label and (ex.get("instance_name") or "").lower() == instance_label.lower())
+                            or (ba and ex.get("border_agent_id") == ba)
+                            or (xa and ex.get("ext_address") == xa)
+                            or (set(ordered_addrs) & set(ex.get("addresses") or []))
+                        ):
+                            existing_match = ex
+                            break
+                    if existing_match is not None:
+                        if existing_match.get("extended_pan_id") in (None, "", "UNKNOWN") and xp:
+                            existing_match["extended_pan_id"] = xp
+                        if nn and existing_match.get("network_name") == existing_match.get("instance_name"):
+                            existing_match["network_name"] = nn
+                        for fld in ("vendor_name", "model_name", "thread_version", "ext_address", "border_agent_id", "domain_name", "state_bitmap"):
+                            if not existing_match.get(fld) and entry.get(fld):
+                                existing_match[fld] = entry[fld]
+                        for addr_ip in ordered_addrs:
+                            if addr_ip not in existing_match["addresses"]:
+                                existing_match["addresses"].append(addr_ip)
+                    else:
+                        k = ba or xa or f"{instance_label}_{xp}"
                         seen_router_keys.add(k)
                         meshcop_routers.append(entry)
 

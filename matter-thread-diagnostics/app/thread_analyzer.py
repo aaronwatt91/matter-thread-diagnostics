@@ -157,6 +157,34 @@ class ThreadAnalyzer:
                 "source": "OTBR REST API (:8081)",
             })
 
+        def _norm_ip(ip_str: str) -> str:
+            return str(ip_str or "").split("/")[0].split("%")[0].strip().lower()
+
+        def _order_ips(ips: List[str]) -> List[str]:
+            seen = set()
+            v4, v6_ula, v6_ll = [], [], []
+            for raw_ip in ips:
+                if not raw_ip:
+                    continue
+                ip_s = str(raw_ip).strip()
+                norm = _norm_ip(ip_s)
+                if not norm or norm in ("127.0.0.1", "::1") or norm in seen:
+                    continue
+                seen.add(norm)
+                if "." in norm:
+                    v4.append(ip_s)
+                elif norm.startswith("fe80"):
+                    v6_ll.append(ip_s)
+                else:
+                    v6_ula.append(ip_s)
+            return v4 + v6_ula + v6_ll
+
+        def _norm_host(h: str) -> str:
+            s = str(h or "").strip().rstrip(".").lower()
+            if s.endswith(".local"):
+                s = s[:-6]
+            return s
+
         for router in combined_raw_routers:
             if not isinstance(router, dict):
                 continue
@@ -168,25 +196,21 @@ class ThreadAnalyzer:
 
             ext_pan_id = str(router.get("extended_pan_id") or router.get("ext_pan_id") or "UNKNOWN").upper().replace(":", "").replace("0X", "")
             ext_addr = str(router.get("ext_address") or router.get("extended_address") or "").upper().replace(":", "").replace("0X", "")
-            ba_id = str(router.get("border_agent_id") or "").upper()
-            server = str(router.get("server") or router.get("instance_name") or router.get("name") or "").strip()
+            ba_id = str(router.get("border_agent_id") or "").upper().replace(":", "").replace("-", "")
+            raw_inst = str(router.get("instance_name") or router.get("name") or "").strip()
+            server = str(router.get("server") or raw_inst or "").strip()
 
-            # Deduplicate routers seen via both HA WebSocket and direct mDNS
-            dedup_key = ba_id or ext_addr or (f"{server.lower()}_{ext_pan_id}" if server else f"{info['label']}_{ext_pan_id}")
-            if dedup_key in seen_router_keys:
-                continue
-            seen_router_keys.add(dedup_key)
-
-            # Enrich channel / pan_id from matching HA dataset TLV if mDNS didn't include channel
             ds_match = dataset_by_xpan.get(ext_pan_id, {})
             ch = router.get("channel") or ds_match.get("channel")
             pan_id = router.get("pan_id") or ds_match.get("pan_id")
             mesh_prefix = router.get("mesh_local_prefix") or ds_match.get("mesh_local_prefix")
             net_name = router.get("network_name") or ds_match.get("network_name") or router.get("name") or info["label"]
-            addrs = router.get("addresses") or (router.get("ipv6_addresses", []) + router.get("ipv4_addresses", []))
+            raw_addrs = router.get("addresses") or (router.get("ipv6_addresses", []) + router.get("ipv4_addresses", []))
+            addrs = _order_ips(raw_addrs)
 
             entry = {
                 "name": info["label"],
+                "instance_name": raw_inst or info["label"],
                 "model": info["model"],
                 "brand": info["brand"],
                 "type": info["type"],
@@ -204,12 +228,83 @@ class ThreadAnalyzer:
                 "addresses": addrs,
                 "source": router.get("source", "mDNS / HA Discovery"),
             }
-            all_discovered_routers.append(entry)
-            networks.setdefault(ext_pan_id, []).append(entry)
 
-        # Also inspect HA Device Registry for registered Thread Border Router hardware (Nest Wifi Pro, Apple TV/HomePod)
-        # that did not appear in mDNS discovery yet (e.g., if multicast is filtered or credentials aren't synced)
-        if device_registry:
+            # Multi-key deduplication: check if this physical Border Router is already in all_discovered_routers
+            cand_name_norm = _norm_host(entry["name"])
+            cand_inst_norm = _norm_host(entry["instance_name"])
+            cand_srv_norm = _norm_host(entry["server"])
+            cand_ips = {_norm_ip(a) for a in addrs if _norm_ip(a)}
+
+            matched_existing = None
+            for ex in all_discovered_routers:
+                ex_name_norm = _norm_host(ex.get("name"))
+                ex_inst_norm = _norm_host(ex.get("instance_name"))
+                ex_srv_norm = _norm_host(ex.get("server"))
+                ex_ips = {_norm_ip(a) for a in (ex.get("addresses") or []) if _norm_ip(a)}
+
+                same_name = bool(cand_name_norm and (cand_name_norm == ex_name_norm or cand_name_norm == ex_inst_norm))
+                same_inst = bool(cand_inst_norm and (cand_inst_norm == ex_inst_norm or cand_inst_norm == ex_name_norm))
+                same_ext = bool(ext_addr and ex.get("ext_address") and ext_addr == ex.get("ext_address"))
+                same_ba = bool(ba_id and ex.get("border_agent_id") and ba_id == ex.get("border_agent_id"))
+                same_ip = bool(cand_ips and ex_ips and (cand_ips & ex_ips))
+                same_srv = bool(
+                    cand_srv_norm
+                    and ex_srv_norm
+                    and "." not in cand_srv_norm
+                    and ":" not in cand_srv_norm
+                    and cand_srv_norm == ex_srv_norm
+                )
+                same_ha_otbr = bool(
+                    entry["type"] == "ha"
+                    and ex.get("type") == "ha"
+                    and ext_pan_id not in ("", "UNKNOWN")
+                    and ex.get("extended_pan_id") == ext_pan_id
+                    and ("otbr" in str(entry.get("source", "")).lower() or "otbr" in str(ex.get("source", "")).lower())
+                )
+
+                if same_name or same_inst or same_ext or same_ba or same_ip or same_srv or same_ha_otbr:
+                    matched_existing = ex
+                    break
+
+            if matched_existing is not None:
+                # Merge richer metadata into matched_existing instead of adding a duplicate row
+                if matched_existing.get("extended_pan_id") in (None, "", "UNKNOWN") and ext_pan_id not in ("", "UNKNOWN"):
+                    matched_existing["extended_pan_id"] = ext_pan_id
+                    if net_name and net_name != matched_existing.get("name"):
+                        matched_existing["network_name"] = net_name
+                if matched_existing.get("type") == "generic" and entry["type"] != "generic":
+                    matched_existing["type"] = entry["type"]
+                    matched_existing["brand"] = entry["brand"]
+                    matched_existing["model"] = entry["model"]
+                    matched_existing["name"] = entry["name"]
+                elif matched_existing.get("brand") in ("Thread TBR", "Generic", "") and entry["brand"] not in ("Thread TBR", "Generic", ""):
+                    matched_existing["brand"] = entry["brand"]
+                    matched_existing["model"] = entry["model"]
+                for fld in ("channel", "pan_id", "mesh_local_prefix", "ext_address", "rloc16", "border_agent_id", "thread_version", "state_bitmap"):
+                    if not matched_existing.get(fld) and entry.get(fld):
+                        matched_existing[fld] = entry[fld]
+                merged_ips = _order_ips((matched_existing.get("addresses") or []) + addrs)
+                matched_existing["addresses"] = merged_ips
+            else:
+                all_discovered_routers.append(entry)
+
+        # Populate networks dict from deduplicated routers (and enrich any newly-merged XPAN with dataset metadata)
+        for r_entry in all_discovered_routers:
+            rxpan = r_entry.get("extended_pan_id") or "UNKNOWN"
+            ds_m = dataset_by_xpan.get(rxpan, {})
+            if ds_m:
+                if not r_entry.get("channel") and ds_m.get("channel"):
+                    r_entry["channel"] = ds_m["channel"]
+                if not r_entry.get("pan_id") and ds_m.get("pan_id"):
+                    r_entry["pan_id"] = ds_m["pan_id"]
+                if not r_entry.get("mesh_local_prefix") and ds_m.get("mesh_local_prefix"):
+                    r_entry["mesh_local_prefix"] = ds_m["mesh_local_prefix"]
+                if ds_m.get("network_name") and (not r_entry.get("network_name") or r_entry.get("network_name") == r_entry.get("name")):
+                    r_entry["network_name"] = ds_m["network_name"]
+            networks.setdefault(rxpan, []).append(r_entry)
+
+        # Only inspect HA Device Registry fallback if NO live Border Routers were discovered via mDNS / HA Discovery
+        if device_registry and len(all_discovered_routers) == 0:
             for d in device_registry:
                 if not isinstance(d, dict):
                     continue

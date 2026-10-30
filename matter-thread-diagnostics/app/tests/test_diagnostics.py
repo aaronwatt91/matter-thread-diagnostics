@@ -184,3 +184,123 @@ def test_ai_diagnostic_engine_key_and_model_validation():
     assert engine_claude.has_valid_key() is True
     assert engine_claude.model == "claude-3-7-sonnet-latest"
 
+
+def test_border_router_multi_source_deduplication():
+    """Verify routers discovered by both HA Discovery and Live UDP mDNS (including partial UNKNOWN mDNS replies) are merged without duplication."""
+    ha_routers = [
+        {
+            "instance_name": "Home Assistant OpenThread Border Router #F8E4",
+            "brand_name": "Home Assistant",
+            "model_name": "OpenThread Border Router",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "extended_address": "AABBCCDDEEFF0001",
+            "thread_version": "1.4.0",
+            "addresses": ["192.168.86.38"],
+            "source": "mDNS / HA Discovery",
+        },
+        {
+            "instance_name": "Nest Wifi Mesh #9074",
+            "brand_name": "Google",
+            "model_name": "Nest Wifi Mesh",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "extended_address": "AABBCCDDEEFF0002",
+            "thread_version": "1.4.0",
+            "addresses": ["192.168.86.1"],
+            "source": "mDNS / HA Discovery",
+        },
+        {
+            "instance_name": "Nest Wifi Mesh #9166",
+            "brand_name": "Google",
+            "model_name": "Nest Wifi Mesh",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "extended_address": "AABBCCDDEEFF0003",
+            "thread_version": "1.4.0",
+            "addresses": ["192.168.86.130"],
+            "source": "mDNS / HA Discovery",
+        },
+        {
+            "instance_name": "Nursery",
+            "brand_name": "Apple",
+            "model_name": "BorderRouter",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "extended_address": "AABBCCDDEEFF0004",
+            "thread_version": "1.4.0",
+            "addresses": ["192.168.86.41"],
+            "source": "mDNS / HA Discovery",
+        },
+    ]
+    mdns_routers = [
+        {
+            "instance_name": "Nest Wifi Mesh #9074",
+            "vendor_name": "Google",
+            "model_name": "Nest Wifi Mesh",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "ext_address": "AABBCCDDEEFF0002",
+            "border_agent_id": "11111111222222223333333344444444",
+            "addresses": ["192.168.86.1"],
+            "source": "Live UDP mDNS (_meshcop._udp)",
+        },
+        {
+            "instance_name": "Nest Wifi Mesh #9166",
+            "vendor_name": "Google",
+            "model_name": "Nest Wifi Mesh",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "ext_address": "AABBCCDDEEFF0003",
+            "border_agent_id": "55555555666666667777777788888888",
+            "addresses": ["192.168.86.130"],
+            "source": "Live UDP mDNS (_meshcop._udp)",
+        },
+        {
+            "instance_name": "Nursery",
+            "network_name": "Nursery",
+            "extended_pan_id": "UNKNOWN",
+            "addresses": ["192.168.86.41"],
+            "source": "Live UDP mDNS (_meshcop._udp)",
+        },
+        {
+            "instance_name": "Home Assistant OpenThread Border Router #F8E4",
+            "vendor_name": "Home Assistant",
+            "model_name": "OpenThread Border Router",
+            "network_name": "NEST-PAN-2E89",
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "ext_address": "AABBCCDDEEFF0001",
+            "border_agent_id": "99999999AAAAAAAABBBBBBBBCCCCCCCC",
+            "addresses": ["fe80::f55d:7222:4687:b814"],
+            "source": "Live UDP mDNS (_meshcop._udp)",
+        },
+    ]
+    datasets = [
+        {
+            "extended_pan_id": "49F5DAF7314F6B62",
+            "network_name": "NEST-PAN-2E89",
+            "channel": 21,
+            "pan_id": "0x2e89",
+            "mesh_local_prefix": "fd39:7b97:c02d::/64",
+            "preferred": True,
+        }
+    ]
+    res = ThreadAnalyzer.detect_split_networks(
+        border_routers=ha_routers,
+        active_datasets=datasets,
+        mdns_routers=mdns_routers,
+        target_network_id="49F5DAF7314F6B62",
+    )
+    assert len(res["all_discovered_routers"]) == 4, f"Expected 4 deduplicated routers, got {len(res['all_discovered_routers'])}"
+    assert res["is_split_network"] is False
+    assert res["distinct_network_count"] == 1
+    assert "UNKNOWN" not in res["networks"]
+    nursery = next(r for r in res["all_discovered_routers"] if r["name"] == "Nursery")
+    assert nursery["extended_pan_id"] == "49F5DAF7314F6B62"
+    assert nursery["brand"] == "Apple"
+    assert nursery["is_target_network"] is True
+    ha_otbr = next(r for r in res["all_discovered_routers"] if "F8E4" in r["name"])
+    assert ha_otbr["addresses"][0] == "192.168.86.38"
+    assert "fe80::f55d:7222:4687:b814" in ha_otbr["addresses"]
+
+

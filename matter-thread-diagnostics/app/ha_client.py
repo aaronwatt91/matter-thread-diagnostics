@@ -520,20 +520,55 @@ class HAClient:
         except Exception as e:
             logger.warning("Error processing Thread datasets: %s", e)
 
-        # Helper to merge a discovered border router into networks_map
+        # Helper to merge a discovered border router into networks_map without duplicating routers or creating UNKNOWN shadow networks
+        def _norm_ip(ip_s: str) -> str:
+            return str(ip_s or "").split("/")[0].split("%")[0].strip().lower()
+
         def _merge_router(r_dict: Dict[str, Any], default_source: str):
             xpan = str(r_dict.get("extended_pan_id") or r_dict.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
             net_name = r_dict.get("network_name") or r_dict.get("instance_name") or r_dict.get("name") or (f"Thread Mesh ({xpan[:8]})" if xpan else "Thread Mesh")
             brand = r_dict.get("brand_name") or r_dict.get("vendor_name") or ""
             model = r_dict.get("model_name") or r_dict.get("model") or ""
-            inst = r_dict.get("instance_name") or r_dict.get("server") or r_dict.get("name") or "Border Router"
-            r_label = f"{brand} {model}".strip() if (brand or model) else inst
+            inst = str(r_dict.get("instance_name") or r_dict.get("name") or r_dict.get("server") or "Border Router").strip()
+            r_label = inst if inst and inst != "Border Router" else (f"{brand} {model}".strip() or "Border Router")
             ch = r_dict.get("channel")
             pan_id = r_dict.get("pan_id")
             pan_str = f"0x{pan_id:04X}" if isinstance(pan_id, int) else str(pan_id or "")
             addrs = r_dict.get("addresses") or (r_dict.get("ipv6_addresses", []) + r_dict.get("ipv4_addresses", []))
+            ext_addr = str(r_dict.get("ext_address") or r_dict.get("extended_address") or "").upper().replace(":", "")
+            cand_ips = {_norm_ip(a) for a in addrs if _norm_ip(a)}
+            inst_lower = inst.lower()
+
+            # If xpan is UNKNOWN/empty, check if this router already belongs to an existing network in networks_map
+            if not xpan or xpan == "UNKNOWN":
+                for existing_net in networks_map.values():
+                    for rd in existing_net.get("router_details", []):
+                        rd_ips = {_norm_ip(a) for a in (rd.get("addresses") or []) if _norm_ip(a)}
+                        rd_name_lower = str(rd.get("name") or "").lower()
+                        rd_inst_lower = str(rd.get("instance_name") or "").lower()
+                        if (
+                            (inst_lower and (inst_lower == rd_name_lower or inst_lower == rd_inst_lower))
+                            or (ext_addr and rd.get("ext_address") == ext_addr)
+                            or (cand_ips and rd_ips and (cand_ips & rd_ips))
+                        ):
+                            for a in addrs:
+                                if a not in rd["addresses"]:
+                                    rd["addresses"].append(a)
+                            return
+                # If we already have valid Thread networks with real XPANs, don't pollute dropdown with an UNKNOWN partial mDNS record
+                if any(k and k != "UNKNOWN" for k in networks_map.keys()):
+                    return
 
             key = xpan if (xpan and xpan != "UNKNOWN") else net_name
+            r_detail = {
+                "name": r_label,
+                "instance_name": inst,
+                "server": r_dict.get("server"),
+                "ext_address": ext_addr or None,
+                "thread_version": r_dict.get("thread_version"),
+                "addresses": list(addrs),
+            }
+
             if key not in networks_map:
                 networks_map[key] = {
                     "id": key,
@@ -546,26 +581,38 @@ class HAClient:
                     "preferred": False,
                     "source": default_source,
                     "routers": [r_label],
-                    "router_details": [{
-                        "name": r_label,
-                        "server": r_dict.get("server"),
-                        "ext_address": r_dict.get("ext_address") or r_dict.get("extended_address"),
-                        "thread_version": r_dict.get("thread_version"),
-                        "addresses": addrs,
-                    }],
+                    "router_details": [r_detail],
                     "matter_node_count": 0,
                 }
             else:
                 entry = networks_map[key]
-                if r_label not in entry["routers"]:
-                    entry["routers"].append(r_label)
-                entry["router_details"].append({
-                    "name": r_label,
-                    "server": r_dict.get("server"),
-                    "ext_address": r_dict.get("ext_address") or r_dict.get("extended_address"),
-                    "thread_version": r_dict.get("thread_version"),
-                    "addresses": addrs,
-                })
+                # Deduplicate router inside entry["router_details"]
+                dup_rd = None
+                for rd in entry["router_details"]:
+                    rd_ips = {_norm_ip(a) for a in (rd.get("addresses") or []) if _norm_ip(a)}
+                    rd_name_lower = str(rd.get("name") or "").lower()
+                    rd_inst_lower = str(rd.get("instance_name") or "").lower()
+                    if (
+                        (inst_lower and (inst_lower == rd_name_lower or inst_lower == rd_inst_lower))
+                        or (r_label.lower() == rd_name_lower)
+                        or (ext_addr and rd.get("ext_address") and ext_addr == rd.get("ext_address"))
+                        or (cand_ips and rd_ips and (cand_ips & rd_ips))
+                    ):
+                        dup_rd = rd
+                        break
+                if dup_rd is not None:
+                    for a in addrs:
+                        if a not in dup_rd["addresses"]:
+                            dup_rd["addresses"].append(a)
+                    if not dup_rd.get("ext_address") and ext_addr:
+                        dup_rd["ext_address"] = ext_addr
+                    if not dup_rd.get("thread_version") and r_dict.get("thread_version"):
+                        dup_rd["thread_version"] = r_dict.get("thread_version")
+                else:
+                    if r_label not in entry["routers"]:
+                        entry["routers"].append(r_label)
+                    entry["router_details"].append(r_detail)
+
                 if not entry.get("channel") and ch:
                     entry["channel"] = ch
                 if not entry.get("pan_id") and pan_str:
@@ -653,22 +700,17 @@ class HAClient:
         except Exception as e:
             logger.warning("Error merging Matter node networks: %s", e)
 
-        # 6. Check Home Assistant Device Registry and Entity States for registered Thread Border Router hardware
-        # (Google Nest Wifi Pro, Nest Hub, Apple TV 4K, HomePod, SkyConnect/ZBT-1)
-        try:
-            if device_registry is None:
-                device_registry = await self.get_device_registry()
-            for d in device_registry or []:
-                if not isinstance(d, dict):
-                    continue
-                m_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
-                if "wifi pro" in m_str or ("nest" in m_str and ("router" in m_str or "point" in m_str or "hub" in m_str)):
-                    name = d.get("name_by_user") or d.get("name") or "Google Nest Wifi Pro"
-                    has_nest = any(
-                        "nest" in n["name"].lower() or "google" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", []))
-                        for n in networks_map.values()
-                    )
-                    if not has_nest:
+        # 6. Fallback: Only check Home Assistant Device Registry and Entity States if NO live Thread datasets or mDNS routers were found
+        if not networks_map:
+            try:
+                if device_registry is None:
+                    device_registry = await self.get_device_registry()
+                for d in device_registry or []:
+                    if not isinstance(d, dict):
+                        continue
+                    m_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
+                    if "wifi pro" in m_str or ("nest" in m_str and ("router" in m_str or "point" in m_str or "hub" in m_str)):
+                        name = d.get("name_by_user") or d.get("name") or "Google Nest Wifi Pro"
                         networks_map["GOOGLE_NEST_MESH"] = {
                             "id": "GOOGLE_NEST_MESH",
                             "dataset_id": "",
@@ -683,13 +725,8 @@ class HAClient:
                             "router_details": [{"name": name, "server": d.get("id"), "addresses": []}],
                             "matter_node_count": 0,
                         }
-                elif "apple tv" in m_str or "homepod" in m_str:
-                    name = d.get("name_by_user") or d.get("name") or "Apple TV / HomePod"
-                    has_apple = any(
-                        "apple" in n["name"].lower() or "homepod" in n["name"].lower() or "myhome" in n["name"].lower() or any("apple" in r.lower() or "homepod" in r.lower() for r in n.get("routers", []))
-                        for n in networks_map.values()
-                    )
-                    if not has_apple:
+                    elif "apple tv" in m_str or "homepod" in m_str:
+                        name = d.get("name_by_user") or d.get("name") or "Apple TV / HomePod"
                         networks_map["APPLE_THREAD_MESH"] = {
                             "id": "APPLE_THREAD_MESH",
                             "dataset_id": "",
@@ -704,61 +741,53 @@ class HAClient:
                             "router_details": [{"name": name, "server": d.get("id"), "addresses": []}],
                             "matter_node_count": 0,
                         }
-        except Exception as e:
-            logger.debug("Error checking device registry for Thread hardware: %s", e)
+            except Exception as e:
+                logger.debug("Error checking device registry for Thread hardware: %s", e)
 
-        try:
-            states = await self._get_all_ha_states()
-            for s in states:
-                eid = s.get("entity_id", "").lower()
-                attrs = s.get("attributes", {})
-                fname = attrs.get("friendly_name", "")
-                combined = f"{eid} {fname} {attrs}".lower()
+            try:
+                states = await self._get_all_ha_states()
+                for s in states:
+                    eid = s.get("entity_id", "").lower()
+                    attrs = s.get("attributes", {})
+                    fname = attrs.get("friendly_name", "")
+                    combined = f"{eid} {fname} {attrs}".lower()
 
-                if "wifi pro" in combined or ("nest" in combined and ("router" in combined or "point" in combined or "hub" in combined)):
-                    r_name = fname or "Google Nest Wifi Pro"
-                    has_nest = any(
-                        "nest" in n["name"].lower() or "google" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", []))
-                        for n in networks_map.values()
-                    )
-                    if not has_nest:
-                        networks_map["GOOGLE_NEST_MESH"] = {
-                            "id": "GOOGLE_NEST_MESH",
-                            "dataset_id": "",
-                            "name": f"Google Nest Thread Mesh ({r_name})",
-                            "extended_pan_id": "NEST_TBR_DETECTED",
-                            "pan_id": "",
-                            "channel": None,
-                            "mesh_local_prefix": "",
-                            "preferred": False,
-                            "source": "HA Entity States (Nest Border Router)",
-                            "routers": [r_name],
-                            "router_details": [{"name": r_name, "server": eid, "addresses": []}],
-                            "matter_node_count": 0,
-                        }
-                elif "apple tv" in combined or "homepod" in combined:
-                    r_name = fname or "Apple TV / HomePod"
-                    has_apple = any(
-                        "apple" in n["name"].lower() or "homepod" in n["name"].lower() or "myhome" in n["name"].lower() or any("apple" in r.lower() or "homepod" in r.lower() for r in n.get("routers", []))
-                        for n in networks_map.values()
-                    )
-                    if not has_apple:
-                        networks_map["APPLE_THREAD_MESH"] = {
-                            "id": "APPLE_THREAD_MESH",
-                            "dataset_id": "",
-                            "name": f"Apple Thread Mesh ({r_name})",
-                            "extended_pan_id": "APPLE_TBR_DETECTED",
-                            "pan_id": "",
-                            "channel": None,
-                            "mesh_local_prefix": "",
-                            "preferred": False,
-                            "source": "HA Entity States (Apple Border Router)",
-                            "routers": [r_name],
-                            "router_details": [{"name": r_name, "server": eid, "addresses": []}],
-                            "matter_node_count": 0,
-                        }
-        except Exception as e:
-            logger.debug("Error checking HA states for Thread hardware: %s", e)
+                    if "wifi pro" in combined or ("nest" in combined and ("router" in combined or "point" in combined or "hub" in combined)):
+                        r_name = fname or "Google Nest Wifi Pro"
+                        if "GOOGLE_NEST_MESH" not in networks_map:
+                            networks_map["GOOGLE_NEST_MESH"] = {
+                                "id": "GOOGLE_NEST_MESH",
+                                "dataset_id": "",
+                                "name": f"Google Nest Thread Mesh ({r_name})",
+                                "extended_pan_id": "NEST_TBR_DETECTED",
+                                "pan_id": "",
+                                "channel": None,
+                                "mesh_local_prefix": "",
+                                "preferred": False,
+                                "source": "HA Entity States (Nest Border Router)",
+                                "routers": [r_name],
+                                "router_details": [{"name": r_name, "server": eid, "addresses": []}],
+                                "matter_node_count": 0,
+                            }
+                    elif "apple tv" in combined or "homepod" in combined:
+                        r_name = fname or "Apple TV / HomePod"
+                        if "APPLE_THREAD_MESH" not in networks_map:
+                            networks_map["APPLE_THREAD_MESH"] = {
+                                "id": "APPLE_THREAD_MESH",
+                                "dataset_id": "",
+                                "name": f"Apple Thread Mesh ({r_name})",
+                                "extended_pan_id": "APPLE_TBR_DETECTED",
+                                "pan_id": "",
+                                "channel": None,
+                                "mesh_local_prefix": "",
+                                "preferred": False,
+                                "source": "HA Entity States (Apple Border Router)",
+                                "routers": [r_name],
+                                "router_details": [{"name": r_name, "server": eid, "addresses": []}],
+                                "matter_node_count": 0,
+                            }
+            except Exception as e:
+                logger.debug("Error checking HA states for Thread hardware: %s", e)
 
         net_list = list(networks_map.values())
         net_list.sort(key=lambda x: (not x.get("preferred", False), -len(x.get("routers", [])), -x.get("matter_node_count", 0)))

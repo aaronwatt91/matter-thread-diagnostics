@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.2] - 2026-10-30
+
+### Fixed: Border Router Multi-Source Deduplication (`mDNS / HA Discovery` + `Live UDP mDNS`)
+- **Eliminated Duplicate Border Router Entries**:
+  - Previously, Border Routers discovered simultaneously via Home Assistant (`mDNS / HA Discovery`) and raw UDP mDNS (`Live UDP mDNS (_meshcop._udp)`) generated different deduplication keys when `Live UDP mDNS` decoded a 32-char `border_agent_id` (`ba` TXT key) while Home Assistant's payload omitted `border_agent_id` or when an Apple Border Router (`Nursery`) sent its PTR record before its TXT record (`UNKNOWN` Extended PAN ID).
+  - Implemented multi-attribute Border Router deduplication and in-place field merging across `ThreadAnalyzer.detect_split_networks`, `HAClient.get_all_available_thread_networks`, and `NetworkChecker.inspect_mdns_discovery` matching by normalized `instance_name`/`name`, `ext_address`, `border_agent_id`, shared IPv4/IPv6 address, or hostname.
+  - Partial `UNKNOWN` mDNS records (such as Apple HomePod/Apple TV PTR replies) now automatically merge into their full Border Router entry and trigger an immediate unicast `TXT` (`QTYPE=16`) + `ANY` (`QTYPE=255`) follow-up query.
+  - Ordered router IP lists so routable IPv4 and Thread ULA (`fd00::/8`) addresses always appear before link-local (`fe80::`) addresses.
+
 ## [2.0.1] - 2026-10-30
 
 ### Fixed: Network Discovery in `host_network: true` Mode & Instant AI Model Switching
