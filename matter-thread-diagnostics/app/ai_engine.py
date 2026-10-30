@@ -41,7 +41,21 @@ Format your response clearly using markdown:
 4. 📡 **Node-by-Node & RF Recommendations**: Specific placement, routing role, or channel fixes for any weak, offline, or desynced nodes.
 """
 
-CLIENT_TIMEOUT = httpx.Timeout(180.0, connect=30.0, read=180.0, write=30.0)
+CLIENT_TIMEOUT = httpx.Timeout(55.0, connect=10.0, read=55.0, write=15.0)
+
+
+def _ipv4_transport() -> Optional[ Any ]:
+    """
+    Bind outbound cloud API connections to 0.0.0.0 (IPv4) so that `host_network: true`
+    never hangs on residential ISP IPv6 WAN blackholes or PMTU drops when sending
+    multi-kilobyte JSON prompts to generativelanguage.googleapis.com / openai / anthropic.
+    """
+    if hasattr(httpx, "AsyncHTTPTransport"):
+        try:
+            return httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=1)
+        except Exception:
+            return None
+    return None
 
 
 class AIDiagnosticEngine:
@@ -202,14 +216,57 @@ class AIDiagnosticEngine:
                 "telemetry_counters": n.get("telemetry_counters"),
             })
 
+        compact_networks = []
+        for net in (raw_data.get("available_thread_networks") or [])[:6]:
+            if isinstance(net, dict):
+                compact_networks.append({
+                    "name": net.get("name"),
+                    "extended_pan_id": net.get("extended_pan_id"),
+                    "channel": net.get("channel"),
+                    "pan_id": net.get("pan_id"),
+                    "preferred": net.get("preferred"),
+                    "routers_count": len(net.get("routers") or []),
+                })
+
+        pings_raw = telemetry.get("reachability_probes") or {}
+        compact_pings = {
+            "probed_count": pings_raw.get("probed_count", 0),
+            "reachable_count": pings_raw.get("reachable_count", 0),
+            "results": [
+                {
+                    "name": p.get("name"),
+                    "ip": p.get("ip"),
+                    "reachable": p.get("reachable"),
+                    "rtt_ms": p.get("rtt_ms"),
+                }
+                for p in (pings_raw.get("results") or [])[:12]
+                if isinstance(p, dict)
+            ],
+        }
+
+        logs_raw = telemetry.get("logs_sample") or {}
+        compact_logs = {
+            "matter_server_recent_errors": (logs_raw.get("matter_server_recent_errors") or [])[-8:],
+            "otbr_recent_errors": (logs_raw.get("otbr_recent_errors") or [])[-8:],
+        }
+
         return {
             "scan_timestamp": raw_data.get("timestamp"),
             "hardware_platform": raw_data.get("hardware_platform", "Home Assistant OS"),
             "health_score": raw_data.get("summary_score", 100),
-            "selected_target_network": raw_data.get("selected_target_network"),
-            "available_thread_networks": raw_data.get("available_thread_networks", []),
-            "thread_border_routers": routers_summary,
-            "otbr_status": telemetry.get("otbr"),
+            "selected_target_network": {
+                "name": (raw_data.get("selected_target_network") or {}).get("name"),
+                "extended_pan_id": (raw_data.get("selected_target_network") or {}).get("extended_pan_id"),
+                "channel": (raw_data.get("selected_target_network") or {}).get("channel"),
+            } if isinstance(raw_data.get("selected_target_network"), dict) else raw_data.get("selected_target_network"),
+            "available_thread_networks": compact_networks,
+            "thread_border_routers": routers_summary[:10],
+            "otbr_status": {
+                "reachable": (telemetry.get("otbr") or {}).get("reachable"),
+                "state": (telemetry.get("otbr") or {}).get("state"),
+                "extended_pan_id": (telemetry.get("otbr") or {}).get("extended_pan_id"),
+                "channel": (telemetry.get("otbr") or {}).get("channel"),
+            } if isinstance(telemetry.get("otbr"), dict) else None,
             "mdns_discovery": {
                 "scanner_backend": telemetry.get("mdns_info", {}).get("scanner_backend"),
                 "meshcop_border_routers_count": telemetry.get("mdns_info", {}).get("meshcop_border_routers_count", 0),
@@ -229,24 +286,24 @@ class AIDiagnosticEngine:
             "ipv6_routing": {
                 "has_thread_ula_route": ipv6.get("has_thread_ula_route", False),
                 "detected_ula_prefixes": ipv6.get("detected_ula_prefixes", []),
-                "ula_routes_detailed": ipv6.get("ula_routes_detailed", []),
+                "ula_routes_detailed": (ipv6.get("ula_routes_detailed") or [])[:6],
                 "neighbors_count": ipv6.get("neighbors_count", 0),
             },
-            "active_icmpv6_pings": telemetry.get("reachability_probes", {}),
+            "active_icmpv6_pings": compact_pings,
             "node_quality": {
                 "total_nodes": nq.get("total_nodes", len(matter_nodes)),
                 "healthy_count": nq.get("healthy_count", 0),
-                "offline_nodes": nq.get("offline_nodes", []),
-                "weak_nodes": nq.get("weak_nodes", []),
-                "wrong_network_nodes": nq.get("wrong_network_nodes", []),
+                "offline_nodes": (nq.get("offline_nodes") or [])[:15],
+                "weak_nodes": (nq.get("weak_nodes") or [])[:15],
+                "wrong_network_nodes": (nq.get("wrong_network_nodes") or [])[:15],
             },
-            "matter_nodes_cluster_0x0035": matter_nodes[:30],
-            "logs_summary": telemetry.get("logs_sample", {}),
+            "matter_nodes_cluster_0x0035": matter_nodes[:25],
+            "logs_summary": compact_logs,
         }
 
     def _build_prompt(self, data: Dict[str, Any], user_notes: Optional[str]) -> str:
         streamlined = self._streamline_telemetry(data)
-        data_json = json.dumps(streamlined, indent=2)
+        data_json = json.dumps(streamlined, separators=(",", ":"))
         notes_section = f"\nUser Symptoms / Questions:\n{user_notes}\n" if user_notes else ""
         return (
             f"Please analyze the following real diagnostic scan collected from the user's Home Assistant Matter & Thread network:\n"
@@ -256,9 +313,12 @@ class AIDiagnosticEngine:
         )
 
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Google Gemini REST API with automatic model fallback if a model alias returns 404."""
+        """
+        Call Google Gemini REST API over IPv4 transport with capped thinking budget on 2.5 models
+        and automatic model fallback on 404 or timeout.
+        """
         candidate_models: List[str] = []
-        for m in [self.model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+        for m in [self.model, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]:
             if m and m not in candidate_models:
                 candidate_models.append(m)
 
@@ -267,26 +327,51 @@ class AIDiagnosticEngine:
             "x-goog-api-key": self.gemini_key.strip(),
         }
         params = {"key": self.gemini_key.strip()}
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": f"{SYSTEM_PROMPT}\n\n{prompt}"}],
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 3000,
-            },
-        }
 
         last_err = None
-        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+        transport = _ipv4_transport()
+        client_kwargs: Dict[str, Any] = {"timeout": CLIENT_TIMEOUT}
+        if transport is not None:
+            client_kwargs["transport"] = transport
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             for model_name in candidate_models:
+                gen_cfg: Dict[str, Any] = {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 4096,
+                }
+                # Cap thinking budget on Gemini 2.5 models so they respond in ~3-6s instead of timing out
+                if "2.5-flash" in model_name.lower():
+                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 512}
+                elif "2.5-pro" in model_name.lower():
+                    gen_cfg["thinkingConfig"] = {"thinkingBudget": 1024}
+
+                payload = {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": f"{SYSTEM_PROMPT}\n\n{prompt}"}],
+                        }
+                    ],
+                    "generationConfig": gen_cfg,
+                }
+
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-                r = await client.post(url, json=payload, headers=headers, params=params)
-                if r.status_code == 404 and model_name != candidate_models[-1]:
-                    logger.warning("Gemini model '%s' returned 404, falling back to next available model", model_name)
+                try:
+                    r = await client.post(url, json=payload, headers=headers, params=params)
+                    # If a model rejects thinkingConfig (400), retry immediately without thinkingConfig
+                    if r.status_code == 400 and "thinkingConfig" in gen_cfg:
+                        gen_cfg.pop("thinkingConfig", None)
+                        r = await client.post(url, json=payload, headers=headers, params=params)
+                except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError) as tex:
+                    last_err = f"{type(tex).__name__} on {model_name}"
+                    logger.warning("Gemini model '%s' timed out (%s), falling back to next model", model_name, tex)
+                    if model_name != candidate_models[-1]:
+                        continue
+                    raise
+
+                if r.status_code in (404, 429, 503) and model_name != candidate_models[-1]:
+                    logger.warning("Gemini model '%s' returned HTTP %s, falling back to next available model", model_name, r.status_code)
                     continue
                 if r.status_code != 200:
                     err_text = r.text
@@ -304,13 +389,18 @@ class AIDiagnosticEngine:
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
                     if parts:
-                        return parts[0].get("text", "")
+                        non_thought_texts = [p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought") and p.get("text")]
+                        if non_thought_texts:
+                            return "\n".join(non_thought_texts)
+                        all_texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
+                        if all_texts:
+                            return "\n".join(all_texts)
                 return "No response text generated by Gemini."
 
         raise RuntimeError(last_err or "Failed to call Gemini API")
 
     async def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI Chat Completions REST API."""
+        """Call OpenAI Chat Completions REST API over IPv4 transport."""
         model_name = self.model or "gpt-4o"
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
@@ -327,7 +417,12 @@ class AIDiagnosticEngine:
             "max_tokens": 3000,
         }
 
-        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+        transport = _ipv4_transport()
+        client_kwargs: Dict[str, Any] = {"timeout": CLIENT_TIMEOUT}
+        if transport is not None:
+            client_kwargs["transport"] = transport
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             res_data = r.json()
@@ -337,7 +432,7 @@ class AIDiagnosticEngine:
             return "No response text generated by OpenAI."
 
     async def _call_anthropic(self, prompt: str) -> str:
-        """Call Anthropic Messages REST API."""
+        """Call Anthropic Messages REST API over IPv4 transport."""
         model_name = self.model or "claude-3-5-sonnet-20241022"
         url = "https://api.anthropic.com/v1/messages"
         headers = {
@@ -353,7 +448,12 @@ class AIDiagnosticEngine:
             "temperature": 0.2,
         }
 
-        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+        transport = _ipv4_transport()
+        client_kwargs: Dict[str, Any] = {"timeout": CLIENT_TIMEOUT}
+        if transport is not None:
+            client_kwargs["transport"] = transport
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             res_data = r.json()

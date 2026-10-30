@@ -1254,10 +1254,11 @@ async function runAIDiagnosis() {
       fetchStatus();
     } else {
       const errMsg = (data.ai_result && data.ai_result.error) || "AI diagnosis could not be completed.";
+      const isKeyMissing = errMsg.toLowerCase().includes("missing or invalid api key") || errMsg.toLowerCase().includes("empty or invalid");
       reportBody.innerHTML = `
-        <div class="badge badge-danger" style="margin-bottom: 12px;"><i class="fa-solid fa-triangle-exclamation"></i> AI Configuration Required</div>
+        <div class="badge badge-danger" style="margin-bottom: 12px;"><i class="fa-solid fa-triangle-exclamation"></i> ${isKeyMissing ? 'AI API Key Required' : 'AI Request Error'}</div>
         <p>${escapeHtml(errMsg)}</p>
-        <p style="margin-top: 10px;">Open the <strong>Settings &amp; API Keys</strong> tab, enter your API key, and click <strong>Save Settings</strong>.</p>
+        ${isKeyMissing ? `<p style="margin-top: 10px;">Open the <strong>Settings &amp; API Keys</strong> tab, enter your API key, and click <strong>Save Settings</strong>.</p>` : `<p style="margin-top: 10px; color: var(--text-muted);">Click <strong>Run AI Diagnosis on Live Scan</strong> to retry or select a different model above.</p>`}
       `;
     }
   } catch (err) {

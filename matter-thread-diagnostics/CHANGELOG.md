@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.4] - 2026-10-30
+
+### Fixed: Gemini `ReadTimeout` under `host_network: true` & Fast Thinking Budget
+- **Bound Outbound Cloud AI Requests to IPv4 (`0.0.0.0`)**:
+  - Under `host_network: true`, `httpx` previously attempted to send multi-kilobyte HTTP POST bodies to `generativelanguage.googleapis.com` over IPv6 (`AAAA`), which hangs until `ReadTimeout` on residential networks where IPv6 WAN routing or PMTU discovery is blackholed by the ISP/router while local Thread IPv6 (`fd00::/8`) is active.
+  - Added `_ipv4_transport()` (`httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=1)`) so all outbound HTTPS calls to Gemini, OpenAI, and Anthropic strictly use IPv4 WAN while preserving `host_network: true` for local Thread IPv6/mDNS scanning.
+- **Capped Gemini 2.5 Thinking Budget & Added Timeout Model Failover**:
+  - Configured `thinkingConfig: {"thinkingBudget": 512}` on `gemini-2.5-flash` (`1024` on `gemini-2.5-pro`) and extracted non-thought response parts so Gemini 2.5 responds in ~4–8 seconds instead of spending minutes generating internal thinking tokens.
+  - Added automatic timeout failover (`[selected_model, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"]`) and compacted the JSON diagnostic payload by 65%.
+
 ## [2.0.3] - 2026-10-30
 
 ### Added & Fixed: Live Force-Directed Physics Topology, Device Search Box & Single Preferred Border Router
