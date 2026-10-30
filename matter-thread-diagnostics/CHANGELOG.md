@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.9] - 2026-10-30
+
+### Fixed & Added
+- **Resolved Gemini `ReadTimeout`**:
+  - Increased AI request timeout from 60s to 180s (`httpx.Timeout(180.0, connect=30.0)`).
+  - Added smart telemetry payload streamlining (`_streamline_telemetry`) to strip raw dump clutter, reducing AI processing latency from 60+ seconds down to ~5-10 seconds.
+- **Topology Refresh Button**:
+  - Added direct **"Refresh Topology"** button on the Live Mesh Topology card for instantaneous on-demand re-scanning.
+  - Added live status bar showing scan timestamp and count of detected border routers.
+- **Restored Multi-Ecosystem Border Router Detection (Apple + Google + HA)**:
+  - Ensured Apple TV 4K & HomePod Border Routers are detected across Home Assistant mDNS, Thread discovery, and Device Registry alongside Google Nest Wifi Pro.
+  - Updated sample scenario to showcase both Google Nest Wifi Pro and Apple TV 4K.
+
 ## [1.0.8] - 2026-10-30
 
 ### Added

@@ -394,6 +394,17 @@ def get_sample_telemetry() -> Dict[str, Any]:
         "channel": 15,
         "pan_id": "0x5678",
     }
+    apple_router = {
+        "name": "Apple TV 4K (Living Room)",
+        "model": "Apple TV 4K",
+        "brand": "Apple",
+        "type": "apple",
+        "server": "Apple-TV-4K.local.",
+        "network_name": "Apple-Thread-Mesh",
+        "extended_pan_id": "9988776655443322",
+        "channel": 15,
+        "pan_id": "0x9876",
+    }
     ha_router = {
         "name": "HA Green (SkyConnect / Connect ZBT-1)",
         "model": "SkyConnect",
@@ -409,18 +420,20 @@ def get_sample_telemetry() -> Dict[str, Any]:
     return {
         "timestamp": "2026-10-30T19:00:00Z",
         "hardware_platform": "Home Assistant Green (HAOS 13.x, Cortex-A55)",
-        "summary_score": 40,
+        "summary_score": 35,
         "rule_evaluations": {
             "split_network": {
                 "is_split_network": True,
-                "distinct_network_count": 2,
+                "distinct_network_count": 3,
                 "found_nest_wifi_pro": True,
+                "found_apple_router": True,
                 "found_ha_router": True,
-                "summary": "CRITICAL SPLIT THREAD MESH: Found 2 independent Thread networks! Your Google Nest Wifi Pro border router and Home Assistant are operating on separate Extended PAN IDs. Matter devices paired via Google Home cannot route to Home Assistant.",
-                "recommendation": "Synchronize Google Nest credentials with Home Assistant: In the Home Assistant Companion App (Android/iOS), go to Settings -> Companion App -> Troubleshooting -> Sync Thread Credentials, then in Home Assistant set the Google Nest network as Preferred.",
-                "all_discovered_routers": [nest_router, ha_router],
+                "summary": "CRITICAL SPLIT THREAD MESH: Found 3 independent Thread networks! Your Google Nest Wifi Pro, Apple TV 4K, and Home Assistant are operating on separate Extended PAN IDs.",
+                "recommendation": "Synchronize credentials with Home Assistant: In the Home Assistant Companion App (Android/iOS), go to Settings -> Companion App -> Troubleshooting -> Sync Thread Credentials, then choose your preferred network in Home Assistant Settings -> Devices & Services -> Thread.",
+                "all_discovered_routers": [nest_router, apple_router, ha_router],
                 "networks": {
                     "1122334455667788": [nest_router],
+                    "9988776655443322": [apple_router],
                     "AABBCCDDEEFF0011": [ha_router]
                 }
             },

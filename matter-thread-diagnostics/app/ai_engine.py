@@ -13,13 +13,16 @@ SYSTEM_PROMPT = """You are the Matter & Thread AI Diagnostic Specialist running 
 Your goal is to inspect diagnostic telemetry (Thread mesh topology, active datasets, Border Router sync, IPv6 routes, Matter server logs, node reachability, and RF co-existence) and provide precise, actionable troubleshooting guidance.
 
 Deep Matter & Thread Domain Knowledge to apply:
-1. MULTI-BORDER ROUTER SYNC (SPLIT THREAD NETWORKS & GOOGLE NEST WIFI PRO):
+1. MULTI-BORDER ROUTER SYNC (SPLIT THREAD NETWORKS, GOOGLE NEST WIFI PRO & APPLE TV):
    - Google Nest Wifi Pro, Google Nest Hub (2nd gen), Apple TV 4K / HomePod mini, and Home Assistant (SkyConnect/Connect ZBT-1) each contain Thread Border Routers.
    - If they operate on differing Extended PAN IDs (XPAN) or Network Keys, devices paired through Google Home or Apple Home cannot route to Home Assistant (Split Network failure!).
    - GOOGLE NEST WIFI PRO SYNC PROCEDURE:
      * Google stores Thread credentials inside Google Play Services / Google Home Keychain on Android or iOS.
      * To unify Nest Wifi Pro with Home Assistant Green: Open the Home Assistant Companion App on a phone signed into the Google Home account -> Settings -> Companion App -> Troubleshooting -> "Sync Thread Credentials" (import Google credentials into HA).
      * Then in Home Assistant: Settings -> Devices & Services -> Thread -> Select the Google Nest network -> "Make Preferred Network".
+   - APPLE TV / HOMEPOD SYNC PROCEDURE:
+     * In Apple Home, Apple TVs & HomePods create an Apple Keychain Thread network.
+     * Use Home Assistant Companion App on iOS -> Settings -> Companion App -> Troubleshooting -> "Sync Thread Credentials" to import Apple's dataset into Home Assistant.
 2. RF INTERFERENCE (Wi-Fi 2.4GHz vs Thread 802.15.4):
    - Thread channels 11-26: Thread Ch 11 overlaps Wi-Fi Ch 1; Ch 17-19 overlaps Wi-Fi Ch 6; Ch 22-24 overlaps Wi-Fi Ch 11.
    - Thread Ch 25 is ideal.
@@ -39,6 +42,9 @@ Format your response clearly using markdown with:
 4. 📡 **RF & Hardware Recommendations**: Physical placement, channel changes, extension cable checks.
 5. 💻 **Copy-Paste Commands & Tools**: Any relevant commands, dataset sync steps, or HA Developer Tools states to check.
 """
+
+# 3-minute read timeout for deep LLM generation
+CLIENT_TIMEOUT = httpx.Timeout(180.0, connect=30.0, read=180.0, write=30.0)
 
 
 class AIDiagnosticEngine:
@@ -131,6 +137,12 @@ class AIDiagnosticEngine:
                 "model": self.model,
                 "analysis": analysis
             }
+        except httpx.ReadTimeout:
+            logger.error("AI API ReadTimeout after 180s")
+            return {
+                "success": False,
+                "error": "Google Gemini took longer than 180 seconds to respond (ReadTimeout). Please try again or test your connection in Settings."
+            }
         except httpx.HTTPStatusError as e:
             logger.error("AI API HTTP Error (%s): %s", e.response.status_code, e.response.text)
             return {"success": False, "error": f"Google API Error ({e.response.status_code}): {e.response.text}"}
@@ -139,8 +151,68 @@ class AIDiagnosticEngine:
             err_msg = str(e).strip() or repr(e)
             return {"success": False, "error": f"Failed calling {self.provider}: {type(e).__name__} ({err_msg})"}
 
+    def _streamline_telemetry(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip raw socket dumps to high-density diagnostic facts so LLMs respond rapidly."""
+        rules = raw_data.get("rule_evaluations", {})
+        split = rules.get("split_network", {})
+        rf = rules.get("rf_coexistence", {})
+        nq = rules.get("node_quality", {})
+        ipv6 = rules.get("ipv6_routing", {})
+        telemetry = raw_data.get("telemetry", {})
+
+        # Extract clean border router summary
+        routers_summary = []
+        for r in split.get("all_discovered_routers", telemetry.get("border_routers", [])):
+            routers_summary.append({
+                "name": r.get("name"),
+                "model": r.get("model"),
+                "brand": r.get("brand"),
+                "network_name": r.get("network_name"),
+                "extended_pan_id": r.get("extended_pan_id"),
+                "channel": r.get("channel"),
+            })
+
+        # Extract clean node summary
+        matter_nodes = []
+        for n in telemetry.get("matter_server", {}).get("nodes", []):
+            matter_nodes.append({
+                "node_id": n.get("node_id"),
+                "product_name": n.get("product_name"),
+                "vendor_name": n.get("vendor_name"),
+                "available": n.get("available"),
+                "rssi": n.get("rssi"),
+            })
+
+        return {
+            "hardware_platform": raw_data.get("hardware_platform", "Home Assistant Green"),
+            "health_score": raw_data.get("summary_score", 100),
+            "thread_border_routers": routers_summary,
+            "split_network_analysis": {
+                "is_split_network": split.get("is_split_network", False),
+                "distinct_network_count": split.get("distinct_network_count", 1),
+                "found_nest_wifi_pro": split.get("found_nest_wifi_pro", False),
+                "summary": split.get("summary", ""),
+            },
+            "rf_coexistence": {
+                "thread_channel": rf.get("thread_channel"),
+                "severity": rf.get("severity"),
+                "overlapping_wifi_channel": rf.get("overlapping_wifi_channel"),
+            },
+            "ipv6_routing": {
+                "has_thread_ula_route": ipv6.get("has_thread_ula_route", False),
+                "detected_ula_prefixes": ipv6.get("detected_ula_prefixes", []),
+            },
+            "node_quality": {
+                "total_nodes": nq.get("total_nodes", len(matter_nodes)),
+                "offline_nodes": nq.get("offline_nodes", []),
+                "weak_nodes": nq.get("weak_nodes", []),
+            },
+            "matter_over_thread_nodes": matter_nodes[:15],
+        }
+
     def _build_prompt(self, data: Dict[str, Any], user_notes: Optional[str]) -> str:
-        data_json = json.dumps(data, indent=2)
+        streamlined = self._streamline_telemetry(data)
+        data_json = json.dumps(streamlined, indent=2)
         notes_section = f"\nUser Symptoms/Observations:\n{user_notes}\n" if user_notes else ""
         return (
             f"Please analyze the following telemetry collected from a Home Assistant Green system:\n\n"
@@ -150,7 +222,7 @@ class AIDiagnosticEngine:
         )
 
     async def _call_gemini(self, prompt: str) -> str:
-        """Call Google Gemini REST API."""
+        """Call Google Gemini REST API with 180s timeout."""
         model_name = self.model or "gemini-3.8-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         headers = {
@@ -168,11 +240,11 @@ class AIDiagnosticEngine:
             ],
             "generationConfig": {
                 "temperature": 0.2,
-                "maxOutputTokens": 3000
+                "maxOutputTokens": 2500
             }
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
             r = await client.post(url, json=payload, headers=headers, params=params)
             if r.status_code != 200:
                 err_text = r.text
@@ -192,7 +264,7 @@ class AIDiagnosticEngine:
             return "No response text generated by Gemini."
 
     async def _call_openai(self, prompt: str) -> str:
-        """Call OpenAI Chat Completions REST API."""
+        """Call OpenAI Chat Completions REST API with 180s timeout."""
         model_name = self.model or "gpt-4o"
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
@@ -206,10 +278,10 @@ class AIDiagnosticEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
-            "max_tokens": 3000
+            "max_tokens": 2500
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             res_data = r.json()
@@ -219,7 +291,7 @@ class AIDiagnosticEngine:
             return "No response text generated by OpenAI."
 
     async def _call_anthropic(self, prompt: str) -> str:
-        """Call Anthropic Messages REST API."""
+        """Call Anthropic Messages REST API with 180s timeout."""
         model_name = self.model or "claude-3-5-sonnet-20241022"
         url = "https://api.anthropic.com/v1/messages"
         headers = {
@@ -233,11 +305,11 @@ class AIDiagnosticEngine:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 3000,
+            "max_tokens": 2500,
             "temperature": 0.2
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
             r = await client.post(url, json=payload, headers=headers)
             r.raise_for_status()
             res_data = r.json()

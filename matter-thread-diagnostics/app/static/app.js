@@ -43,6 +43,21 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-analyze-manual").addEventListener("click", () => {
     runManualLogAnalysis();
   });
+
+  const btnRefreshTopo = document.getElementById("btn-refresh-topology");
+  if (btnRefreshTopo) {
+    btnRefreshTopo.addEventListener("click", async () => {
+      btnRefreshTopo.disabled = true;
+      btnRefreshTopo.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Scanning Mesh...`;
+      await fetchLiveDiagnostics();
+      await fetchAndRenderTopology();
+      btnRefreshTopo.innerHTML = `<i class="fa-solid fa-check"></i> Scanned!`;
+      setTimeout(() => {
+        btnRefreshTopo.disabled = false;
+        btnRefreshTopo.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Refresh Topology`;
+      }, 1000);
+    });
+  }
 });
 
 /* Tabs Management */
@@ -481,6 +496,18 @@ async function fetchAndRenderTopology() {
     if (!res.ok) return;
     const data = await res.json();
     renderSvgTopology(data.nodes || [], data.edges || []);
+
+    const brs = (data.nodes || []).filter(n => n.type === "border_router");
+    const scanElem = document.getElementById("topology-last-scan");
+    const countElem = document.getElementById("topology-router-count");
+    if (scanElem) {
+      const now = new Date();
+      scanElem.innerText = `Last scanned: ${now.toLocaleTimeString()}`;
+    }
+    if (countElem) {
+      const brNames = brs.map(b => b.label).join(", ");
+      countElem.innerText = `Discovered Border Routers (${brs.length}): ${brNames || 'None detected yet'}`;
+    }
   } catch (err) {
     console.error("Topology fetch failed:", err);
   }

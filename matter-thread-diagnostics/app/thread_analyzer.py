@@ -149,13 +149,14 @@ class ThreadAnalyzer:
             all_discovered_routers.append(entry)
             networks.setdefault(ext_pan_id, []).append(entry)
 
-        # 2. Inspect HA device registry for registered Nest Wifi Pro / Google / Apple Thread hardware
+        # 2. Inspect HA device registry for registered Nest Wifi Pro, Apple TV/HomePod, or eero Thread hardware
         if device_registry:
             for d in device_registry:
                 model_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
-                if "wifi pro" in model_str or ("nest" in model_str and ("router" in model_str or "point" in model_str)):
+                
+                # Google Nest Wifi Pro / Nest Hub
+                if "wifi pro" in model_str or ("nest" in model_str and ("router" in model_str or "point" in model_str or "hub" in model_str)):
                     found_nest_wifi_pro = True
-                    # Check if already added
                     name = d.get("name") or "Google Nest Wifi Pro"
                     if not any(r["name"] == name or "nest wifi" in r["name"].lower() for r in all_discovered_routers):
                         entry = {
@@ -173,6 +174,27 @@ class ThreadAnalyzer:
                         }
                         all_discovered_routers.append(entry)
                         networks.setdefault("GOOGLE_THREAD_MESH", []).append(entry)
+
+                # Apple TV 4K / HomePod / HomePod mini
+                elif "apple tv" in model_str or "homepod" in model_str or ("apple" in model_str and ("tv" in model_str or "audio" in model_str or "speaker" in model_str)):
+                    name = d.get("name") or ("Apple HomePod" if "homepod" in model_str else "Apple TV 4K")
+                    if not any(r["name"] == name or "apple" in r["name"].lower() or "homepod" in r["name"].lower() for r in all_discovered_routers):
+                        entry = {
+                            "name": name,
+                            "model": d.get("model") or ("HomePod mini" if "homepod" in model_str else "Apple TV 4K"),
+                            "brand": "Apple",
+                            "type": "apple",
+                            "server": d.get("id"),
+                            "network_name": "Apple Thread Mesh",
+                            "extended_pan_id": "APPLE_THREAD_MESH",
+                            "channel": None,
+                            "pan_id": None,
+                            "border_agent_id": None,
+                            "source": "Home Assistant Device Registry",
+                        }
+                        all_discovered_routers.append(entry)
+                        networks.setdefault("APPLE_THREAD_MESH", []).append(entry)
+
 
         # 3. Inspect active datasets in Home Assistant
         for ds in active_datasets:
