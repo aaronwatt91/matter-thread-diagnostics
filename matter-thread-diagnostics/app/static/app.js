@@ -312,6 +312,8 @@ let availableThreadNetworks = [];
 async function loadThreadNetworks() {
   const select = document.getElementById("cfg-thread-network");
   const refreshBtn = document.getElementById("btn-refresh-thread-networks");
+  const countStatus = document.getElementById("thread-networks-count-status");
+
   if (refreshBtn) {
     refreshBtn.disabled = true;
     refreshBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Refreshing...`;
@@ -336,9 +338,21 @@ async function loadThreadNetworks() {
       select.value = data.selected_network || "";
       updateThreadNetworkDetails(select.value);
     }
+
+    if (countStatus) {
+      if (availableThreadNetworks.length === 0) {
+        countStatus.innerHTML = `<span style="color:var(--color-warning);"><i class="fa-solid fa-circle-info"></i> No Thread datasets found in Home Assistant yet. Click "Scan" to auto-discover local border routers.</span>`;
+      } else {
+        countStatus.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Found ${availableThreadNetworks.length} Thread network(s) in Home Assistant.</span>`;
+      }
+    }
+
     updateActiveNetworkBanner(data.selected_network);
   } catch (err) {
     console.error("Failed to load thread networks:", err);
+    if (countStatus) {
+      countStatus.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-triangle-exclamation"></i> Error querying networks: ${err.message}</span>`;
+    }
   } finally {
     if (refreshBtn) {
       refreshBtn.disabled = false;
@@ -396,14 +410,15 @@ async function scanSelectedNetwork() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     
-    // Re-fetch live telemetry and topology
+    // Re-fetch Thread networks, live telemetry and topology
+    await loadThreadNetworks();
     await fetchLiveDiagnostics();
     await fetchAndRenderTopology();
     updateActiveNetworkBanner(selectedId);
 
     if (feedback) {
       feedback.style.color = "var(--color-success)";
-      feedback.innerHTML = `✓ Actual network scanned successfully!`;
+      feedback.innerHTML = `✓ Scan complete!`;
       setTimeout(() => { feedback.innerHTML = ""; }, 4000);
     }
 

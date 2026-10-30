@@ -85,7 +85,7 @@
         <span id="active-network-channel" class="badge" style="background: rgba(255,255,255,0.1); font-size: 11px;"></span>
       </div>
       <div style="display: flex; gap: 8px;">
-        <button type="button" id="btn-banner-rescan" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> Re-Scan</button>
+        <button type="button" id="btn-banner-rescan" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> Scan</button>
         <button type="button" id="btn-banner-change" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;"><i class="fa-solid fa-sliders"></i> Change Network</button>
       </div>
     </div>
@@ -328,12 +328,13 @@
             <option value="">Auto-Detect / All Available Networks (Default)</option>
           </select>
           <small class="help-text" id="thread-network-help">Includes Google Nest Wifi Pro, Apple TV 4K/HomePod, and Home Assistant datasets.</small>
+          <div id="thread-networks-count-status" style="font-size: 12px; margin-top: 6px; color: var(--text-muted);"></div>
         </div>
 
         <div id="thread-network-details-box" class="detail-box" style="margin-top: 12px; display: none;"></div>
 
         <div style="margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-          <button type="button" id="btn-scan-selected-network" class="btn btn-primary"><i class="fa-solid fa-satellite-dish"></i> Scan My Actual Network</button>
+          <button type="button" id="btn-scan-selected-network" class="btn btn-primary"><i class="fa-solid fa-satellite-dish"></i> Scan</button>
           <button type="button" id="btn-reset-thread-network" class="btn btn-outline"><i class="fa-solid fa-rotate-left"></i> Reset to Auto-Detect</button>
           <span id="scan-feedback" class="save-feedback"></span>
         </div>

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.1] - 2026-10-30
+
+### Fixed
+- **Fixed Home Assistant WebSocket URL for Add-ons**:
+  - Replaced incorrect WebSocket path with the official Home Assistant Supervisor WebSocket proxy endpoint (`ws://supervisor/core/websocket`) and fallback candidate (`ws://homeassistant:8123/api/websocket`).
+  - Resolves empty Thread networks list by allowing successful retrieval of datasets (`thread/list_datasets`), border routers (`thread/discover_routers`), and device registry (`config/device_registry/list`).
+- **REST States Fallback for Border Routers**:
+  - Added REST `/api/states` inspection as a secondary discovery path to detect Google Nest Wifi Pro, Apple TV 4K, and HomePod border router entities.
+- **Button Simplification & Auto-Refresh**:
+  - Shortened scan button to **"Scan"** per user preference.
+  - Clicking "Scan" now automatically refreshes and populates the Thread networks dropdown while scanning actual network telemetry.
+  - Added real-time network counter and guidance status under the dropdown.
+
 ## [1.2.0] - 2026-10-30
 
 ### Added

@@ -22,7 +22,7 @@ from ai_engine import AIDiagnosticEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("matter_thread_ai.main")
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="1.2.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="1.2.1")
 
 # Setup clients
 ha_client = HAClient(

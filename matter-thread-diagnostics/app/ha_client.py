@@ -17,6 +17,7 @@ class HAClient:
         self.supervisor_token = supervisor_token
         self.ha_url = ha_url.rstrip("/")
         self.supervisor_url = supervisor_url.rstrip("/")
+        self._working_ws_url: Optional[str] = None
 
     @property
     def is_available(self) -> bool:
@@ -105,41 +106,68 @@ class HAClient:
         return []
 
     async def query_ha_websocket(self, command: Dict[str, Any], timeout: float = 8.0) -> Dict[str, Any]:
-        """Send command over HA WebSocket API with robust authentication and response capture."""
+        """Send command over HA WebSocket API with candidate URL fallback and response capture."""
         if not self.is_available:
             return {"error": "No supervisor token"}
 
-        ws_url = self.ha_url.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
-        try:
-            async with websockets.connect(ws_url, open_timeout=timeout) as ws:
-                # 1. Receive auth required
-                auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                if auth_req.get("type") != "auth_required":
-                    return {"error": "Unexpected auth handshake response", "raw": auth_req}
+        candidate_urls = []
+        if self._working_ws_url:
+            candidate_urls.append(self._working_ws_url)
 
-                # 2. Authenticate
-                await ws.send(json.dumps({
-                    "type": "auth",
-                    "access_token": self.supervisor_token
-                }))
-                auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                if auth_res.get("type") != "auth_ok":
-                    return {"error": "Auth failed", "raw": auth_res}
+        # 1. Primary official Supervisor proxy WebSocket endpoint:
+        candidate_urls.append("ws://supervisor/core/websocket")
+        # 2. Direct core endpoint inside Docker network:
+        candidate_urls.append("ws://homeassistant:8123/api/websocket")
+        # 3. Fallback derivations from ha_url:
+        ha_ws = self.ha_url.replace("http://", "ws://").replace("https://", "wss://").rstrip('/')
+        candidate_urls.append(f"{ha_ws}/websocket")
+        candidate_urls.append(f"{ha_ws}/api/websocket")
 
-                # 3. Send command
-                msg_id = 1
-                command["id"] = msg_id
-                await ws.send(json.dumps(command))
+        # Deduplicate while preserving order
+        deduped_urls = []
+        seen = set()
+        for u in candidate_urls:
+            if u not in seen:
+                seen.add(u)
+                deduped_urls.append(u)
 
-                # 4. Receive response
-                response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                return response
-        except asyncio.TimeoutError:
-            logger.warning("HA WebSocket command timed out (%s)", command.get("type"))
-            return {"error": f"Timeout waiting for response to {command.get('type')}"}
-        except Exception as e:
-            logger.warning("HA WebSocket command failed (%s): %s", command.get("type"), e)
-            return {"error": str(e)}
+        last_err = None
+        for ws_url in deduped_urls:
+            try:
+                async with websockets.connect(ws_url, open_timeout=timeout) as ws:
+                    # 1. Receive auth required
+                    auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                    if auth_req.get("type") != "auth_required":
+                        continue
+
+                    # 2. Authenticate
+                    await ws.send(json.dumps({
+                        "type": "auth",
+                        "access_token": self.supervisor_token
+                    }))
+                    auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                    if auth_res.get("type") != "auth_ok":
+                        last_err = f"Auth failed on {ws_url}: {auth_res}"
+                        continue
+
+                    # Remember working URL for speed
+                    self._working_ws_url = ws_url
+
+                    # 3. Send command
+                    msg_id = 1
+                    command_copy = dict(command)
+                    command_copy["id"] = msg_id
+                    await ws.send(json.dumps(command_copy))
+
+                    # 4. Receive response
+                    response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                    return response
+            except Exception as e:
+                last_err = str(e)
+                logger.debug("Attempt to connect HA websocket at %s failed: %s", ws_url, e)
+
+        logger.warning("All HA WebSocket candidate URLs failed (%s): %s", command.get("type"), last_err)
+        return {"error": last_err or "All WebSocket candidate URLs failed"}
 
     async def get_thread_datasets(self) -> Dict[str, Any]:
         """
@@ -195,8 +223,8 @@ class HAClient:
 
             for ds in datasets_list:
                 ds_id = str(ds.get("dataset_id") or "")
-                xpan = str(ds.get("extended_pan_id") or "").upper().replace(":", "").replace("0X", "")
-                net_name = ds.get("name") or ds.get("network_name") or (f"Thread Network ({xpan[:6]}...)" if xpan else "Home Assistant Thread Network")
+                xpan = str(ds.get("extended_pan_id") or ds.get("ext_pan_id") or "").upper().replace(":", "").replace("0X", "")
+                net_name = ds.get("network_name") or ds.get("name") or (f"Thread Network ({xpan[:6]}...)" if xpan else "Home Assistant Thread Network")
                 is_pref = bool(ds.get("preferred", False))
                 ch = ds.get("channel")
                 pan_id = ds.get("pan_id")
@@ -298,5 +326,50 @@ class HAClient:
                         }
         except Exception as e:
             logger.warning("Error reading device registry: %s", e)
+
+        # 4. Check Home Assistant States (HTTP REST API fallback)
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.get(f"{self.ha_url}/api/states", headers=self._headers())
+                if r.status_code == 200:
+                    states = r.json()
+                    for s in states:
+                        eid = s.get("entity_id", "").lower()
+                        attrs = s.get("attributes", {})
+                        fname = attrs.get("friendly_name", "")
+                        combined = f"{eid} {fname} {attrs}".lower()
+
+                        if "wifi pro" in combined or ("nest" in combined and ("router" in combined or "point" in combined)):
+                            r_name = fname or "Google Nest Wifi Pro"
+                            has_nest = any("nest" in n["name"].lower() or any("nest" in r.lower() for r in n.get("routers", [])) for n in networks_map.values())
+                            if not has_nest:
+                                networks_map["GOOGLE_NEST_MESH"] = {
+                                    "id": "GOOGLE_NEST_MESH",
+                                    "dataset_id": "",
+                                    "name": f"Google Nest Thread Mesh ({r_name})",
+                                    "extended_pan_id": "GOOGLE_THREAD_MESH",
+                                    "pan_id": "",
+                                    "channel": None,
+                                    "preferred": False,
+                                    "source": "Home Assistant Entity States",
+                                    "routers": [r_name]
+                                }
+                        elif "apple tv" in combined or "homepod" in combined:
+                            r_name = fname or "Apple TV / HomePod"
+                            has_apple = any("apple" in n["name"].lower() or any("apple" in r.lower() for r in n.get("routers", [])) for n in networks_map.values())
+                            if not has_apple:
+                                networks_map["APPLE_THREAD_MESH"] = {
+                                    "id": "APPLE_THREAD_MESH",
+                                    "dataset_id": "",
+                                    "name": f"Apple Thread Mesh ({r_name})",
+                                    "extended_pan_id": "APPLE_THREAD_MESH",
+                                    "pan_id": "",
+                                    "channel": None,
+                                    "preferred": False,
+                                    "source": "Home Assistant Entity States",
+                                    "routers": [r_name]
+                                }
+        except Exception as e:
+            logger.debug("Could not inspect states for Thread hardware: %s", e)
 
         return list(networks_map.values())
