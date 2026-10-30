@@ -76,15 +76,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const btnLoadRaw = document.getElementById("btn-load-raw-scan");
   if (btnLoadRaw) {
-    btnLoadRaw.addEventListener("click", () => {
+    btnLoadRaw.addEventListener("click", async () => {
       const box = document.getElementById("manual-log-input");
-      if (box && currentTelemetry) {
+      if (!box) return;
+      box.value = "Loading full diagnostic log bundle...";
+      try {
+        const res = await fetch(apiPath("/api/diagnostics/logs"));
+        if (res.ok) {
+          const data = await res.json();
+          box.value = data.bundle_text || JSON.stringify(currentTelemetry, null, 2);
+          return;
+        }
+      } catch (_) {}
+      if (currentTelemetry) {
         box.value = JSON.stringify(currentTelemetry, null, 2);
-      } else if (box) {
+      } else {
         box.value = "No scan telemetry cached yet. Click '2. Scan Selected Network' first.";
       }
     });
   }
+
+  ["btn-download-logs-top", "btn-download-logs-manual", "btn-download-ai-report"].forEach((btnId) => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.addEventListener("click", () => downloadDiagnosticLogs(btn));
+    }
+  });
 
   const btnRefreshTopo = document.getElementById("btn-refresh-topology");
   if (btnRefreshTopo) {
@@ -1861,6 +1878,57 @@ function updateTopologySearchHighlight() {
     n.haloElem.setAttribute("stroke-dasharray", "none");
     n.haloElem.setAttribute("opacity", matched ? "1" : "0");
   });
+}
+
+async function downloadDiagnosticLogs(btnElem) {
+  const origHtml = btnElem ? btnElem.innerHTML : "";
+  if (btnElem) {
+    btnElem.disabled = true;
+    btnElem.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Building Log...`;
+  }
+
+  try {
+    let bundleText = "";
+    const res = await fetch(apiPath("/api/diagnostics/logs"));
+    if (res.ok) {
+      const data = await res.json();
+      bundleText = data.bundle_text || "";
+    }
+    if (!bundleText) {
+      bundleText = JSON.stringify(currentTelemetry || { status: "No telemetry cached yet" }, null, 2);
+    }
+
+    const now = new Date();
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const ts = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+    const filename = `matter-thread-diagnostics-${ts}.log`;
+
+    const blob = new Blob([bundleText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
+
+    if (btnElem) {
+      btnElem.innerHTML = `<i class="fa-solid fa-check"></i> Downloaded!`;
+      setTimeout(() => {
+        btnElem.disabled = false;
+        btnElem.innerHTML = origHtml;
+      }, 1500);
+    }
+  } catch (err) {
+    console.error("Failed to download diagnostic logs:", err);
+    if (btnElem) {
+      btnElem.disabled = false;
+      btnElem.innerHTML = origHtml;
+    }
+  }
 }
 
 function escapeHtml(str) {

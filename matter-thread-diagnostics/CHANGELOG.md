@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.6] - 2026-10-30
+
+### Added: Full Diagnostic Log & Telemetry Bundle Download (`Download Logs` Button)
+- **In-Memory Application Log Ring Buffer (`_RingBufferLogHandler`)**:
+  - Captures up to 500 internal `matter_thread_ai` and `uvicorn` log entries in real time alongside Home Assistant Supervisor's `core_matter_server` and `core_openthread_border_router` add-on logs, the latest AI diagnostic report, and the full JSON network scan telemetry.
+- **One-Click `Download Logs` Buttons**:
+  - Added **Download Logs** buttons in the **Top Header Bar**, the **AI Diagnostic Report** header, and the **Log & Raw JSON Analyzer** tab (`GET /api/diagnostics/logs` & `GET /api/diagnostics/download`), generating a timestamped `matter-thread-diagnostics-YYYYMMDD-HHMMSS.log` file.
+
 ## [2.0.5] - 2026-10-30
 
 ### Fixed: Dynamic `ModelService.ListModels` Resolution, Removed Retired `gemini-1.5-flash` Fallback & SSE Streaming

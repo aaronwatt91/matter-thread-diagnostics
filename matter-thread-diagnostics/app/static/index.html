@@ -23,6 +23,7 @@
         <div id="ai-status-badge" class="badge badge-warning">
           <i class="fa-solid fa-circle-notch fa-spin"></i> Checking AI...
         </div>
+        <button id="btn-download-logs-top" type="button" class="btn btn-secondary" title="Download Complete Diagnostic Log &amp; Telemetry Bundle (.log)"><i class="fa-solid fa-file-arrow-down"></i> Download Logs</button>
         <button id="btn-refresh" class="btn btn-secondary" title="Run Full Live Scan"><i class="fa-solid fa-satellite-dish"></i> Full Scan</button>
         <button id="btn-open-settings" class="btn btn-icon" title="Settings & API Keys"><i class="fa-solid fa-gear"></i></button>
       </div>
@@ -353,9 +354,12 @@
         </div>
 
         <div id="ai-results-container" class="card ai-report-card hidden">
-          <div class="report-header">
+          <div class="report-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <h3><i class="fa-solid fa-clipboard-check"></i> AI Diagnostic Report</h3>
-            <span id="report-model-badge" class="badge badge-info">Gemini 2.5 Flash</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span id="report-model-badge" class="badge badge-info">Gemini 2.5 Flash</span>
+              <button type="button" id="btn-download-ai-report" class="btn btn-outline" style="font-size: 12px; padding: 4px 10px;" title="Download AI Report &amp; Full Diagnostic Logs"><i class="fa-solid fa-file-arrow-down"></i> Download Logs</button>
+            </div>
           </div>
           <div id="ai-report-body" class="markdown-body">
             <!-- Rendered by marked.js -->
@@ -367,12 +371,15 @@
     <!-- TAB 4: Manual Log & Raw Telemetry Analyzer -->
     <section id="tab-manual" class="tab-content">
       <div class="card">
-        <div class="card-header-flex">
+        <div class="card-header-flex" style="flex-wrap: wrap; gap: 10px;">
           <div>
             <h3><i class="fa-solid fa-file-code"></i> Raw Telemetry Inspector &amp; Log Analyzer</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Load the raw JSON from your latest live network scan or paste external Matter/OTBR logs for AI analysis.</p>
+            <p class="section-desc" style="margin-bottom: 0;">Load or download the complete log &amp; telemetry bundle (Add-on logs, Matter Server logs, OTBR logs, and Cluster 0x0035 JSON), or paste external logs for AI analysis.</p>
           </div>
-          <button type="button" id="btn-load-raw-scan" class="btn btn-secondary" style="font-size: 12px;"><i class="fa-solid fa-download"></i> Load Latest Live Scan JSON</button>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button type="button" id="btn-load-raw-scan" class="btn btn-secondary" style="font-size: 12px;"><i class="fa-solid fa-eye"></i> Load Logs &amp; Scan into Box</button>
+            <button type="button" id="btn-download-logs-manual" class="btn btn-primary" style="font-size: 12px;"><i class="fa-solid fa-file-arrow-down"></i> Download Log Bundle (.log)</button>
+          </div>
         </div>
         
         <div class="form-group" style="margin-top: 14px;">

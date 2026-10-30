@@ -6,12 +6,14 @@ Matter Cluster 0x0035 (NeighborTable, RouteTable, RSSI/LQI, RLOC16) inspection,
 OTBR REST API querying, and active ICMPv6 reachability probing.
 """
 import asyncio
+import json
 import os
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -25,7 +27,26 @@ from ai_engine import AIDiagnosticEngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("matter_thread_ai.main")
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.1")
+
+class _RingBufferLogHandler(logging.Handler):
+    """Captures recent add-on logs in memory so users can download a complete diagnostic bundle."""
+
+    def __init__(self, capacity: int = 500):
+        super().__init__()
+        self.buffer: deque[str] = deque(maxlen=capacity)
+        self.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.buffer.append(self.format(record))
+        except Exception:
+            pass
+
+
+_log_ring_handler = _RingBufferLogHandler(capacity=500)
+logging.getLogger().addHandler(_log_ring_handler)
+
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.6")
 
 
 @app.middleware("http")
@@ -50,6 +71,7 @@ if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _last_telemetry_cache: Optional[Dict[str, Any]] = None
+_last_ai_result_cache: Optional[Dict[str, Any]] = None
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -468,6 +490,8 @@ async def analyze_diagnostics(req: RunDiagnosisRequest):
     )
 
     ai_result = await engine.run_diagnosis(telemetry_data, user_notes=req.user_notes)
+    global _last_ai_result_cache
+    _last_ai_result_cache = ai_result
 
     return {
         "telemetry": telemetry_data,
@@ -500,7 +524,82 @@ async def analyze_manual_logs(req: ManualLogAnalysisRequest):
     }
 
     ai_result = await engine.run_diagnosis(payload, user_notes=req.user_notes)
+    global _last_ai_result_cache
+    _last_ai_result_cache = ai_result
     return {"ai_result": ai_result}
+
+
+async def _build_diagnostic_log_bundle() -> Dict[str, Any]:
+    """Assemble full diagnostic log & telemetry bundle for download."""
+    telemetry_data = _last_telemetry_cache
+    if telemetry_data is None:
+        telemetry_data = await gather_full_telemetry(run_active_pings=False)
+
+    raw_logs = await asyncio.gather(
+        ha_client.get_addon_logs("core_matter_server", lines=200),
+        ha_client.get_addon_logs("core_openthread_border_router", lines=200),
+        return_exceptions=True,
+    )
+    matter_logs = _safe_unwrap(raw_logs[0], "")
+    otbr_logs = _safe_unwrap(raw_logs[1], "")
+    addon_internal_logs = "\n".join(_log_ring_handler.buffer)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    sections = [
+        "================================================================================",
+        f"MATTER & THREAD AI DIAGNOSTICS — FULL LOG & TELEMETRY BUNDLE",
+        f"Generated At: {now_iso}",
+        f"Selected Provider / Model: {config.ai_provider} / {config.ai_model}",
+        f"Selected Target Network: {config.target_thread_network or 'All Networks'}",
+        "================================================================================",
+        "",
+        "--- [1] ADD-ON INTERNAL APPLICATION LOGS (matter_thread_ai) ---",
+        addon_internal_logs or "(No internal application log entries recorded yet)",
+        "",
+        "--- [2]LATEST AI DIAGNOSTIC REPORT ---",
+        (
+            f"Model: {_last_ai_result_cache.get('provider')} ({_last_ai_result_cache.get('model')})\n\n"
+            + str(_last_ai_result_cache.get("analysis") or _last_ai_result_cache.get("error") or "")
+        )
+        if _last_ai_result_cache
+        else "(No AI diagnostic report run in this session yet)",
+        "",
+        "--- [3] HOME ASSISTANT MATTER SERVER LOGS (core_matter_server) ---",
+        matter_logs or "(No Matter Server logs returned via Supervisor API)",
+        "",
+        "--- [4] OPENTHREAD BORDER ROUTER LOGS (core_openthread_border_router) ---",
+        otbr_logs or "(No OTBR logs returned via Supervisor API)",
+        "",
+        "--- [5] FULL LIVE NETWORK SCAN TELEMETRY (JSON) ---",
+        json.dumps(telemetry_data, indent=2, default=str),
+        "",
+    ]
+    bundle_text = "\n".join(sections)
+    return {
+        "timestamp": now_iso,
+        "bundle_text": bundle_text,
+        "addon_logs": addon_internal_logs,
+        "matter_server_logs": matter_logs,
+        "otbr_logs": otbr_logs,
+    }
+
+
+@app.get("/api/diagnostics/logs")
+async def get_diagnostic_logs():
+    """Return full diagnostic log bundle as JSON for browser Blob download or viewing."""
+    return await _build_diagnostic_log_bundle()
+
+
+@app.get("/api/diagnostics/download")
+async def download_diagnostic_logs():
+    """Direct file download endpoint for diagnostic logs and telemetry."""
+    bundle = await _build_diagnostic_log_bundle()
+    ts_slug = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"matter-thread-diagnostics-{ts_slug}.log"
+    return PlainTextResponse(
+        content=bundle["bundle_text"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/topology")
