@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.8] - 2026-10-30
+
+### Added
+- **Full Google Nest Wifi Pro & Google Nest Hub Border Router Detection**:
+  - Automatically identifies Nest Wifi Pro routers using Home Assistant's `thread/discover_routers`, `thread/list_datasets`, and `config/device_registry/list`.
+  - Added dedicated Google Nest device classification and branding (`#4285F4`) in the Interactive Topology Map.
+  - Dynamically renders discovered Border Routers (Nest Wifi Pro, HA SkyConnect, etc.) instead of static placeholders.
+  - Added tailored detection for Split Thread Meshes between Google Nest Wifi Pro and Home Assistant Green, with step-by-step sync guidance via the Home Assistant Companion App.
+
 ## [1.0.7] - 2026-10-29
 
 ### Added

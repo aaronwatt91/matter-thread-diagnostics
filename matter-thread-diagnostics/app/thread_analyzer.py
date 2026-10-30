@@ -2,6 +2,7 @@
 Thread Mesh and RF Coexistence Analyzer.
 Evaluates Thread topology, Border Router synchronization, RF interference,
 and routing health according to Thread 1.3/1.4 specifications.
+Supports Google Nest Wifi Pro, Apple TV/HomePod, Amazon eero, and HA SkyConnect.
 """
 import re
 import logging
@@ -10,7 +11,6 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger("matter_thread_ai.thread_analyzer")
 
 # 2.4 GHz Wi-Fi to Thread Channel overlap matrix
-# Thread channels 11-26 (2.4 GHz IEEE 802.15.4) vs Wi-Fi 20MHz Channels 1, 6, 11
 THREAD_WIFI_OVERLAP_MAP = {
     11: {"wifi_channel": 1, "severity": "HIGH", "interference": "Wi-Fi Ch 1 direct overlap"},
     12: {"wifi_channel": 1, "severity": "HIGH", "interference": "Wi-Fi Ch 1 direct overlap"},
@@ -27,7 +27,7 @@ THREAD_WIFI_OVERLAP_MAP = {
     23: {"wifi_channel": 11, "severity": "HIGH", "interference": "Wi-Fi Ch 11 direct overlap"},
     24: {"wifi_channel": 11, "severity": "HIGH", "interference": "Wi-Fi Ch 11 direct overlap"},
     25: {"wifi_channel": None, "severity": "MINIMAL", "interference": "Clear from Wi-Fi Ch 11 (Recommended Thread channel)"},
-    26: {"wifi_channel": None, "severity": "MINIMAL", "interference": "Clear of all standard Wi-Fi (Note: some devices have reduced Tx power on 26 due to FCC edges)"},
+    26: {"wifi_channel": None, "severity": "MINIMAL", "interference": "Clear of all standard Wi-Fi (Note: reduced Tx power on some hardware)"},
 }
 
 
@@ -73,55 +73,177 @@ class ThreadAnalyzer:
         }
 
     @staticmethod
-    def detect_split_networks(border_routers: List[Dict[str, Any]], active_datasets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def identify_router_device(raw: Dict[str, Any]) -> Dict[str, str]:
+        """Classify and normalize Border Router identity from HA discovery or device registry."""
+        model_name = str(raw.get("model_name") or raw.get("model") or "").strip()
+        brand_name = str(raw.get("brand_name") or raw.get("manufacturer") or raw.get("vendor") or "").strip()
+        server = str(raw.get("server") or raw.get("name") or raw.get("id") or "").strip()
+
+        combined = f"{brand_name} {model_name} {server}".lower()
+
+        # Google Nest Wifi Pro / Nest Hub
+        if "wifi pro" in combined or "nest wifi" in combined:
+            return {"brand": "Google", "model": "Nest Wifi Pro", "label": "Google Nest Wifi Pro", "type": "nest"}
+        elif "nest hub" in combined or "google home hub" in combined:
+            return {"brand": "Google", "model": "Nest Hub", "label": "Google Nest Hub (2nd Gen)", "type": "nest"}
+        elif "google" in combined and "router" in combined:
+            return {"brand": "Google", "model": model_name or "Google Thread Router", "label": "Google Nest Border Router", "type": "nest"}
+
+        # Apple TV / HomePod
+        elif "homepod" in combined:
+            return {"brand": "Apple", "model": "HomePod", "label": "Apple HomePod (Thread TBR)", "type": "apple"}
+        elif "apple tv" in combined or "appletv" in combined:
+            return {"brand": "Apple", "model": "Apple TV 4K", "label": "Apple TV 4K (Thread TBR)", "type": "apple"}
+        elif "apple" in combined:
+            return {"brand": "Apple", "model": model_name or "Apple Border Router", "label": "Apple Thread Border Router", "type": "apple"}
+
+        # Amazon eero
+        elif "eero" in combined:
+            return {"brand": "Amazon / eero", "model": model_name or "eero Router", "label": "eero Thread Border Router", "type": "eero"}
+
+        # Home Assistant SkyConnect / Connect ZBT-1 / Yellow / OTBR
+        elif "skyconnect" in combined or "zbt-1" in combined or "connect" in combined or "yellow" in combined or "otbr" in combined:
+            return {"brand": "Nabu Casa", "model": model_name or "SkyConnect / ZBT-1", "label": "HA Green (SkyConnect / ZBT-1)", "type": "ha"}
+
+        # Generic or Fallback
+        label = model_name or server or "Thread Border Router"
+        return {"brand": brand_name or "Generic", "model": model_name or "TBR", "label": label, "type": "generic"}
+
+    @classmethod
+    def detect_split_networks(cls, border_routers: List[Dict[str, Any]],
+                               active_datasets: List[Dict[str, Any]],
+                               device_registry: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
-        Detect if multiple Thread Border Routers (Apple TV, HomePod, Google Nest, SkyConnect)
+        Detect if multiple Thread Border Routers (Nest Wifi Pro, Apple TV, SkyConnect)
         are operating on separate/split Thread networks instead of forming a single mesh.
         """
         networks: Dict[str, List[Dict[str, Any]]] = {}
+        all_discovered_routers: List[Dict[str, Any]] = []
+        found_nest_wifi_pro = False
+        found_ha_router = False
 
+        # 1. Inspect live routers discovered over network (mDNS / HA Thread discovery)
         for router in border_routers:
-            ext_pan_id = router.get("extended_pan_id") or router.get("ext_pan_id") or "UNKNOWN"
-            net_name = router.get("network_name") or router.get("name") or "Unnamed"
+            info = cls.identify_router_device(router)
+            if info["type"] == "nest":
+                found_nest_wifi_pro = True
+            elif info["type"] == "ha":
+                found_ha_router = True
+
+            ext_pan_id = (router.get("extended_pan_id") or router.get("ext_pan_id") or "UNKNOWN").upper().replace(":", "").replace("0X", "")
+            net_name = router.get("network_name") or router.get("name") or info["label"]
+            
             entry = {
-                "name": net_name,
-                "router_id": router.get("id") or router.get("address"),
-                "model": router.get("model") or router.get("vendor", "Generic TBR"),
+                "name": info["label"],
+                "model": info["model"],
+                "brand": info["brand"],
+                "type": info["type"],
+                "server": router.get("server") or router.get("id"),
+                "network_name": net_name,
+                "extended_pan_id": ext_pan_id,
                 "channel": router.get("channel"),
                 "pan_id": router.get("pan_id"),
+                "border_agent_id": router.get("border_agent_id") or router.get("extended_address"),
+                "addresses": router.get("addresses", []),
             }
+            all_discovered_routers.append(entry)
             networks.setdefault(ext_pan_id, []).append(entry)
 
-        # Also inspect datasets
+        # 2. Inspect HA device registry for registered Nest Wifi Pro / Google / Apple Thread hardware
+        if device_registry:
+            for d in device_registry:
+                model_str = f"{d.get('manufacturer', '')} {d.get('model', '')} {d.get('name', '')}".lower()
+                if "wifi pro" in model_str or ("nest" in model_str and ("router" in model_str or "point" in model_str)):
+                    found_nest_wifi_pro = True
+                    # Check if already added
+                    name = d.get("name") or "Google Nest Wifi Pro"
+                    if not any(r["name"] == name or "nest wifi" in r["name"].lower() for r in all_discovered_routers):
+                        entry = {
+                            "name": name,
+                            "model": d.get("model") or "Nest Wifi Pro",
+                            "brand": "Google",
+                            "type": "nest",
+                            "server": d.get("id"),
+                            "network_name": "Google Nest Thread Mesh",
+                            "extended_pan_id": "GOOGLE_THREAD_MESH",
+                            "channel": None,
+                            "pan_id": None,
+                            "border_agent_id": None,
+                            "source": "Home Assistant Device Registry",
+                        }
+                        all_discovered_routers.append(entry)
+                        networks.setdefault("GOOGLE_THREAD_MESH", []).append(entry)
+
+        # 3. Inspect active datasets in Home Assistant
         for ds in active_datasets:
-            ext_pan_id = ds.get("extended_pan_id") or "DATASET_UNKNOWN"
+            ext_pan_id = (ds.get("extended_pan_id") or "HA_DATASET").upper().replace(":", "").replace("0X", "")
+            net_name = ds.get("network_name", "Home Assistant Thread Network")
+            is_pref = ds.get("preferred", False)
+            source = ds.get("source", "HA Dataset Store")
+
+            dataset_entry = {
+                "name": f"Home Assistant Active Mesh ({net_name})",
+                "model": "Thread Dataset",
+                "brand": "Home Assistant",
+                "type": "ha",
+                "server": ds.get("dataset_id", "ha_dataset"),
+                "network_name": net_name,
+                "extended_pan_id": ext_pan_id,
+                "channel": ds.get("channel"),
+                "pan_id": ds.get("pan_id"),
+                "preferred": is_pref,
+                "source": source
+            }
             if ext_pan_id not in networks:
                 networks[ext_pan_id] = []
-            networks[ext_pan_id].append({
-                "name": ds.get("network_name", "Dataset Network"),
-                "router_id": "Home Assistant Active Dataset",
-                "channel": ds.get("channel"),
-                "pan_id": ds.get("pan_id")
-            })
+            networks[ext_pan_id].append(dataset_entry)
 
-        num_distinct_networks = len([k for k in networks.keys() if k != "UNKNOWN"])
+        valid_network_keys = [k for k in networks.keys() if k not in ("UNKNOWN", "DATASET_UNKNOWN")]
+        num_distinct_networks = len(valid_network_keys)
         is_split = num_distinct_networks > 1
+
+        # Build custom summary and step-by-step guidance
+        if is_split:
+            if found_nest_wifi_pro:
+                summary = (
+                    f"CRITICAL SPLIT THREAD MESH: Found {num_distinct_networks} independent Thread networks! "
+                    "Your Google Nest Wifi Pro border router(s) and Home Assistant are operating on separate Extended PAN IDs. "
+                    "Matter devices paired via Google Home are isolated on Nest's Thread mesh and cannot be controlled reliably by Home Assistant."
+                )
+                recommendation = (
+                    "To unify your Google Nest Wifi Pro with Home Assistant:\n"
+                    "1. Open the Home Assistant Companion App on your mobile phone (must be signed in to the same Google account as Google Home).\n"
+                    "2. Navigate to Settings -> Companion App -> Troubleshooting -> Sync Thread Credentials.\n"
+                    "3. In Home Assistant web UI, go to Settings -> Devices & Services -> Thread.\n"
+                    "4. Select the Google Nest network and click 'Make Preferred Network'.\n"
+                    "5. Your Nest Wifi Pro and Home Assistant Green will now form one unified Thread 1.3 mesh."
+                )
+            else:
+                summary = (
+                    f"CRITICAL SPLIT MESH: Found {num_distinct_networks} independent Thread networks with different Extended PAN IDs! "
+                    "Border Routers have not synchronized Thread network credentials."
+                )
+                recommendation = (
+                    "Synchronize your Thread datasets in Home Assistant Settings -> Devices & Services -> Thread -> "
+                    "Choose your preferred network and sync credentials so all Border Routers share the same Extended PAN ID and Network Key."
+                )
+        else:
+            if found_nest_wifi_pro:
+                summary = "Google Nest Wifi Pro detected and synchronized with your Thread mesh."
+                recommendation = "Thread Border Router synchronization is healthy."
+            else:
+                summary = "Thread Border Routers appear synchronized on a single Extended PAN ID."
+                recommendation = "Thread mesh synchronization is healthy."
 
         return {
             "is_split_network": is_split,
-            "distinct_network_count": num_distinct_networks,
+            "distinct_network_count": max(num_distinct_networks, 1),
             "networks": networks,
-            "summary": (
-                f"CRITICAL: Found {num_distinct_networks} independent Thread networks with different Extended PAN IDs! "
-                "Devices commissioned via Apple Home or Google Home cannot route to Home Assistant without credential synchronization."
-                if is_split else
-                "Thread Border Routers appear synchronized on a single Extended PAN ID."
-            ),
-            "recommendation": (
-                "Synchronize your Thread datasets in Home Assistant Settings -> Devices & Services -> Thread -> "
-                "Choose preferred network and import/export credentials so Apple/Google and HA share the exact same Extended PAN ID and Network Key."
-                if is_split else "Thread mesh synchronization is healthy."
-            )
+            "all_discovered_routers": all_discovered_routers,
+            "found_nest_wifi_pro": found_nest_wifi_pro,
+            "found_ha_router": found_ha_router,
+            "summary": summary,
+            "recommendation": recommendation
         }
 
     @staticmethod
@@ -134,8 +256,8 @@ class ThreadAnalyzer:
         for node in nodes:
             node_id = node.get("node_id")
             is_avail = node.get("available", False)
-            rssi = node.get("rssi")  # dBm if available
-            lqi = node.get("lqi")    # 0 to 3 or 0 to 255
+            rssi = node.get("rssi")
+            lqi = node.get("lqi")
 
             if not is_avail:
                 offline_nodes.append({
@@ -170,5 +292,5 @@ class ThreadAnalyzer:
             "health_score": health_percentage,
             "weak_nodes": weak_nodes,
             "offline_nodes": offline_nodes,
-            "summary": f"{len(healthy_nodes)}/{total} nodes fully operational. {len(offline_nodes)} offline, {len(weak_nodes)} weak."
+            "summary": f"{len(healthy_nodes)}/{total} nodes operational. {len(offline_nodes)} offline, {len(weak_nodes)} weak."
         }

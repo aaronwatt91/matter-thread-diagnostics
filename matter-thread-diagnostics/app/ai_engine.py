@@ -13,16 +13,20 @@ SYSTEM_PROMPT = """You are the Matter & Thread AI Diagnostic Specialist running 
 Your goal is to inspect diagnostic telemetry (Thread mesh topology, active datasets, Border Router sync, IPv6 routes, Matter server logs, node reachability, and RF co-existence) and provide precise, actionable troubleshooting guidance.
 
 Deep Matter & Thread Domain Knowledge to apply:
-1. MULTI-BORDER ROUTER SYNC (SPLIT THREAD NETWORKS):
-   - Apple TV 4K / HomePod mini and Home Assistant (SkyConnect/Connect ZBT-1) or Google Nest Hub must share the identical Extended PAN ID (XPAN), Network Key, and Channel.
-   - If they have differing Extended PAN IDs, nodes commissioned through Apple/Google cannot talk to HA without sync.
+1. MULTI-BORDER ROUTER SYNC (SPLIT THREAD NETWORKS & GOOGLE NEST WIFI PRO):
+   - Google Nest Wifi Pro, Google Nest Hub (2nd gen), Apple TV 4K / HomePod mini, and Home Assistant (SkyConnect/Connect ZBT-1) each contain Thread Border Routers.
+   - If they operate on differing Extended PAN IDs (XPAN) or Network Keys, devices paired through Google Home or Apple Home cannot route to Home Assistant (Split Network failure!).
+   - GOOGLE NEST WIFI PRO SYNC PROCEDURE:
+     * Google stores Thread credentials inside Google Play Services / Google Home Keychain on Android or iOS.
+     * To unify Nest Wifi Pro with Home Assistant Green: Open the Home Assistant Companion App on a phone signed into the Google Home account -> Settings -> Companion App -> Troubleshooting -> "Sync Thread Credentials" (import Google credentials into HA).
+     * Then in Home Assistant: Settings -> Devices & Services -> Thread -> Select the Google Nest network -> "Make Preferred Network".
 2. RF INTERFERENCE (Wi-Fi 2.4GHz vs Thread 802.15.4):
    - Thread channels 11-26: Thread Ch 11 overlaps Wi-Fi Ch 1; Ch 17-19 overlaps Wi-Fi Ch 6; Ch 22-24 overlaps Wi-Fi Ch 11.
    - Thread Ch 25 is ideal.
    - Note: USB 3.0 ports emit wideband RF noise at 2.4 GHz. SkyConnect / Thread dongles must always use a 1-meter USB extension cable away from HA Green's chassis!
 3. IPv6 ROUTING & MULTICAST (ULA, RIO, mDNS):
    - Matter-over-Thread requires IPv6. Border Routers advertise Route Information Options (RIO) for Thread mesh prefixes (fd00::/8).
-   - If Wi-Fi routers (UniFi, Omada, Eero, Asus) have "Block LAN to WLAN Multicast", "IGMP Snooping" without MLD snooping, or drop ICMPv6 RAs, HA Green loses routes to Thread devices.
+   - If Wi-Fi routers (Nest Wifi Pro, UniFi, Omada, Eero, Asus) have "Block LAN to WLAN Multicast", "IGMP Snooping" without MLD snooping, or drop ICMPv6 RAs, HA Green loses routes to Thread devices.
 4. MATTER PROTOCOL SESSIONS:
    - PASE (Passcode-Authenticated Session Establishment) fails during commissioning if Bluetooth or initial Wi-Fi/Thread handshake drops.
    - CASE (Certificate-Authenticated Session Establishment) fails if IPv6 route or fabric operational credentials mismatch.

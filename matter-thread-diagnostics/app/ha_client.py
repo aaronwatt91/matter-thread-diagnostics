@@ -95,7 +95,6 @@ class HAClient:
                 r = await client.get(f"{self.ha_url}/api/states", headers=self._headers())
                 if r.status_code == 200:
                     states = r.json()
-                    # Filter entities related to matter or thread
                     matter_entities = [
                         s for s in states
                         if "matter" in s.get("entity_id", "") or "thread" in s.get("entity_id", "") or s.get("attributes", {}).get("integration") == "matter"
@@ -105,16 +104,16 @@ class HAClient:
                 logger.error("Failed to query HA states: %s", e)
         return []
 
-    async def query_ha_websocket(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Send command over HA WebSocket API."""
+    async def query_ha_websocket(self, command: Dict[str, Any], timeout: float = 8.0) -> Dict[str, Any]:
+        """Send command over HA WebSocket API with robust authentication and response capture."""
         if not self.is_available:
             return {"error": "No supervisor token"}
 
         ws_url = self.ha_url.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
         try:
-            async with websockets.connect(ws_url, timeout=5) as ws:
+            async with websockets.connect(ws_url, open_timeout=timeout) as ws:
                 # 1. Receive auth required
-                auth_req = json.loads(await ws.recv())
+                auth_req = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
                 if auth_req.get("type") != "auth_required":
                     return {"error": "Unexpected auth handshake response", "raw": auth_req}
 
@@ -123,7 +122,7 @@ class HAClient:
                     "type": "auth",
                     "access_token": self.supervisor_token
                 }))
-                auth_res = json.loads(await ws.recv())
+                auth_res = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
                 if auth_res.get("type") != "auth_ok":
                     return {"error": "Auth failed", "raw": auth_res}
 
@@ -133,19 +132,36 @@ class HAClient:
                 await ws.send(json.dumps(command))
 
                 # 4. Receive response
-                response = json.loads(await ws.recv())
+                response = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
                 return response
+        except asyncio.TimeoutError:
+            logger.warning("HA WebSocket command timed out (%s)", command.get("type"))
+            return {"error": f"Timeout waiting for response to {command.get('type')}"}
         except Exception as e:
             logger.warning("HA WebSocket command failed (%s): %s", command.get("type"), e)
             return {"error": str(e)}
 
     async def get_thread_datasets(self) -> Dict[str, Any]:
-        """Fetch configured Thread datasets from Home Assistant."""
-        return await self.query_ha_websocket({"type": "thread/get_dataset"})
+        """
+        Fetch all Thread datasets configured in Home Assistant.
+        Calls 'thread/list_datasets' and then retrieves TLV/metadata for each.
+        """
+        list_res = await self.query_ha_websocket({"type": "thread/list_datasets"})
+        if not isinstance(list_res, dict) or not list_res.get("success"):
+            # Fallback to get_dataset if list_datasets not supported on older versions
+            return await self.query_ha_websocket({"type": "thread/get_dataset"})
+        return list_res
 
     async def get_thread_routers(self) -> Dict[str, Any]:
-        """Discover Thread Border Routers known to Home Assistant."""
-        return await self.query_ha_websocket({"type": "thread/discover_routers"})
+        """Discover Thread Border Routers (Nest Wifi Pro, Apple TV, SkyConnect) active on the network."""
+        return await self.query_ha_websocket({"type": "thread/discover_routers"}, timeout=10.0)
+
+    async def get_device_registry(self) -> List[Dict[str, Any]]:
+        """Fetch full Home Assistant Device Registry to detect registered Nest, Google, and Thread hardware."""
+        res = await self.query_ha_websocket({"type": "config/device_registry/list"})
+        if isinstance(res, dict) and res.get("success") and isinstance(res.get("result"), list):
+            return res["result"]
+        return []
 
     async def get_matter_diagnostics(self) -> Dict[str, Any]:
         """Fetch matter integration diagnostics if available."""

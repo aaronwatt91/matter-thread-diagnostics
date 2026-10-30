@@ -328,12 +328,23 @@ function renderRulesTab(data) {
   const splitDetail = document.getElementById("split-networks-detail");
   if (split.networks) {
     splitDetail.innerHTML = Object.entries(split.networks).map(([xpan, routers]) => `
-      <div style="margin-bottom: 6px;">
-        <strong>Ext PAN ID: ${xpan}</strong>
-        ${routers.map(r => `<div>• ${r.name || 'Border Router'} (Channel: ${r.channel || 'N/A'})</div>`).join('')}
+      <div style="margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #374151;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>Ext PAN ID: <code style="color:#38bdf8;">${xpan}</code></strong>
+          ${xpan.includes('GOOGLE') ? '<span class="badge" style="background:#4285F422; color:#4285F4; border:1px solid #4285F4;"><i class="fa-brands fa-google"></i> Google Mesh</span>' : ''}
+        </div>
+        ${routers.map(r => `
+          <div style="margin-left: 6px; margin-top: 4px; font-size: 12px; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-circle-dot" style="font-size: 8px; color: ${r.type === 'nest' ? '#4285F4' : (r.type === 'ha' ? '#03A9F4' : '#10b981')};"></i>
+            <span><strong>${r.name || 'Thread Border Router'}</strong> ${r.model ? `<span style="color:var(--text-muted)">(${r.model})</span>` : ''}</span>
+            ${r.channel ? `<span class="badge" style="font-size: 10px; padding: 2px 6px;">Ch ${r.channel}</span>` : ''}
+            ${r.preferred ? `<span class="badge badge-success" style="font-size: 10px; padding: 2px 6px;">Preferred</span>` : ''}
+          </div>
+        `).join('')}
       </div>
     `).join('');
   }
+
 
   // Rule 2: RF Coexistence
   const rf = rules.rf_coexistence || {};
@@ -484,20 +495,35 @@ function renderSvgTopology(nodes, edges) {
   const cx = width / 2;
   const cy = height / 2;
 
-  // Position nodes radially
+  // Separate Border Routers and End Devices for clean layout
+  const borderRouters = nodes.filter(n => n.type === "border_router");
+  const deviceNodes = nodes.filter(n => n.type !== "border_router");
   const nodeMap = {};
-  const total = nodes.length;
-  nodes.forEach((n, idx) => {
+
+  // Layout Border Routers across the top
+  const brCount = borderRouters.length;
+  borderRouters.forEach((n, idx) => {
     let x, y;
-    if (n.type === "border_router") {
-      x = idx === 0 ? cx - 120 : cx + 120;
-      y = cy - 40;
+    if (brCount === 1) {
+      x = cx;
+      y = cy - 80;
     } else {
-      const angle = (idx / (total - 1)) * 2 * Math.PI;
-      const radius = 170;
-      x = cx + radius * Math.cos(angle);
-      y = cy + radius * Math.sin(angle);
+      const spacing = Math.min(220, (width - 160) / Math.max(brCount - 1, 1));
+      const startX = cx - ((brCount - 1) * spacing) / 2;
+      x = startX + idx * spacing;
+      y = cy - 80;
     }
+    nodeMap[n.id] = { ...n, x, y };
+  });
+
+  // Layout End Devices in a clean semi-circle / ellipse below
+  const devCount = deviceNodes.length;
+  deviceNodes.forEach((n, idx) => {
+    const angle = (idx / Math.max(devCount, 1)) * 2 * Math.PI + (Math.PI / 2);
+    const radiusX = Math.min(260, width / 2 - 80);
+    const radiusY = 120;
+    const x = cx + radiusX * Math.cos(angle);
+    const y = cy + 40 + radiusY * Math.sin(angle);
     nodeMap[n.id] = { ...n, x, y };
   });
 
@@ -518,18 +544,19 @@ function renderSvgTopology(nodes, edges) {
     if (tgt.status === "offline") strokeColor = "#ef4444";
 
     line.setAttribute("stroke", strokeColor);
-    line.setAttribute("stroke-width", "2");
-    line.setAttribute("stroke-dasharray", tgt.status === "offline" ? "4,4" : "none");
-    line.setAttribute("opacity", "0.7");
+    line.setAttribute("stroke-width", src.type === "border_router" && tgt.type === "border_router" ? "3" : "2");
+    line.setAttribute("stroke-dasharray", tgt.status === "offline" ? "4,4" : (src.type === "border_router" && tgt.type === "border_router" ? "6,3" : "none"));
+    line.setAttribute("opacity", "0.8");
     svg.appendChild(line);
 
     // Label
     if (e.label) {
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", (src.x + tgt.x) / 2);
-      text.setAttribute("y", (src.y + tgt.y) / 2 - 4);
-      text.setAttribute("fill", "#9ca3af");
+      text.setAttribute("y", (src.y + tgt.y) / 2 - 6);
+      text.setAttribute("fill", e.status === "warning" ? "#fbbf24" : "#9ca3af");
       text.setAttribute("font-size", "10");
+      text.setAttribute("font-weight", "600");
       text.setAttribute("text-anchor", "middle");
       text.textContent = e.label;
       svg.appendChild(text);
@@ -544,10 +571,19 @@ function renderSvgTopology(nodes, edges) {
     let fillColor = "#10b981"; // Router
     let r = 18;
     if (n.type === "border_router") {
-      fillColor = "#3b82f6";
-      r = 24;
+      r = 25;
+      const lbl = (n.label || "").toLowerCase();
+      if (n.vendor === "nest" || lbl.includes("nest") || lbl.includes("google")) {
+        fillColor = "#4285F4"; // Google Nest Blue
+      } else if (n.vendor === "apple" || lbl.includes("apple") || lbl.includes("homepod")) {
+        fillColor = "#94a3b8"; // Apple Silver
+      } else if (n.vendor === "ha" || lbl.includes("green") || lbl.includes("skyconnect")) {
+        fillColor = "#03A9F4"; // HA Cyan
+      } else {
+        fillColor = "#3b82f6";
+      }
     } else if (n.type === "end_device") {
-      fillColor = "#8b5cf6";
+      fillColor = "#8b5cf6"; // Battery sensor
       r = 16;
     }
 
@@ -570,7 +606,7 @@ function renderSvgTopology(nodes, edges) {
     label.setAttribute("font-size", "11");
     label.setAttribute("font-weight", "600");
     label.setAttribute("text-anchor", "middle");
-    label.textContent = n.label.length > 20 ? n.label.slice(0, 18) + '...' : n.label;
+    label.textContent = n.label.length > 22 ? n.label.slice(0, 20) + '...' : n.label;
     g.appendChild(label);
 
     g.addEventListener("click", () => {
@@ -587,13 +623,25 @@ function showNodeInspector(node) {
   const content = document.getElementById("inspector-content");
 
   panel.classList.remove("hidden");
-  title.innerText = `Node: ${node.label} (${node.type})`;
+  title.innerText = `Device: ${node.label}`;
+
+  const isNest = (node.label || "").toLowerCase().includes("nest") || node.vendor === "nest";
+  const isBR = node.type === "border_router";
+
   content.innerHTML = `
     <div style="font-size: 13px; line-height: 1.6;">
       <div><strong>Status:</strong> <span class="badge badge-${node.status === 'online' ? 'success' : (node.status === 'weak' ? 'warning' : 'danger')}">${node.status.toUpperCase()}</span></div>
-      <div><strong>Role:</strong> ${node.type === 'border_router' ? 'Thread Border Router' : (node.type === 'end_device' ? 'Battery Sleepy End Device (ICD)' : 'Mains-Powered Thread Router')}</div>
-      <div><strong>Telemetry:</strong> ${node.details || 'N/A'}</div>
-      <div style="margin-top: 8px; color: var(--text-muted); font-size: 12px;">Tip: For battery devices with weak signal (< -82 dBm), add an Eve Energy smart plug or mains-powered Thread bulb midway.</div>
+      <div><strong>Role:</strong> ${isBR ? (isNest ? 'Google Nest Thread Border Router' : 'Thread Border Router') : (node.type === 'end_device' ? 'Battery Sleepy End Device (ICD)' : 'Mains-Powered Thread Router')}</div>
+      <div><strong>Details:</strong> ${node.details || 'N/A'}</div>
+      ${isNest ? `
+        <div style="margin-top: 10px; padding: 8px 12px; background: rgba(66, 133, 244, 0.15); border: 1px solid #4285F4; border-radius: 6px;">
+          <strong><i class="fa-brands fa-google"></i> Google Nest Wifi Pro Tip:</strong>
+          <div style="font-size: 12px; margin-top: 4px;">
+            To ensure Matter devices paired via Google Home can communicate with Home Assistant, sync Thread credentials using the Home Assistant Companion App on Android/iOS (Settings -> Companion App -> Troubleshooting -> Sync Thread Credentials), then make the Google Nest network preferred in Home Assistant.
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 }
+
