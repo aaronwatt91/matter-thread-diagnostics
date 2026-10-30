@@ -33,11 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("btn-run-ai").addEventListener("click", () => {
-    runAIDiagnosis(false);
-  });
-
-  document.getElementById("btn-run-sample").addEventListener("click", () => {
-    runAIDiagnosis(true);
+    runAIDiagnosis();
   });
 
   document.getElementById("btn-analyze-manual").addEventListener("click", () => {
@@ -400,7 +396,7 @@ function renderRulesTab(data) {
 }
 
 /* AI Diagnostics Execution */
-async function runAIDiagnosis(useMock = false) {
+async function runAIDiagnosis() {
   const loading = document.getElementById("ai-loading-indicator");
   const resultsCard = document.getElementById("ai-results-container");
   const reportBody = document.getElementById("ai-report-body");
@@ -414,8 +410,7 @@ async function runAIDiagnosis(useMock = false) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        user_notes: userNotes,
-        force_mock: useMock
+        user_notes: userNotes
       })
     });
 
@@ -426,11 +421,6 @@ async function runAIDiagnosis(useMock = false) {
     if (data.ai_result && data.ai_result.success) {
       document.getElementById("report-model-badge").innerText = `${data.ai_result.provider.toUpperCase()} (${data.ai_result.model})`;
       reportBody.innerHTML = marked.parse(data.ai_result.analysis);
-      // Refresh KPIs if mock was used
-      if (useMock && data.telemetry) {
-        renderKPIs(data.telemetry);
-        renderRulesTab(data.telemetry);
-      }
     } else {
       const errMsg = (data.ai_result && data.ai_result.error) || "AI diagnosis could not be completed.";
       reportBody.innerHTML = `
@@ -521,6 +511,41 @@ function renderSvgTopology(nodes, edges) {
   const height = 450;
   const cx = width / 2;
   const cy = height / 2;
+
+  if (!nodes || nodes.length === 0) {
+    const textGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    icon.setAttribute("x", cx);
+    icon.setAttribute("y", cy - 15);
+    icon.setAttribute("fill", "#64748b");
+    icon.setAttribute("font-size", "36");
+    icon.setAttribute("text-anchor", "middle");
+    icon.textContent = "📡";
+    textGroup.appendChild(icon);
+
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    title.setAttribute("x", cx);
+    title.setAttribute("y", cy + 22);
+    title.setAttribute("fill", "#e2e8f0");
+    title.setAttribute("font-size", "15");
+    title.setAttribute("font-weight", "600");
+    title.setAttribute("text-anchor", "middle");
+    title.textContent = "No Live Thread Border Routers or Matter Devices Found";
+    textGroup.appendChild(title);
+
+    const subtitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    subtitle.setAttribute("x", cx);
+    subtitle.setAttribute("y", cy + 46);
+    subtitle.setAttribute("fill", "#94a3b8");
+    subtitle.setAttribute("font-size", "12");
+    subtitle.setAttribute("text-anchor", "middle");
+    subtitle.textContent = "Ensure your Border Routers (Nest Wifi Pro, Apple TV) are powered on, then click 'Refresh Topology'.";
+    textGroup.appendChild(subtitle);
+
+    svg.appendChild(textGroup);
+    return;
+  }
 
   // Separate Border Routers and End Devices for clean layout
   const borderRouters = nodes.filter(n => n.type === "border_router");

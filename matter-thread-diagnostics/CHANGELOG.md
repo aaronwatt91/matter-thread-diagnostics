@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0] - 2026-10-30
+
+### Changed & Streamlined
+- **Zero Mock / Demo Fallbacks (100% Real Live Telemetry)**:
+  - Removed all demo scenario buttons, mock endpoints, and placeholder sample data.
+  - Mesh Topology and AI Diagnostics operate strictly on 100% live discovered Thread Border Routers (Google Nest Wifi Pro, Apple TV 4K, HomePod, SkyConnect) and real Matter devices.
+  - If no devices or border routers are detected yet, a clean empty state is displayed in the SVG topology graph with a prompt to connect or pair devices and use the "Refresh Topology" button.
+- **On-Demand Topology Refresh**:
+  - Live "Refresh Topology" button re-scans Home Assistant WebSocket Thread datasets, mDNS border router discovery, and device registry in real-time.
+- **AI Latency Optimization & Timeout Fix**:
+  - Streamlined AI telemetry payload prevents `ReadTimeout` on Gemini `gemini-3.8-flash`.
+
 ## [1.0.9] - 2026-10-30
 
 ### Fixed & Added
