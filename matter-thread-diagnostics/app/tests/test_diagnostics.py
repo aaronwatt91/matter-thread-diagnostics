@@ -303,4 +303,21 @@ def test_border_router_multi_source_deduplication():
     assert ha_otbr["addresses"][0] == "192.168.86.38"
     assert "fe80::f55d:7222:4687:b814" in ha_otbr["addresses"]
 
+    # Verify only 1 Border Router is marked preferred (never all 4)
+    preferred_routers = [r for r in res["all_discovered_routers"] if r.get("preferred")]
+    assert len(preferred_routers) == 1, f"Expected exactly 1 preferred border router, got {len(preferred_routers)}"
+
+    # Verify topology RF proximity spring distance calculation
+    topo = ThreadAnalyzer.build_real_mesh_topology(
+        discovered_routers=res["all_discovered_routers"],
+        matter_nodes=[
+            {"node_id": 10, "product_name": "Close Plug", "available": True, "rssi": -50, "extended_pan_id": "49F5DAF7314F6B62"},
+            {"node_id": 11, "product_name": "Far Sensor", "available": True, "rssi": -88, "extended_pan_id": "49F5DAF7314F6B62"},
+        ],
+    )
+    edge_close = next(e for e in topo["edges"] if e["target"] == "node_10" or e["source"] == "node_10")
+    edge_far = next(e for e in topo["edges"] if e["target"] == "node_11" or e["source"] == "node_11")
+    assert edge_close["target_distance"] < edge_far["target_distance"], "Stronger RSSI node must have shorter target spring distance"
+
+
 

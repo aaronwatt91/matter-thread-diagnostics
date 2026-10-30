@@ -375,10 +375,31 @@ class ThreadAnalyzer:
             if ext_pan_id not in networks:
                 networks[ext_pan_id] = [dataset_entry]
             else:
-                # Propagate preferred badge to routers on the preferred dataset
-                if is_pref:
-                    for r in networks[ext_pan_id]:
-                        r["preferred"] = True
+                # Mark that this network is the preferred dataset, and mark ONLY the single Preferred Border Router
+                pref_ba_id = str(ds.get("preferred_border_agent_id") or "").upper().replace(":", "").replace("-", "")
+                pref_ext_addr = str(ds.get("preferred_extended_address") or "").upper().replace(":", "").replace("0X", "")
+                for r in networks[ext_pan_id]:
+                    r["preferred_network"] = is_pref
+                    r["preferred"] = False
+
+                if is_pref and networks[ext_pan_id]:
+                    matched_pref_router = None
+                    if pref_ba_id or pref_ext_addr:
+                        for r in networks[ext_pan_id]:
+                            r_ba = str(r.get("border_agent_id") or "").upper().replace(":", "").replace("-", "")
+                            r_ext = str(r.get("ext_address") or "").upper().replace(":", "")
+                            if (pref_ba_id and r_ba and r_ba == pref_ba_id) or (pref_ext_addr and r_ext and r_ext == pref_ext_addr):
+                                matched_pref_router = r
+                                break
+                    if matched_pref_router is None:
+                        # Fallback to primary/leader router or HA OTBR (never mark all routers as preferred)
+                        matched_pref_router = (
+                            next((r for r in networks[ext_pan_id] if (r.get("state_bitmap") or {}).get("is_primary")), None)
+                            or next((r for r in networks[ext_pan_id] if r.get("type") == "ha"), None)
+                            or networks[ext_pan_id][0]
+                        )
+                    if matched_pref_router is not None:
+                        matched_pref_router["preferred"] = True
 
         # Only count networks that have real Extended PAN IDs
         valid_network_keys = [k for k in networks.keys() if k not in ("UNKNOWN", "DATASET_UNKNOWN", "HA_DATASET")]
@@ -567,6 +588,28 @@ class ThreadAnalyzer:
 
         ping_by_ip = {p["ip"]: p for p in (ping_results or []) if isinstance(p, dict) and p.get("ip")}
 
+        def _calc_spring_distance(
+            rssi_val: Optional[int] = None,
+            lqi_val: Optional[int] = None,
+            rtt_ms: Optional[float] = None,
+            is_backbone: bool = False,
+            is_split_edge: bool = False,
+        ) -> int:
+            """Convert real RF signal strength (RSSI/LQI) or ping RTT into physical spring target distance (px)."""
+            if is_split_edge:
+                return 260
+            if is_backbone:
+                if rtt_ms is not None:
+                    return max(85, min(170, int(90 + float(rtt_ms) * 5.5)))
+                return 115
+            if rssi_val is not None:
+                norm = max(0.0, min(1.0, (-45.0 - float(rssi_val)) / 50.0))
+                return int(70 + norm * 155)
+            if lqi_val is not None:
+                norm = max(0.0, min(1.0, 1.0 - (float(lqi_val) / 255.0)))
+                return int(75 + norm * 145)
+            return 140
+
         target_xpan = ""
         target_name = ""
         if target_net:
@@ -623,10 +666,15 @@ class ThreadAnalyzer:
 
             # Check ping latency if probed
             ping_str = ""
+            br_rtt_ms = None
             for a in r_addrs:
                 if a in ping_by_ip:
                     p = ping_by_ip[a]
-                    ping_str = f" | Ping: {p['rtt_ms']}ms" if p.get("reachable") else " | Ping: Unreachable"
+                    if p.get("reachable"):
+                        br_rtt_ms = p.get("rtt_ms")
+                        ping_str = f" | Ping: {br_rtt_ms}ms"
+                    else:
+                        ping_str = " | Ping: Unreachable"
                     break
 
             target_badge = " [TARGET MESH]" if (target_id and is_target_match) else (" [OTHER PAN]" if (target_id and not is_target_match) else "")
@@ -643,6 +691,9 @@ class ThreadAnalyzer:
                 "label": r_name,
                 "type": "border_router",
                 "vendor": r_type,
+                "brand": r_brand,
+                "model": r_model,
+                "preferred": bool(r.get("preferred", False)),
                 "status": status,
                 "is_target": is_target_match,
                 "extended_pan_id": r_xpan,
@@ -650,26 +701,42 @@ class ThreadAnalyzer:
                 "rloc16": r_rloc,
                 "ext_address": r_ext,
                 "addresses": r_addrs,
+                "rtt_ms": br_rtt_ms,
                 "details": details,
             })
 
-        # Connect Border Routers that share the same Extended PAN ID (or show Split Mesh warning between different XPANs)
+        # Connect Border Routers that share the same Extended PAN ID (with spring distance scaled by LAN RTT)
         if len(br_node_ids) > 1:
-            for i in range(len(br_node_ids) - 1):
-                src_br = graph_nodes[i]
-                tgt_br = graph_nodes[i + 1]
-                same_pan = (
-                    src_br.get("extended_pan_id") == tgt_br.get("extended_pan_id")
-                    and src_br.get("extended_pan_id") not in ("UNKNOWN", "")
-                )
-                edge_key = tuple(sorted([src_br["id"], tgt_br["id"]]))
-                seen_edges.add(edge_key)
-                graph_edges.append({
-                    "source": src_br["id"],
-                    "target": tgt_br["id"],
-                    "label": f"Thread Backbone ({src_br.get('extended_pan_id', '')[:8]})" if same_pan else "SPLIT MESH (Different PAN IDs)",
-                    "status": "ok" if same_pan else "warning",
-                })
+            for i in range(len(br_node_ids)):
+                for j in range(i + 1, len(br_node_ids)):
+                    # Connect primary star/ring links without cluttering all-to-all if > 4 routers
+                    if j > i + 1 and i != 0:
+                        continue
+                    src_br = graph_nodes[i]
+                    tgt_br = graph_nodes[j]
+                    same_pan = (
+                        src_br.get("extended_pan_id") == tgt_br.get("extended_pan_id")
+                        and src_br.get("extended_pan_id") not in ("UNKNOWN", "")
+                    )
+                    edge_key = tuple(sorted([src_br["id"], tgt_br["id"]]))
+                    if edge_key in seen_edges:
+                        continue
+                    seen_edges.add(edge_key)
+                    rtts = [x for x in (src_br.get("rtt_ms"), tgt_br.get("rtt_ms")) if x is not None]
+                    avg_rtt = round(sum(rtts) / len(rtts), 2) if rtts else None
+                    spring_dist = _calc_spring_distance(rtt_ms=avg_rtt, is_backbone=same_pan, is_split_edge=not same_pan)
+                    lbl = (
+                        f"{avg_rtt} ms" if (same_pan and avg_rtt is not None)
+                        else (f"Mesh ({src_br.get('extended_pan_id', '')[:6]})" if same_pan else "SPLIT MESH")
+                    )
+                    graph_edges.append({
+                        "source": src_br["id"],
+                        "target": tgt_br["id"],
+                        "label": lbl,
+                        "rtt_ms": avg_rtt,
+                        "target_distance": spring_dist,
+                        "status": "ok" if same_pan else "warning",
+                    })
 
         # 2. Register all Matter nodes in lookup tables first so neighbor/parent edges can resolve peer Matter Routers
         for n in matter_nodes:
@@ -772,6 +839,9 @@ class ThreadAnalyzer:
                             "source": peer_gid,
                             "target": gid,
                             "label": lbl,
+                            "rssi": nb_rssi,
+                            "lqi": nb_lqi,
+                            "target_distance": _calc_spring_distance(rssi_val=nb_rssi, lqi_val=nb_lqi),
                             "status": "warning" if (status in ("offline", "weak") or (nb_rssi is not None and nb_rssi < -82)) else "ok",
                         })
                     connected_to_any = True
@@ -787,6 +857,9 @@ class ThreadAnalyzer:
                             "source": parent_gid,
                             "target": gid,
                             "label": rssi_str if rssi is not None else f"RLOC {n_rloc}",
+                            "rssi": rssi,
+                            "lqi": lqi,
+                            "target_distance": _calc_spring_distance(rssi_val=rssi, lqi_val=lqi),
                             "status": "warning" if status in ("offline", "weak") else "ok",
                         })
                     connected_to_any = True
@@ -794,7 +867,7 @@ class ThreadAnalyzer:
             # (C) Match to Border Router on the exact same Extended PAN ID (`0/53/4`)
             if not connected_to_any and n_xpan and n_xpan in xpan_to_br_ids:
                 matching_brs = xpan_to_br_ids[n_xpan]
-                parent_br = matching_brs[0]
+                parent_br = matching_brs[idx % len(matching_brs)]
                 edge_key = tuple(sorted([gid, parent_br]))
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
@@ -802,6 +875,9 @@ class ThreadAnalyzer:
                         "source": parent_br,
                         "target": gid,
                         "label": rssi_str if rssi is not None else f"XPAN {n_xpan[:6]}",
+                        "rssi": rssi,
+                        "lqi": lqi,
+                        "target_distance": _calc_spring_distance(rssi_val=rssi, lqi_val=lqi),
                         "status": "warning" if status in ("offline", "weak") else "ok",
                     })
                 connected_to_any = True
@@ -809,7 +885,7 @@ class ThreadAnalyzer:
             # (D) If node has no Extended PAN ID attribute yet (e.g. offline/uninterviewed or simple test fixture),
             # connect to the primary/target Border Router if one exists
             if not connected_to_any and br_node_ids:
-                primary_br = br_node_ids[0]
+                primary_br = br_node_ids[idx % len(br_node_ids)]
                 edge_key = tuple(sorted([gid, primary_br]))
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
@@ -817,6 +893,9 @@ class ThreadAnalyzer:
                         "source": primary_br,
                         "target": gid,
                         "label": rssi_str if rssi is not None else "No link",
+                        "rssi": rssi,
+                        "lqi": lqi,
+                        "target_distance": _calc_spring_distance(rssi_val=rssi if rssi is not None else -90, lqi_val=lqi),
                         "status": "warning" if status in ("offline", "weak") else "ok",
                     })
 

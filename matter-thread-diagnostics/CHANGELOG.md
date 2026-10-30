@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.3] - 2026-10-30
+
+### Added & Fixed: Live Force-Directed Physics Topology, Device Search Box & Single Preferred Border Router
+- **Interactive Force-Directed RF Proximity Topology (`renderSvgTopology` & `build_real_mesh_topology`)**:
+  - Replaced the static row layout with a live 60fps force-directed physics simulation (`requestAnimationFrame`) where spring distances (`target_distance`) are driven by real RF signal proximity (`RSSI` in dBm, `LQI`, and LAN `Ping RTT` in ms).
+  - Nodes with strong signal (`-45 dBm` to `-62 dBm`) pull closely together (`~70–100px`) with thicker emerald links; weak/distant links (`< -82 dBm`) stretch further out (`~190–225px`) with dashed warning links.
+  - Added interactive pointer drag-and-drop on all nodes, mouse-wheel zoom & canvas pan, a **Re-layout** physics button, and a **Center** reset button.
+- **Real-Time Device Search & Role Filter**:
+  - Added a live search bar (`#matter-node-search`) and role/status filter dropdown (`All Roles & States`, `Online Only`, `Offline / Weak RF`, `Thread Routers / Leader`, `End Devices / Sleepy`) on the Commissioned Matter Nodes table.
+  - Added a synced search box (`#topology-node-search`) on the Topology tab that highlights and pulses matching devices directly on the live physics canvas.
+- **Fixed All Border Routers Showing `★ Preferred`**:
+  - Previously, when a Thread dataset was marked `preferred: true`, all Border Routers on that dataset inherited `preferred = True`.
+  - Updated `ThreadAnalyzer.detect_split_networks` to match `preferred_border_agent_id` / `preferred_extended_address` (or the single primary/HA OTBR router) so only the single Preferred Border Router displays `★ Preferred Router`.
+
 ## [2.0.2] - 2026-10-30
 
 ### Fixed: Border Router Multi-Source Deduplication (`mDNS / HA Discovery` + `Live UDP mDNS`)

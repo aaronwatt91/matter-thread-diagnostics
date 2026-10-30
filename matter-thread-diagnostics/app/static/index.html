@@ -142,12 +142,37 @@
 
       <!-- Commissioned Matter Nodes (Cluster 0x0035) Table -->
       <div class="card">
-        <div class="card-header-flex">
+        <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
             <h3><i class="fa-solid fa-microchip"></i> Commissioned Matter Nodes &amp; Thread Cluster <code>0x0035</code> Telemetry</h3>
             <p class="section-desc" style="margin-bottom: 0;">Real-time attributes queried from <code>python-matter-server</code>: Routing Role, RLOC16, Extended PAN ID, Neighbor Table RSSI/LQI, Parent RLOC16, and live Ping test.</p>
           </div>
-          <span id="matter-table-count" class="badge badge-info">0 Nodes</span>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <div style="position: relative; display: flex; align-items: center;">
+              <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 10px; color: var(--text-muted); font-size: 12px; pointer-events: none;"></i>
+              <input
+                type="text"
+                id="matter-node-search"
+                class="form-control"
+                placeholder="Search device, #ID, vendor, RLOC16, IPv6..."
+                style="padding: 6px 28px 6px 30px; font-size: 12px; width: 255px; background: #0f172a; border: 1px solid #334155; color: #f8fafc; border-radius: 6px;"
+              />
+              <button
+                type="button"
+                id="btn-clear-node-search"
+                title="Clear search"
+                style="display: none; position: absolute; right: 6px; background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 2px 4px;"
+              >&times;</button>
+            </div>
+            <select id="matter-node-filter" class="form-control" style="width: auto; padding: 6px 10px; font-size: 12px; background: #0f172a; border: 1px solid #334155; color: #f8fafc; border-radius: 6px;">
+              <option value="all">All Roles &amp; States</option>
+              <option value="online">Online Only</option>
+              <option value="issues">Offline / Weak RF (&lt; -82 dBm)</option>
+              <option value="router">Thread Routers / Leader</option>
+              <option value="end_device">End Devices / Sleepy (SED)</option>
+            </select>
+            <span id="matter-table-count" class="badge badge-info">0 Nodes</span>
+          </div>
         </div>
         <div style="overflow-x: auto;">
           <table id="table-matter-nodes" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
@@ -240,28 +265,41 @@
     <!-- TAB 2: Topology Graph -->
     <section id="tab-topology" class="tab-content">
       <div class="card">
-        <div class="card-header-flex">
+        <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3><i class="fa-solid fa-diagram-project"></i> Real Thread Mesh Topology (Cluster <code>0x0035</code> Neighbor &amp; RLOC16 Links)</h3>
-            <p class="section-desc">Constructed from live IEEE 802.15.4 Extended Addresses, RLOC16 parent-child bitmasks (<code>0xFC00</code>), and Neighbor Tables.</p>
+            <h3><i class="fa-solid fa-diagram-project"></i> Live Force-Directed Thread Mesh Topology (RF Proximity Physics)</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Nodes dynamically position themselves by real RF signal proximity (<code>RSSI dBm</code>, <code>LQI</code> &amp; <code>Ping RTT</code>) — stronger signals pull closer together; weak links stretch further apart. Drag any node to interact!</p>
           </div>
-          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-            <button id="btn-refresh-topology" class="btn btn-primary" title="Re-scan and refresh Thread mesh topology"><i class="fa-solid fa-arrows-rotate"></i> Rescan Topology</button>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <div style="position: relative; display: flex; align-items: center;">
+              <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 10px; color: var(--text-muted); font-size: 12px; pointer-events: none;"></i>
+              <input
+                type="text"
+                id="topology-node-search"
+                class="form-control"
+                placeholder="Find &amp; highlight device..."
+                style="padding: 6px 10px 6px 28px; font-size: 12px; width: 195px; background: #0f172a; border: 1px solid #334155; color: #f8fafc; border-radius: 6px;"
+              />
+            </div>
+            <button id="btn-topology-shake" type="button" class="btn btn-outline" style="padding: 6px 10px; font-size: 12px;" title="Re-energize physics simulation"><i class="fa-solid fa-wand-sparkles"></i> Re-layout</button>
+            <button id="btn-topology-reset-zoom" type="button" class="btn btn-outline" style="padding: 6px 10px; font-size: 12px;" title="Reset pan and zoom"><i class="fa-solid fa-compress"></i> Center</button>
+            <button id="btn-refresh-topology" type="button" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" title="Re-scan and refresh Thread mesh topology"><i class="fa-solid fa-arrows-rotate"></i> Rescan</button>
           </div>
         </div>
 
-        <div class="topology-legend" style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-bottom: 12px;">
-          <span><span class="dot" style="background: #4285F4;"></span> Google Nest Border Router</span>
+        <div class="topology-legend" style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-bottom: 12px; align-items: center;">
+          <span><span class="dot" style="background: #4285F4;"></span> Google Nest TBR</span>
           <span><span class="dot" style="background: #94a3b8;"></span> Apple TV / HomePod TBR</span>
-          <span><span class="dot" style="background: #03A9F4;"></span> HA OTBR (ZBT-1 / SkyConnect)</span>
+          <span><span class="dot" style="background: #03A9F4;"></span> HA OTBR (ZBT-1)</span>
           <span><span class="dot dot-router"></span> Thread Router / REED</span>
           <span><span class="dot dot-end"></span> End Device / Sleepy (SED)</span>
-          <span><span class="dot dot-weak"></span> Weak Link (&lt; -82 dBm)</span>
-          <span><span class="dot dot-offline"></span> Offline / Unreachable</span>
+          <span><span class="dot dot-weak"></span> Weak RF (&lt; -82 dBm / Far)</span>
+          <span><span class="dot dot-offline"></span> Offline</span>
+          <span style="margin-left: auto; color: #38bdf8; font-size: 11px;"><i class="fa-solid fa-up-down-left-right"></i> Drag nodes • Scroll to zoom • Distance = Signal Strength</span>
         </div>
 
-        <div id="topology-canvas-container">
-          <svg id="mesh-svg" width="100%" height="460"></svg>
+        <div id="topology-canvas-container" style="position: relative; overflow: hidden;">
+          <svg id="mesh-svg" width="100%" height="540" style="cursor: grab; user-select: none;"></svg>
         </div>
         <div id="topology-status-bar" style="font-size: 12px; color: var(--text-muted); margin-top: 8px; display: flex; justify-content: space-between;">
           <span id="topology-last-scan">Ready to scan mesh</span>

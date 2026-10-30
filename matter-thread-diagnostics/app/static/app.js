@@ -16,6 +16,17 @@ function apiPath(endpoint) {
 
 let currentTelemetry = null;
 let availableThreadNetworks = [];
+let currentNodeSearchQuery = "";
+let currentNodeRoleFilter = "all";
+let topologyPhysicsState = {
+  animFrameId: null,
+  nodes: [],
+  edges: [],
+  zoom: 1.0,
+  panX: 0,
+  panY: 0,
+  energy: 1.0,
+};
 
 const MODEL_OPTIONS_BY_PROVIDER = {
   gemini: [
@@ -43,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSettingsForm();
   initPasswordToggles();
   initTopScannerBar();
+  initDeviceSearchAndTopologyControls();
 
   fetchStatus();
   fetchLiveDiagnostics();
@@ -150,6 +162,66 @@ function initTopScannerBar() {
     btnTopAi.addEventListener("click", () => {
       activateTab("tab-ai");
       runAIDiagnosis();
+    });
+  }
+}
+
+/* Device Search Box & Topology Physics Controls */
+function initDeviceSearchAndTopologyControls() {
+  const nodeSearch = document.getElementById("matter-node-search");
+  const clearBtn = document.getElementById("btn-clear-node-search");
+  const roleFilter = document.getElementById("matter-node-filter");
+  const topoSearch = document.getElementById("topology-node-search");
+
+  const applySearch = (val, sourceElem) => {
+    currentNodeSearchQuery = (val || "").trim();
+    if (nodeSearch && sourceElem !== nodeSearch) nodeSearch.value = val;
+    if (topoSearch && sourceElem !== topoSearch) topoSearch.value = val;
+    if (clearBtn) clearBtn.style.display = currentNodeSearchQuery ? "block" : "none";
+    if (currentTelemetry) {
+      renderRulesAndTables(currentTelemetry);
+    }
+    updateTopologySearchHighlight();
+  };
+
+  if (nodeSearch) {
+    nodeSearch.addEventListener("input", (e) => applySearch(e.target.value, nodeSearch));
+  }
+  if (topoSearch) {
+    topoSearch.addEventListener("input", (e) => applySearch(e.target.value, topoSearch));
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => applySearch("", null));
+  }
+  if (roleFilter) {
+    roleFilter.addEventListener("change", (e) => {
+      currentNodeRoleFilter = e.target.value || "all";
+      if (currentTelemetry) {
+        renderRulesAndTables(currentTelemetry);
+      }
+    });
+  }
+
+  const btnShake = document.getElementById("btn-topology-shake");
+  if (btnShake) {
+    btnShake.addEventListener("click", () => {
+      topologyPhysicsState.energy = 1.0;
+      topologyPhysicsState.nodes.forEach((n) => {
+        if (!n.dragging) {
+          n.vx += (Math.random() - 0.5) * 14;
+          n.vy += (Math.random() - 0.5) * 14;
+        }
+      });
+    });
+  }
+
+  const btnResetZoom = document.getElementById("btn-topology-reset-zoom");
+  if (btnResetZoom) {
+    btnResetZoom.addEventListener("click", () => {
+      topologyPhysicsState.zoom = 1.0;
+      topologyPhysicsState.panX = 0;
+      topologyPhysicsState.panY = 0;
+      topologyPhysicsState.energy = Math.max(topologyPhysicsState.energy, 0.5);
     });
   }
 }
@@ -827,12 +899,14 @@ function renderRulesAndTables(data) {
         return `
           <tr style="border-bottom: 1px solid #37415166;">
             <td style="padding: 10px 8px;">
-              <strong>${escapeHtml(r.name || 'Border Router')}</strong>
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <strong>${escapeHtml(r.name || 'Border Router')}</strong>
+                ${r.preferred ? `<span class="badge badge-success" style="font-size:10px; padding:1px 6px;" title="Preferred Border Router in Home Assistant">★ Preferred Router</span>` : ''}
+              </div>
               <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(r.brand || '')} • ${escapeHtml(r.model || '')}${r.thread_version ? ` (Thread ${escapeHtml(r.thread_version)})` : ''}</div>
             </td>
             <td style="padding: 10px 8px;">
-              ${escapeHtml(r.network_name || '--')}
-              ${r.preferred ? `<span class="badge badge-success" style="font-size:10px; padding:1px 6px;">★ Preferred</span>` : ''}
+              <strong>${escapeHtml(r.network_name || '--')}</strong>
             </td>
             <td style="padding: 10px 8px;">
               <code style="color: ${isTarget ? '#38bdf8' : '#f87171'};">${escapeHtml(xpan)}</code>
@@ -856,13 +930,55 @@ function renderRulesAndTables(data) {
 
   // --- TABLE 2: Commissioned Matter Nodes (Cluster 0x0035) ---
   const matterServer = telemetry.matter_server || {};
-  const nodes = matterServer.nodes || [];
+  const allNodes = matterServer.nodes || [];
+  const qLower = (currentNodeSearchQuery || "").toLowerCase();
+
+  const nodes = allNodes.filter(n => {
+    // Role / State filter
+    if (currentNodeRoleFilter === "online" && !n.available) return false;
+    if (currentNodeRoleFilter === "issues") {
+      const isWeak = (n.rssi !== null && n.rssi !== undefined && n.rssi < -82) || (n.lqi !== null && n.lqi !== undefined && n.lqi < 64);
+      if (n.available && !isWeak) return false;
+    } else if (currentNodeRoleFilter === "router") {
+      const roleStr = (n.routing_role || "").toLowerCase();
+      if (!roleStr.includes("router") && !roleStr.includes("leader") && !roleStr.includes("reed")) return false;
+    } else if (currentNodeRoleFilter === "end_device") {
+      const roleStr = (n.routing_role || "").toLowerCase();
+      if (roleStr.includes("router") || roleStr.includes("leader")) return false;
+    }
+
+    // Search query filter
+    if (!qLower) return true;
+    const searchable = [
+      `#${n.node_id}`,
+      String(n.node_id || ""),
+      n.product_name || "",
+      n.vendor_name || "",
+      n.node_label || "",
+      n.routing_role || "",
+      n.rloc16 || "",
+      n.parent_rloc16 || "",
+      n.extended_pan_id || "",
+      n.ext_address || "",
+      n.serial_number || "",
+      n.available ? "online" : "offline",
+      ...(n.ipv6_addresses || []),
+    ].join(" ").toLowerCase();
+    return searchable.includes(qLower);
+  });
+
   const matterCountBadge = document.getElementById("matter-table-count");
   if (matterCountBadge) {
-    matterCountBadge.innerText = matterServer.connected
-      ? `${nodes.length} Commissioned Node(s)`
-      : `Matter Server Disconnected`;
-    matterCountBadge.className = matterServer.connected ? "badge badge-info" : "badge badge-warning";
+    if (!matterServer.connected) {
+      matterCountBadge.innerText = `Matter Server Disconnected`;
+      matterCountBadge.className = "badge badge-warning";
+    } else if (qLower || currentNodeRoleFilter !== "all") {
+      matterCountBadge.innerText = `${nodes.length} / ${allNodes.length} Node(s)`;
+      matterCountBadge.className = "badge badge-info";
+    } else {
+      matterCountBadge.innerText = `${allNodes.length} Commissioned Node(s)`;
+      matterCountBadge.className = "badge badge-info";
+    }
   }
 
   const tbodyNodes = document.getElementById("tbody-matter-nodes");
@@ -876,11 +992,19 @@ function renderRulesAndTables(data) {
           </td>
         </tr>
       `;
-    } else if (nodes.length === 0) {
+    } else if (allNodes.length === 0) {
       tbodyNodes.innerHTML = `
         <tr>
           <td colspan="8" style="padding: 18px; color: var(--text-muted); text-align: center;">
             Connected to Matter Server (Fabric ID: <code>${escapeHtml(String(matterServer.compressed_fabric_id || matterServer.fabric_id || 'OK'))}</code>), but 0 Matter nodes are currently commissioned.
+          </td>
+        </tr>
+      `;
+    } else if (nodes.length === 0) {
+      tbodyNodes.innerHTML = `
+        <tr>
+          <td colspan="8" style="padding: 18px; color: var(--text-muted); text-align: center;">
+            No devices match your search filter (<strong>${escapeHtml(currentNodeSearchQuery || currentNodeRoleFilter)}</strong>).
           </td>
         </tr>
       `;
@@ -1221,10 +1345,16 @@ function renderTopologyData(data) {
 function renderSvgTopology(nodes, edges) {
   const svg = document.getElementById("mesh-svg");
   if (!svg) return;
-  svg.innerHTML = "";
 
-  const width = svg.clientWidth || 860;
-  const height = 460;
+  if (topologyPhysicsState.animFrameId) {
+    cancelAnimationFrame(topologyPhysicsState.animFrameId);
+    topologyPhysicsState.animFrameId = null;
+  }
+
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
+  const height = Math.max(rect.height || 540, 480);
   const cx = width / 2;
   const cy = height / 2;
 
@@ -1263,131 +1393,444 @@ function renderSvgTopology(nodes, edges) {
     return;
   }
 
-  const borderRouters = nodes.filter(n => n.type === "border_router");
-  const routerNodes = nodes.filter(n => n.type === "router");
-  const endDevices = nodes.filter(n => n.type !== "border_router" && n.type !== "router");
-  const nodeMap = {};
+  // Root viewport group for pan & zoom
+  const viewportG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const edgesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const nodesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.appendChild(edgesG);
+  viewportG.appendChild(nodesG);
+  svg.appendChild(viewportG);
 
-  const layoutRow = (list, yPos, spreadWidth) => {
-    const count = list.length;
-    list.forEach((n, idx) => {
-      let x;
-      if (count === 1) {
-        x = cx;
-      } else {
-        const spacing = Math.min(220, spreadWidth / Math.max(count - 1, 1));
-        const startX = cx - ((count - 1) * spacing) / 2;
-        x = startX + idx * spacing;
-      }
-      nodeMap[n.id] = { ...n, x, y: yPos };
-    });
-  };
-
-  layoutRow(borderRouters, 90, width - 160);
-  if (routerNodes.length > 0 && endDevices.length > 0) {
-    layoutRow(routerNodes, 230, width - 140);
-    layoutRow(endDevices, 365, width - 120);
-  } else {
-    const combinedDevices = [...routerNodes, ...endDevices];
-    layoutRow(combinedDevices, 290, width - 140);
-  }
-
-  edges.forEach(e => {
-    const src = nodeMap[e.source];
-    const tgt = nodeMap[e.target];
-    if (!src || !tgt) return;
-
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", src.x);
-    line.setAttribute("y1", src.y);
-    line.setAttribute("x2", tgt.x);
-    line.setAttribute("y2", tgt.y);
-    line.setAttribute("stroke", e.status === "warning" ? "#f59e0b" : "#38bdf8");
-    line.setAttribute("stroke-width", e.status === "warning" ? "2" : "2.5");
-    if (e.status === "warning") {
-      line.setAttribute("stroke-dasharray", "6,4");
-    }
-    svg.appendChild(line);
-
-    if (e.label) {
-      const midX = (src.x + tgt.x) / 2;
-      const midY = (src.y + tgt.y) / 2 - 6;
-      const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      lbl.setAttribute("x", midX);
-      lbl.setAttribute("y", midY);
-      lbl.setAttribute("fill", e.status === "warning" ? "#fbbf24" : "#9ca3af");
-      lbl.setAttribute("font-size", "11");
-      lbl.setAttribute("text-anchor", "middle");
-      lbl.textContent = e.label;
-      svg.appendChild(lbl);
-    }
+  // Preserve previous positions when possible so re-scans transition smoothly
+  const prevPosById = {};
+  (topologyPhysicsState.nodes || []).forEach(pn => {
+    prevPosById[pn.id] = { x: pn.x, y: pn.y };
   });
 
-  Object.values(nodeMap).forEach(n => {
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.style.cursor = "pointer";
+  const simNodes = [];
+  const nodeById = {};
 
+  nodes.forEach((n, idx) => {
+    const angle = (2 * Math.PI * idx) / Math.max(nodes.length, 1);
+    let initRadius = 150;
+    if (n.type === "border_router") initRadius = nodes.length > 4 ? 85 : 70;
+    else if (n.type === "router") initRadius = 155;
+    else initRadius = 215;
+
+    // Scale initial distance by signal strength if available (stronger RSSI starts closer to center)
+    if (n.rssi !== null && n.rssi !== undefined) {
+      const rssiNorm = Math.max(0, Math.min(1, (-45 - Number(n.rssi)) / 50));
+      initRadius = 85 + rssiNorm * 165;
+    }
+
+    const prev = prevPosById[n.id];
+    const x = prev ? prev.x : cx + Math.cos(angle) * initRadius + (Math.random() - 0.5) * 20;
+    const y = prev ? prev.y : cy + Math.sin(angle) * initRadius + (Math.random() - 0.5) * 20;
+
+    let radius = 21;
     let fill = "#10b981";
-    let radius = 20;
     if (n.type === "border_router") {
-      radius = 25;
+      radius = n.preferred ? 28 : 25;
       if (n.vendor === "nest") fill = "#4285F4";
       else if (n.vendor === "apple") fill = "#64748b";
       else if (n.vendor === "ha") fill = "#03A9F4";
       else fill = "#3b82f6";
     } else if (n.type === "end_device") {
-      radius = 18;
+      radius = 17;
       fill = "#8b5cf6";
     }
-
     if (n.status === "offline") fill = "#ef4444";
     else if (n.status === "weak" || n.status === "warning") fill = "#f59e0b";
 
+    const simNode = {
+      ...n,
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      radius,
+      fill,
+      phase: idx * 1.37,
+      dragging: false,
+    };
+    simNodes.push(simNode);
+    nodeById[n.id] = simNode;
+  });
+
+  // Build physics edges with target spring distance derived from real RF RSSI / LQI / Ping RTT
+  const simEdges = [];
+  edges.forEach((e) => {
+    const src = nodeById[e.source];
+    const tgt = nodeById[e.target];
+    if (!src || !tgt) return;
+
+    let targetDist = e.target_distance || 135;
+    if (!e.target_distance) {
+      if (e.rssi !== null && e.rssi !== undefined) {
+        const norm = Math.max(0, Math.min(1, (-45 - Number(e.rssi)) / 50));
+        targetDist = Math.round(70 + norm * 155);
+      } else if (tgt.rssi !== null && tgt.rssi !== undefined) {
+        const norm = Math.max(0, Math.min(1, (-45 - Number(tgt.rssi)) / 50));
+        targetDist = Math.round(70 + norm * 155);
+      }
+    }
+
+    // Stronger signal = stiffer spring and thicker line
+    const stiffness = targetDist < 105 ? 0.065 : (targetDist < 165 ? 0.045 : 0.028);
+    const strokeWidth = targetDist < 105 ? "3" : (targetDist < 165 ? "2.2" : "1.6");
+    const strokeColor = e.status === "warning" ? "#f59e0b" : (targetDist < 105 ? "#34d399" : "#38bdf8");
+
+    const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("stroke", strokeColor);
+    line.setAttribute("stroke-width", strokeWidth);
+    line.setAttribute("stroke-opacity", "0.78");
+    if (e.status === "warning" || targetDist > 185) {
+      line.setAttribute("stroke-dasharray", "6,4");
+    }
+    edgeG.appendChild(line);
+
+    let lblBg = null;
+    let lbl = null;
+    if (e.label) {
+      lblBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      lblBg.setAttribute("rx", "4");
+      lblBg.setAttribute("ry", "4");
+      lblBg.setAttribute("fill", "#0f172acc");
+      edgeG.appendChild(lblBg);
+
+      lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      lbl.setAttribute("fill", e.status === "warning" ? "#fbbf24" : (targetDist < 105 ? "#6ee7b7" : "#bae6fd"));
+      lbl.setAttribute("font-size", "10");
+      lbl.setAttribute("font-weight", "600");
+      lbl.setAttribute("text-anchor", "middle");
+      lbl.textContent = e.label;
+      edgeG.appendChild(lbl);
+    }
+
+    edgesG.appendChild(edgeG);
+    simEdges.push({
+      ...e,
+      src,
+      tgt,
+      targetDist,
+      stiffness,
+      lineElem: line,
+      lblElem: lbl,
+      lblBgElem: lblBg,
+      groupElem: edgeG,
+    });
+  });
+
+  // Create SVG elements for each node
+  simNodes.forEach((n) => {
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.style.cursor = "grab";
+
+    // Outer search/preferred halo ring
+    const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    halo.setAttribute("r", n.radius + 7);
+    halo.setAttribute("fill", "none");
+    halo.setAttribute("stroke", n.preferred ? "#10b981" : "#38bdf8");
+    halo.setAttribute("stroke-width", n.preferred ? "2.5" : "0");
+    halo.setAttribute("stroke-dasharray", n.preferred ? "4,3" : "none");
+    halo.setAttribute("opacity", n.preferred ? "0.85" : "0");
+    g.appendChild(halo);
+
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", n.x);
-    circle.setAttribute("cy", n.y);
-    circle.setAttribute("r", radius);
-    circle.setAttribute("fill", fill);
-    circle.setAttribute("stroke", n.is_target === false ? "#ef4444" : "#1f2937");
-    circle.setAttribute("stroke-width", "3");
+    circle.setAttribute("r", n.radius);
+    circle.setAttribute("fill", n.fill);
+    circle.setAttribute("stroke", n.is_target === false ? "#ef4444" : (n.preferred ? "#34d399" : "#0f172a"));
+    circle.setAttribute("stroke-width", n.preferred ? "3.5" : "3");
     g.appendChild(circle);
 
+    // Role / Preferred icon badge inside circle
+    const badgeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    badgeText.setAttribute("y", "4");
+    badgeText.setAttribute("fill", "#ffffff");
+    badgeText.setAttribute("font-size", n.type === "border_router" ? "11" : "10");
+    badgeText.setAttribute("font-weight", "700");
+    badgeText.setAttribute("text-anchor", "middle");
+    badgeText.style.pointerEvents = "none";
+    badgeText.textContent = n.type === "border_router" ? (n.preferred ? "★ TBR" : "TBR") : (n.type === "router" ? "RTR" : "SED");
+    g.appendChild(badgeText);
+
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", n.x);
-    text.setAttribute("y", n.y + radius + 16);
-    text.setAttribute("fill", "#f9fafb");
+    text.setAttribute("y", n.radius + 15);
+    text.setAttribute("fill", "#f8fafc");
     text.setAttribute("font-size", "12");
     text.setAttribute("font-weight", "600");
     text.setAttribute("text-anchor", "middle");
+    text.style.pointerEvents = "none";
     text.textContent = n.label;
     g.appendChild(text);
 
-    if (n.rloc16) {
+    // Sub-label showing RLOC16 or signal RSSI / RTT
+    const subParts = [];
+    if (n.rloc16) subParts.push(n.rloc16);
+    if (n.rssi !== null && n.rssi !== undefined) subParts.push(`${n.rssi} dBm`);
+    else if (n.rtt_ms !== null && n.rtt_ms !== undefined) subParts.push(`${n.rtt_ms} ms`);
+    if (subParts.length > 0) {
       const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      subText.setAttribute("x", n.x);
-      subText.setAttribute("y", n.y + radius + 30);
+      subText.setAttribute("y", n.radius + 28);
       subText.setAttribute("fill", "#38bdf8");
       subText.setAttribute("font-size", "10");
       subText.setAttribute("text-anchor", "middle");
-      subText.textContent = n.rloc16;
+      subText.style.pointerEvents = "none";
+      subText.textContent = subParts.join(" • ");
       g.appendChild(subText);
     }
 
-    g.addEventListener("click", () => {
-      const panel = document.getElementById("node-inspector");
-      const title = document.getElementById("inspector-title");
-      const content = document.getElementById("inspector-content");
-      panel.classList.remove("hidden");
-      title.innerText = `${n.label} (${n.routing_role || n.type.replace('_', ' ').toUpperCase()})`;
-      content.innerHTML = `
-        <div style="font-size: 13px; line-height: 1.6;">
-          <div><strong>Status:</strong> <span class="badge ${n.status === 'online' ? 'badge-success' : 'badge-warning'}">${n.status.toUpperCase()}</span></div>
-          <div><strong>Telemetry:</strong> ${escapeHtml(n.details || '')}</div>
-        </div>
-      `;
+    // Pointer drag & click inspector
+    let dragMoved = false;
+    g.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+      n.dragging = true;
+      dragMoved = false;
+      g.style.cursor = "grabbing";
+      topologyPhysicsState.energy = Math.max(topologyPhysicsState.energy, 0.85);
+      g.setPointerCapture(ev.pointerId);
     });
 
-    svg.appendChild(g);
+    g.addEventListener("pointermove", (ev) => {
+      if (!n.dragging) return;
+      dragMoved = true;
+      const svgRect = svg.getBoundingClientRect();
+      const mouseX = (ev.clientX - svgRect.left - topologyPhysicsState.panX) / topologyPhysicsState.zoom;
+      const mouseY = (ev.clientY - svgRect.top - topologyPhysicsState.panY) / topologyPhysicsState.zoom;
+      n.x = mouseX;
+      n.y = mouseY;
+      n.vx = 0;
+      n.vy = 0;
+      topologyPhysicsState.energy = Math.max(topologyPhysicsState.energy, 0.65);
+    });
+
+    const endDrag = (ev) => {
+      if (!n.dragging) return;
+      n.dragging = false;
+      g.style.cursor = "grab";
+      try {
+        g.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      if (!dragMoved) {
+        const panel = document.getElementById("node-inspector");
+        const title = document.getElementById("inspector-title");
+        const content = document.getElementById("inspector-content");
+        panel.classList.remove("hidden");
+        title.innerText = `${n.label} (${n.routing_role || n.type.replace('_', ' ').toUpperCase()})${n.preferred ? ' ★ Preferred Router' : ''}`;
+        content.innerHTML = `
+          <div style="font-size: 13px; line-height: 1.6;">
+            <div><strong>Status:</strong> <span class="badge ${n.status === 'online' ? 'badge-success' : 'badge-warning'}">${n.status.toUpperCase()}</span></div>
+            <div><strong>Telemetry:</strong> ${escapeHtml(n.details || '')}</div>
+          </div>
+        `;
+      }
+    };
+
+    g.addEventListener("pointerup", endDrag);
+    g.addEventListener("pointercancel", endDrag);
+
+    nodesG.appendChild(g);
+    n.elem = g;
+    n.haloElem = halo;
+    n.circleElem = circle;
+  });
+
+  // Canvas background pan & wheel zoom
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+
+  svg.onpointerdown = (ev) => {
+    if (ev.target !== svg) return;
+    isPanning = true;
+    panStartX = ev.clientX - topologyPhysicsState.panX;
+    panStartY = ev.clientY - topologyPhysicsState.panY;
+    svg.style.cursor = "grabbing";
+  };
+
+  window.addEventListener("pointermove", (ev) => {
+    if (!isPanning) return;
+    topologyPhysicsState.panX = ev.clientX - panStartX;
+    topologyPhysicsState.panY = ev.clientY - panStartY;
+  });
+
+  window.addEventListener("pointerup", () => {
+    if (isPanning) {
+      isPanning = false;
+      svg.style.cursor = "grab";
+    }
+  });
+
+  svg.onwheel = (ev) => {
+    ev.preventDefault();
+    const scaleFactor = ev.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.45, Math.min(2.5, topologyPhysicsState.zoom * scaleFactor));
+    const svgRect = svg.getBoundingClientRect();
+    const mx = ev.clientX - svgRect.left;
+    const my = ev.clientY - svgRect.top;
+    topologyPhysicsState.panX = mx - ((mx - topologyPhysicsState.panX) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.panY = my - ((my - topologyPhysicsState.panY) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.zoom = newZoom;
+  };
+
+  topologyPhysicsState.nodes = simNodes;
+  topologyPhysicsState.edges = simEdges;
+  topologyPhysicsState.energy = 1.0;
+
+  updateTopologySearchHighlight();
+
+  let tickCount = 0;
+  const stepPhysics = () => {
+    tickCount++;
+    const t = tickCount * 0.025;
+    const N = simNodes.length;
+    const energy = topologyPhysicsState.energy;
+
+    // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap
+    for (let i = 0; i < N; i++) {
+      const a = simNodes[i];
+      for (let j = i + 1; j < N; j++) {
+        const b = simNodes[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let distSq = dx * dx + dy * dy;
+        if (distSq < 4) {
+          dx = (Math.random() - 0.5) * 4;
+          dy = (Math.random() - 0.5) * 4;
+          distSq = dx * dx + dy * dy;
+        }
+        const dist = Math.sqrt(distSq);
+        const minSep = a.radius + b.radius + 55;
+        let repulse = 2400 / distSq;
+        if (dist < minSep) {
+          repulse += (minSep - dist) * 0.18;
+        }
+        const fx = (dx / dist) * repulse;
+        const fy = (dy / dist) * repulse;
+        if (!a.dragging) {
+          a.vx -= fx;
+          a.vy -= fy;
+        }
+        if (!b.dragging) {
+          b.vx += fx;
+          b.vy += fy;
+        }
+      }
+    }
+
+    // 2. RF Signal-Proximity Spring Force along edges (Hooke's law toward targetDist)
+    for (let i = 0; i < simEdges.length; i++) {
+      const e = simEdges[i];
+      const a = e.src;
+      const b = e.tgt;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const displacement = dist - e.targetDist;
+      const force = displacement * e.stiffness;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+
+      if (!a.dragging) {
+        a.vx += fx;
+        a.vy += fy;
+      }
+      if (!b.dragging) {
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+    }
+
+    // 3. Soft center gravity + subtle organic micro-motion so topology stays alive
+    const pad = 48;
+    for (let i = 0; i < N; i++) {
+      const n = simNodes[i];
+      if (!n.dragging) {
+        const gravity = n.type === "border_router" ? 0.012 : 0.005;
+        n.vx += (cx - n.x) * gravity;
+        n.vy += (cy - n.y) * gravity;
+
+        // Continuous subtle harmonic float proportional to signal distance
+        n.vx += Math.sin(t + n.phase) * 0.045;
+        n.vy += Math.cos(t * 0.85 + n.phase) * 0.045;
+
+        // Damping
+        n.vx *= 0.82;
+        n.vy *= 0.82;
+
+        n.x += n.vx * Math.max(energy, 0.35);
+        n.y += n.vy * Math.max(energy, 0.35);
+
+        // Soft viewport boundary bounce
+        if (n.x < pad) { n.x = pad; n.vx *= -0.5; }
+        if (n.x > width - pad) { n.x = width - pad; n.vx *= -0.5; }
+        if (n.y < pad) { n.y = pad; n.vy *= -0.5; }
+        if (n.y > height - pad) { n.y = height - pad; n.vy *= -0.5; }
+      }
+
+      n.elem.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
+    }
+
+    // 4. Update edge lines & midpoint labels
+    for (let i = 0; i < simEdges.length; i++) {
+      const e = simEdges[i];
+      e.lineElem.setAttribute("x1", e.src.x.toFixed(1));
+      e.lineElem.setAttribute("y1", e.src.y.toFixed(1));
+      e.lineElem.setAttribute("x2", e.tgt.x.toFixed(1));
+      e.lineElem.setAttribute("y2", e.tgt.y.toFixed(1));
+
+      if (e.lblElem && e.lblBgElem) {
+        const mx = (e.src.x + e.tgt.x) / 2;
+        const my = (e.src.y + e.tgt.y) / 2;
+        const textLen = (e.label || "").length * 5.6 + 10;
+        e.lblBgElem.setAttribute("x", (mx - textLen / 2).toFixed(1));
+        e.lblBgElem.setAttribute("y", (my - 10).toFixed(1));
+        e.lblBgElem.setAttribute("width", textLen.toFixed(1));
+        e.lblBgElem.setAttribute("height", "14");
+        e.lblElem.setAttribute("x", mx.toFixed(1));
+        e.lblElem.setAttribute("y", (my + 1).toFixed(1));
+      }
+    }
+
+    viewportG.setAttribute(
+      "transform",
+      `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
+    );
+
+    topologyPhysicsState.energy = Math.max(0.35, topologyPhysicsState.energy * 0.992);
+    topologyPhysicsState.animFrameId = requestAnimationFrame(stepPhysics);
+  };
+
+  topologyPhysicsState.animFrameId = requestAnimationFrame(stepPhysics);
+}
+
+function updateTopologySearchHighlight() {
+  const q = (currentNodeSearchQuery || "").toLowerCase();
+  (topologyPhysicsState.nodes || []).forEach((n) => {
+    if (!n.elem || !n.haloElem) return;
+    if (!q) {
+      n.elem.style.opacity = "1";
+      n.haloElem.setAttribute("stroke-width", n.preferred ? "2.5" : "0");
+      n.haloElem.setAttribute("opacity", n.preferred ? "0.85" : "0");
+      return;
+    }
+    const hay = [
+      n.label || "",
+      n.node_id ? `#${n.node_id}` : "",
+      n.brand || "",
+      n.model || "",
+      n.rloc16 || "",
+      n.ext_address || "",
+      n.extended_pan_id || "",
+      n.details || "",
+    ].join(" ").toLowerCase();
+    const matched = hay.includes(q);
+    n.elem.style.opacity = matched ? "1" : "0.25";
+    n.haloElem.setAttribute("stroke", matched ? "#38bdf8" : "#10b981");
+    n.haloElem.setAttribute("stroke-width", matched ? "4" : "0");
+    n.haloElem.setAttribute("stroke-dasharray", "none");
+    n.haloElem.setAttribute("opacity", matched ? "1" : "0");
   });
 }
 
