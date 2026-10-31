@@ -371,6 +371,80 @@
         </div>
       </div>
 
+      <!-- Join Existing PAN / Thread Mesh Card -->
+      <div class="card">
+        <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3><i class="fa-solid fa-network-wired" style="color: #38bdf8;"></i> Join Existing PAN / Thread Mesh</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Connect your Home Assistant Connect ZBT-1 to an existing Thread network (e.g. Google Nest Wifi, Apple HomePod, or secondary border router mesh) to form a unified, resilient mesh with shared credentials.</p>
+          </div>
+          <button id="btn-refresh-joinable-networks" type="button" class="btn btn-outline" style="padding: 6px 12px; font-size: 12px;" title="Scan for available Thread networks to join">
+            <i class="fa-solid fa-arrows-rotate"></i> Scan Available PANs
+          </button>
+        </div>
+
+        <div style="margin-top: 14px; background: #0f172a; padding: 16px; border-radius: 8px; border: 1px solid #334155;">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+            <div style="font-size: 12px; color: var(--text-muted);">
+              Current ZBT-1 Mesh: <strong id="join-current-mesh-label" style="color: #38bdf8;">Loading...</strong>
+            </div>
+            <div id="join-status-pill"></div>
+          </div>
+
+          <!-- Network Selection Dropdown -->
+          <label style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 6px;">
+            Select Target Thread Network / PAN to Join:
+          </label>
+          <select id="select-target-join-network" style="width: 100%; background: #1e293b; border: 1px solid #475569; color: #f8fafc; padding: 10px 12px; border-radius: 6px; font-size: 13px;">
+            <option value="">-- Scanning for available Thread networks... --</option>
+          </select>
+
+          <!-- Selected Network Details Preview -->
+          <div id="join-network-details-box" class="hidden" style="margin-top: 12px; background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 12px; font-size: 12px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px;">
+              <div><span style="color: var(--text-muted);">Network Name:</span> <strong id="join-preview-name" style="color: #f8fafc;">--</strong></div>
+              <div><span style="color: var(--text-muted);">PAN ID:</span> <code id="join-preview-pan" style="color: #38bdf8;">--</code></div>
+              <div><span style="color: var(--text-muted);">Channel:</span> <strong id="join-preview-ch" style="color: #34d399;">--</strong></div>
+              <div><span style="color: var(--text-muted);">Extended PAN:</span> <code id="join-preview-xpan" style="color: #94a3b8; font-size: 11px;">--</code></div>
+            </div>
+          </div>
+
+          <!-- Custom Dataset TLV Input (collapsible) -->
+          <div id="join-custom-tlv-container" class="hidden" style="margin-top: 12px;">
+            <label style="display: block; font-size: 12px; font-weight: 600; color: #f8fafc; margin-bottom: 4px;">
+              Raw Operational Dataset TLV (Hex):
+            </label>
+            <textarea id="join-custom-tlv-input" rows="3" placeholder="0e080000000000010000000300001935060004001fffe002081122334455667788..." style="width: 100%; font-family: monospace; font-size: 11px; background: #090d16; border: 1px solid #475569; border-radius: 4px; padding: 8px; color: #38bdf8;"></textarea>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+              Paste the active operational dataset hex TLV from your Apple Home / Google Home keychain or Thread credentials file.
+            </div>
+          </div>
+
+          <!-- Options & Submit -->
+          <div style="margin-top: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 12px; border-top: 1px solid #334155;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer;">
+              <input type="checkbox" id="chk-make-preferred-dataset" checked style="cursor: pointer;" />
+              <span style="color: #f8fafc;">Set as Home Assistant Preferred Thread Dataset</span>
+            </label>
+
+            <button type="button" id="btn-execute-join-network" class="btn btn-primary" style="padding: 10px 20px; font-size: 13px; font-weight: 700;" disabled>
+              <i class="fa-solid fa-link"></i> Join Selected PAN
+            </button>
+          </div>
+
+          <!-- Join Action Progress / Success Banner -->
+          <div id="join-network-banner" class="hidden" style="margin-top: 14px; background: #172554; border: 1px solid #2563eb; padding: 12px; border-radius: 6px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <i id="join-banner-spinner" class="fa-solid fa-spinner fa-spin" style="font-size: 16px; color: #60a5fa;"></i>
+              <div>
+                <strong id="join-banner-title" style="color: #93c5fd; font-size: 13px;">Joining Thread Network...</strong>
+                <div id="join-banner-desc" style="font-size: 11px; color: #bfdbfe;">Configuring ZBT-1 radio with target operational dataset.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 2.4 GHz RF Spectrum Visualizer & Channel Selection -->
       <div class="card">
         <div class="card-header-flex">

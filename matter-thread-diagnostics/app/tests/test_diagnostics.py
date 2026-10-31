@@ -471,6 +471,86 @@ def test_zbt1_channel_management():
             "channel": 25,
             "extended_address": "49f5daf7314f6b62",
         }
+
+        # Test HAClient.get_available_join_networks
+        commands_received.clear()
+
+        async def mock_join_ws(cmd, timeout=12.0):
+            commands_received.append(cmd)
+            t = cmd.get("type")
+            if t == "otbr/info":
+                return {
+                    "type": "result",
+                    "success": True,
+                    "result": {
+                        "49f5daf7314f6b62": {
+                            "channel": 21,
+                            "extended_address": "49f5daf7314f6b62",
+                            "extended_pan_id": "49f5daf7314f6b62",
+                        }
+                    },
+                }
+            elif t == "thread/list_datasets":
+                return {
+                    "type": "result",
+                    "success": True,
+                    "result": {
+                        "preferred_dataset": "ds_nest_2e89",
+                        "datasets": [
+                            {
+                                "dataset_id": "ds_nest_2e89",
+                                "network_name": "NEST-PAN-2E89",
+                                "pan_id": 0x2E89,
+                                "extended_pan_id": "49f5daf7314f6b62",
+                                "channel": 21,
+                                "preferred": True,
+                            },
+                            {
+                                "dataset_id": "ds_apple_home",
+                                "network_name": "Nursery-Mesh",
+                                "pan_id": 0x1A2B,
+                                "extended_pan_id": "1122334455667788",
+                                "channel": 25,
+                                "preferred": False,
+                            },
+                        ],
+                    },
+                }
+            elif t in ("otbr/set_network", "thread/set_preferred_dataset", "thread/add_dataset_tlv"):
+                return {"type": "result", "success": True, "result": None}
+            return {"type": "result", "success": True, "result": None}
+
+        ha.query_ha_websocket = mock_join_ws
+        joinable = loop.run_until_complete(ha.get_available_join_networks())
+        assert "current_mesh" in joinable
+        assert len(joinable["networks"]) == 2
+        # Verify NEST-PAN-2E89 is marked as current active mesh
+        nest_net = next(n for n in joinable["networks"] if n["dataset_id"] == "ds_nest_2e89")
+        assert nest_net["is_current"] is True
+        apple_net = next(n for n in joinable["networks"] if n["dataset_id"] == "ds_apple_home")
+        assert apple_net["is_current"] is False
+
+        # Test HAClient.join_thread_network
+        commands_received.clear()
+        join_res = loop.run_until_complete(ha.join_thread_network(dataset_id="ds_apple_home", make_preferred=True))
+        assert join_res["success"] is True
+        assert join_res["dataset_id"] == "ds_apple_home"
+
+        # Verify WebSocket commands sent: otbr/set_network and thread/set_preferred_dataset
+        set_net_cmds = [c for c in commands_received if c.get("type") == "otbr/set_network"]
+        assert len(set_net_cmds) == 1
+        assert set_net_cmds[0] == {
+            "type": "otbr/set_network",
+            "extended_address": "49f5daf7314f6b62",
+            "dataset_id": "ds_apple_home",
+        }
+
+        set_pref_cmds = [c for c in commands_received if c.get("type") == "thread/set_preferred_dataset"]
+        assert len(set_pref_cmds) == 1
+        assert set_pref_cmds[0] == {
+            "type": "thread/set_preferred_dataset",
+            "dataset_id": "ds_apple_home",
+        }
     finally:
         loop.close()
 

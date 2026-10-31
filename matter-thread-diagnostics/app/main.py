@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.1.2")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.2.0")
 
 
 @app.middleware("http")
@@ -127,6 +127,12 @@ class SetChannelRequest(BaseModel):
     delay_seconds: int = 30
 
 
+class JoinNetworkRequest(BaseModel):
+    dataset_id: Optional[str] = None
+    raw_tlv: Optional[str] = None
+    make_preferred: bool = True
+
+
 class RunDiagnosisRequest(BaseModel):
     user_notes: Optional[str] = None
     custom_data: Optional[Dict[str, Any]] = None
@@ -153,7 +159,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.1.2",
+        "version": "2.2.0",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
@@ -187,6 +193,26 @@ async def set_otbr_channel_endpoint(req: SetChannelRequest):
         otbr_url=config.otbr_url,
     )
     # Clear telemetry cache so next scan reflects new channel immediately
+    global _last_telemetry_cache
+    _last_telemetry_cache = None
+    return res
+
+
+@app.get("/api/otbr/joinable_networks")
+async def get_joinable_networks_endpoint():
+    """Retrieve all available Thread networks/PANs in Home Assistant that the ZBT-1 can join."""
+    return await ha_client.get_available_join_networks(otbr_url=config.otbr_url)
+
+
+@app.post("/api/otbr/join_network")
+async def join_network_endpoint(req: JoinNetworkRequest):
+    """Instruct Home Assistant Connect ZBT-1 / OTBR to join an existing PAN / Thread network."""
+    res = await ha_client.join_thread_network(
+        dataset_id=req.dataset_id,
+        raw_tlv=req.raw_tlv,
+        make_preferred=req.make_preferred,
+        otbr_url=config.otbr_url,
+    )
     global _last_telemetry_cache
     _last_telemetry_cache = None
     return res

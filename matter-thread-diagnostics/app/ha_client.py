@@ -904,6 +904,194 @@ class HAClient:
             "otbr_direct_error": otbr_direct_res.get("error"),
         }
 
+    async def get_available_join_networks(
+        self,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Retrieve all known Thread networks/PANs in Home Assistant that the ZBT-1 / OTBR can join.
+        Cross-references stored datasets, OTBR radio identity, and preferred network configuration.
+        """
+        status_probe = await asyncio.gather(
+            self.get_zbt1_channel_status(otbr_url),
+            self.get_thread_datasets(),
+            self.query_ha_websocket({"type": "otbr/info"}),
+            return_exceptions=True,
+        )
+
+        zbt1_status = status_probe[0] if isinstance(status_probe[0], dict) else {}
+        datasets_res = status_probe[1] if isinstance(status_probe[1], dict) else {}
+        otbr_ws_info = status_probe[2] if isinstance(status_probe[2], dict) and isinstance(status_probe[2].get("result"), dict) else {}
+
+        current_xpan = (zbt1_status.get("otbr") or {}).get("extended_pan_id")
+        current_pan = (zbt1_status.get("otbr") or {}).get("pan_id")
+        current_net_name = (zbt1_status.get("otbr") or {}).get("network_name")
+        current_ch = zbt1_status.get("current_channel")
+
+        raw_datasets = (datasets_res.get("result") or {}).get("datasets", []) if isinstance(datasets_res, dict) else []
+        preferred_dataset_id = (datasets_res.get("result") or {}).get("preferred_dataset") if isinstance(datasets_res, dict) else None
+
+        networks = []
+        for d in raw_datasets:
+            if not isinstance(d, dict):
+                continue
+            ds_id = d.get("dataset_id")
+            xpan = d.get("extended_pan_id")
+            pan = d.get("pan_id")
+            pan_str = f"0x{pan:04X}" if isinstance(pan, int) else str(pan or "")
+            name = d.get("network_name") or f"PAN {pan_str}"
+            ch = d.get("channel")
+            pref = bool(d.get("preferred") or ds_id == preferred_dataset_id)
+
+            is_current = False
+            if current_xpan and xpan and str(current_xpan).lower() == str(xpan).lower():
+                is_current = True
+            elif current_pan and pan and str(current_pan).lower() == str(pan).lower():
+                is_current = True
+
+            networks.append({
+                "dataset_id": ds_id,
+                "network_name": name,
+                "pan_id": pan_str,
+                "extended_pan_id": xpan,
+                "channel": ch,
+                "preferred": pref,
+                "is_current": is_current,
+                "source": d.get("source", "homeassistant"),
+            })
+
+        return {
+            "current_mesh": {
+                "network_name": current_net_name or "Home Assistant Thread Network",
+                "pan_id": f"0x{current_pan:04X}" if isinstance(current_pan, int) else str(current_pan or "--"),
+                "extended_pan_id": current_xpan or "--",
+                "channel": current_ch,
+            },
+            "networks": networks,
+        }
+
+    async def join_thread_network(
+        self,
+        dataset_id: Optional[str] = None,
+        raw_tlv: Optional[str] = None,
+        make_preferred: bool = True,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Instruct Home Assistant Connect ZBT-1 / OTBR to join an existing PAN / Thread network
+        by applying the target operational dataset via Home Assistant WebSocket command `otbr/set_network`.
+        """
+        if not self.is_available:
+            return {"success": False, "error": "Home Assistant WebSocket API is not available (no supervisor token)."}
+
+        # Step 1: If raw_tlv is supplied, import it into Home Assistant dataset store first
+        if raw_tlv and raw_tlv.strip():
+            clean_tlv = raw_tlv.strip().replace(" ", "").replace(":", "")
+            add_cmd = {"type": "thread/add_dataset_tlv", "source": "user_import", "tlv": clean_tlv}
+            add_res = await self.query_ha_websocket(add_cmd, timeout=12.0)
+            if not isinstance(add_res, dict) or not add_res.get("success"):
+                legacy_add = {"type": "thread/add_dataset", "source": "user_import", "tlv": clean_tlv}
+                add_res = await self.query_ha_websocket(legacy_add, timeout=12.0)
+                if not isinstance(add_res, dict) or not add_res.get("success"):
+                    err = add_res.get("error", "Failed importing raw dataset TLV into Home Assistant")
+                    return {"success": False, "error": f"Failed importing dataset TLV: {err}"}
+
+            # Refresh datasets to find the newly imported dataset_id
+            ds_res = await self.get_thread_datasets()
+            datasets = (ds_res.get("result") or {}).get("datasets", []) if isinstance(ds_res, dict) else []
+            if datasets:
+                dataset_id = datasets[-1].get("dataset_id")
+
+        if not dataset_id:
+            return {"success": False, "error": "No target dataset_id provided to join."}
+
+        # Step 2: Retrieve ZBT-1's extended_address
+        status_before = await self.get_zbt1_channel_status(otbr_url)
+        target_ext_addrs: List[str] = []
+
+        try:
+            otbr_info_res = await self.query_ha_websocket({"type": "otbr/info"}, timeout=8.0)
+            if isinstance(otbr_info_res, dict) and isinstance(otbr_info_res.get("result"), dict):
+                for ext_addr in otbr_info_res["result"].keys():
+                    if ext_addr and isinstance(ext_addr, str):
+                        clean = ext_addr.lower().replace(":", "").strip()
+                        if clean not in target_ext_addrs:
+                            target_ext_addrs.append(clean)
+        except Exception as e:
+            logger.debug("Failed querying otbr/info for join: %s", e)
+
+        status_ext = (status_before.get("otbr") or {}).get("ext_address")
+        if status_ext:
+            clean = str(status_ext).lower().replace(":", "").strip()
+            if clean not in target_ext_addrs:
+                target_ext_addrs.append(clean)
+
+        # Step 3: Send otbr/set_network command
+        ha_success = False
+        ha_error = None
+
+        if target_ext_addrs:
+            for ext_addr in target_ext_addrs:
+                cmd = {
+                    "type": "otbr/set_network",
+                    "extended_address": ext_addr,
+                    "dataset_id": str(dataset_id),
+                }
+                logger.info("Executing HA WebSocket command otbr/set_network: %s", cmd)
+                ws_res = await self.query_ha_websocket(cmd, timeout=20.0)
+                logger.info("HA WebSocket otbr/set_network response: %s", ws_res)
+
+                if isinstance(ws_res, dict) and ws_res.get("success"):
+                    ha_success = True
+                    break
+                elif isinstance(ws_res, dict) and "error" in ws_res:
+                    err_obj = ws_res["error"]
+                    ha_error = err_obj.get("message", err_obj.get("code", str(err_obj))) if isinstance(err_obj, dict) else str(err_obj)
+        else:
+            cmd = {"type": "otbr/set_network", "dataset_id": str(dataset_id)}
+            logger.info("Executing legacy HA WebSocket command otbr/set_network: %s", cmd)
+            ws_res = await self.query_ha_websocket(cmd, timeout=20.0)
+            logger.info("HA WebSocket otbr/set_network response: %s", ws_res)
+            if isinstance(ws_res, dict) and ws_res.get("success"):
+                ha_success = True
+            elif isinstance(ws_res, dict) and "error" in ws_res:
+                err_obj = ws_res["error"]
+                ha_error = err_obj.get("message", err_obj.get("code", str(err_obj))) if isinstance(err_obj, dict) else str(err_obj)
+
+        if not ha_success:
+            return {
+                "success": False,
+                "error": ha_error or "Failed to join Thread network via Home Assistant OTBR.",
+            }
+
+        # Step 4: Make preferred dataset if requested
+        if make_preferred:
+            try:
+                pref_cmd = {"type": "thread/set_preferred_dataset", "dataset_id": str(dataset_id)}
+                await self.query_ha_websocket(pref_cmd, timeout=10.0)
+            except Exception as e:
+                logger.debug("Failed setting preferred dataset: %s", e)
+
+        # Step 5: Refresh datasets and retrieve updated status
+        try:
+            await self.get_thread_datasets()
+        except Exception:
+            pass
+
+        status_after = await self.get_zbt1_channel_status(otbr_url)
+        new_net = (status_after.get("otbr") or {}).get("network_name")
+        new_pan = (status_after.get("otbr") or {}).get("pan_id")
+        new_ch = status_after.get("current_channel")
+
+        return {
+            "success": True,
+            "dataset_id": dataset_id,
+            "network_name": new_net,
+            "pan_id": new_pan,
+            "channel": new_ch,
+            "message": f"Successfully joined Thread network '{new_net or dataset_id}' (PAN: {new_pan}, Ch {new_ch}) on Home Assistant Connect ZBT-1!",
+        }
+
     async def get_all_available_thread_networks(
         self,
         otbr_url: str = "http://core-openthread-border-router:8081",

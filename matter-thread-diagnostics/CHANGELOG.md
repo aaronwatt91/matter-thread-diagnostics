@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.2.0] - 2026-10-31
+
+### Added: 1-Click "Join Existing PAN / Thread Mesh" Picker
+- **1-Click Network & PAN Join Engine**:
+  - Added `HAClient.get_available_join_networks()` and `HAClient.join_thread_network()` with new backend endpoints `GET /api/otbr/joinable_networks` and `POST /api/otbr/join_network`.
+  - Discovers all stored Thread datasets and active PANs in Home Assistant (e.g. `NEST-PAN-2E89`, Apple HomePod networks, secondary border router meshes).
+  - Automatically resolves the ZBT-1's `extended_address` and sends Home Assistant WebSocket command `otbr/set_network` (`extended_address`, `dataset_id`) to switch the ZBT-1 radio to the selected mesh credentials.
+  - Automatically updates Home Assistant's `thread/set_preferred_dataset` so all new Matter devices commissioned via the HA Companion App pair to the joined network.
+- **Custom Operational Dataset TLV Import**:
+  - Added support for pasting raw hexadecimal Operational Dataset TLVs to import and join external Thread networks (e.g. from Apple Home or Nanoleaf ecosystems).
+- **Interactive "Join Existing PAN" Card in ZBT-1 Channel Tab**:
+  - Live preview box displaying Target Network Name, PAN ID, Channel, and Extended PAN ID.
+  - Safety confirmation modal before switching active PAN credentials.
+  - Animated progress banner indicating operational dataset application and automatic re-scan upon completion.
+- **Unit Tests**:
+  - Added unit test in `test_diagnostics.py` testing dataset discovery, `otbr/set_network`, and `thread/set_preferred_dataset`.
+
 ## [2.1.2] - 2026-10-31
 
 ### Fixed: Automatic OTBR `extended_address` Resolution for `otbr/set_channel`

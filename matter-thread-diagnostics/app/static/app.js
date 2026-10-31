@@ -118,6 +118,21 @@ document.addEventListener("DOMContentLoaded", () => {
     btnApplyChannel.addEventListener("click", () => triggerChannelChange());
   }
 
+  const btnRefreshJoinable = document.getElementById("btn-refresh-joinable-networks");
+  if (btnRefreshJoinable) {
+    btnRefreshJoinable.addEventListener("click", () => fetchJoinableNetworks(true));
+  }
+
+  const selectTargetJoin = document.getElementById("select-target-join-network");
+  if (selectTargetJoin) {
+    selectTargetJoin.addEventListener("change", (e) => onJoinNetworkSelectChange(e.target.value));
+  }
+
+  const btnExecuteJoin = document.getElementById("btn-execute-join-network");
+  if (btnExecuteJoin) {
+    btnExecuteJoin.addEventListener("click", () => triggerJoinNetwork());
+  }
+
   const btnRefreshTopo = document.getElementById("btn-refresh-topology");
   if (btnRefreshTopo) {
     btnRefreshTopo.addEventListener("click", async () => {
@@ -284,6 +299,7 @@ function activateTab(tabId) {
     }
   } else if (tabId === "tab-channel") {
     fetchOtbrChannelInfo();
+    fetchJoinableNetworks();
   }
 }
 
@@ -2473,4 +2489,226 @@ async function completeChannelMigrationSuccess(targetCh) {
       `;
     }
   }, 2500);
+}
+
+/* =========================================================================
+   Join Existing PAN / Thread Mesh Controllers
+   ========================================================================= */
+
+let currentJoinableNetworksData = null;
+
+async function fetchJoinableNetworks(showSpinner = false) {
+  const refreshBtn = document.getElementById("btn-refresh-joinable-networks");
+  const origHtml = refreshBtn ? refreshBtn.innerHTML : "";
+  if (showSpinner && refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Scanning PANs...`;
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/otbr/joinable_networks"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    currentJoinableNetworksData = data;
+    renderJoinableNetworks(data);
+  } catch (err) {
+    console.warn("Could not fetch joinable networks:", err);
+    const sel = document.getElementById("select-target-join-network");
+    if (sel) {
+      sel.innerHTML = `<option value="">Error loading available networks: ${escapeHtml(err.message)}</option>`;
+    }
+  } finally {
+    if (showSpinner && refreshBtn) {
+      setTimeout(() => {
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = origHtml;
+      }, 500);
+    }
+  }
+}
+
+function renderJoinableNetworks(data) {
+  const currentMesh = data?.current_mesh || {};
+  const networks = data?.networks || [];
+
+  const curLabel = document.getElementById("join-current-mesh-label");
+  if (curLabel) {
+    curLabel.innerText = `${currentMesh.network_name || "Unknown"} (PAN: ${currentMesh.pan_id || "--"}, Ch ${currentMesh.channel || "--"})`;
+  }
+
+  const select = document.getElementById("select-target-join-network");
+  if (!select) return;
+
+  select.innerHTML = "";
+
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.innerText = "-- Select an existing Thread Network / PAN to join --";
+  select.appendChild(defaultOpt);
+
+  let joinableCount = 0;
+  networks.forEach((net) => {
+    const opt = document.createElement("option");
+    opt.value = net.dataset_id || "";
+    opt.dataset.networkName = net.network_name || "";
+    opt.dataset.panId = net.pan_id || "";
+    opt.dataset.channel = net.channel || "";
+    opt.dataset.xpan = net.extended_pan_id || "";
+    opt.dataset.isCurrent = net.is_current ? "true" : "false";
+
+    let label = `${net.network_name} • PAN: ${net.pan_id} • Ch ${net.channel || "??"}`;
+    if (net.preferred) label += " ★ Preferred";
+    if (net.is_current) {
+      label += " (Current Active Mesh)";
+      opt.disabled = true;
+    } else {
+      joinableCount += 1;
+    }
+    opt.innerText = label;
+    select.appendChild(opt);
+  });
+
+  // Custom TLV import option
+  const customOpt = document.createElement("option");
+  customOpt.value = "custom_tlv";
+  customOpt.innerText = "➕ Enter Custom Dataset TLV (Import from Apple / Google / Nanoleaf)...";
+  select.appendChild(customOpt);
+
+  const statusPill = document.getElementById("join-status-pill");
+  if (statusPill) {
+    statusPill.innerHTML = `<span class="badge badge-info" style="font-size:11px;">${joinableCount} Available Network${joinableCount === 1 ? "" : "s"}</span>`;
+  }
+
+  onJoinNetworkSelectChange(select.value);
+}
+
+function onJoinNetworkSelectChange(selectedValue) {
+  const detailsBox = document.getElementById("join-network-details-box");
+  const customTlvContainer = document.getElementById("join-custom-tlv-container");
+  const btnJoin = document.getElementById("btn-execute-join-network");
+  const select = document.getElementById("select-target-join-network");
+
+  if (!selectedValue) {
+    if (detailsBox) detailsBox.classList.add("hidden");
+    if (customTlvContainer) customTlvContainer.classList.add("hidden");
+    if (btnJoin) btnJoin.disabled = true;
+    return;
+  }
+
+  if (selectedValue === "custom_tlv") {
+    if (detailsBox) detailsBox.classList.add("hidden");
+    if (customTlvContainer) customTlvContainer.classList.remove("hidden");
+    if (btnJoin) {
+      btnJoin.disabled = false;
+      btnJoin.innerHTML = `<i class="fa-solid fa-file-import"></i> Import & Join Mesh`;
+    }
+    return;
+  }
+
+  if (customTlvContainer) customTlvContainer.classList.add("hidden");
+
+  const selectedOpt = select.querySelector(`option[value="${selectedValue}"]`);
+  if (selectedOpt && detailsBox) {
+    document.getElementById("join-preview-name").innerText = selectedOpt.dataset.networkName || "--";
+    document.getElementById("join-preview-pan").innerText = selectedOpt.dataset.panId || "--";
+    document.getElementById("join-preview-ch").innerText = `Channel ${selectedOpt.dataset.channel || "--"}`;
+    document.getElementById("join-preview-xpan").innerText = selectedOpt.dataset.xpan || "--";
+    detailsBox.classList.remove("hidden");
+  }
+
+  if (btnJoin) {
+    const isCurrent = selectedOpt?.dataset.isCurrent === "true";
+    btnJoin.disabled = isCurrent;
+    btnJoin.innerHTML = `<i class="fa-solid fa-link"></i> Join Selected PAN`;
+  }
+}
+
+async function triggerJoinNetwork() {
+  const select = document.getElementById("select-target-join-network");
+  const selectedVal = select?.value;
+  if (!selectedVal) return;
+
+  let datasetId = null;
+  let rawTlv = null;
+  let netDisplayName = "";
+
+  if (selectedVal === "custom_tlv") {
+    const tlvInput = document.getElementById("join-custom-tlv-input");
+    rawTlv = tlvInput ? tlvInput.value.trim() : "";
+    if (!rawTlv) {
+      alert("Please paste a valid raw Operational Dataset TLV in hex format.");
+      return;
+    }
+    netDisplayName = "Custom Imported Dataset";
+  } else {
+    datasetId = selectedVal;
+    const selectedOpt = select.querySelector(`option[value="${selectedVal}"]`);
+    netDisplayName = selectedOpt?.dataset.networkName || "Selected Network";
+  }
+
+  const makePref = document.getElementById("chk-make-preferred-dataset")?.checked ?? true;
+
+  const confirmed = window.confirm(
+    `Join Thread Network '${netDisplayName}'?\n\n` +
+    `• Your Home Assistant Connect ZBT-1 will switch its active PAN ID, Extended PAN ID, and Network Key to match this network.\n` +
+    `• It will become a Border Router / Router on the existing mesh.\n` +
+    (makePref ? `• This network will be marked as Home Assistant's Preferred Thread Dataset.\n\n` : `\n`) +
+    `Do you want to proceed?`
+  );
+  if (!confirmed) return;
+
+  const btnJoin = document.getElementById("btn-execute-join-network");
+  const banner = document.getElementById("join-network-banner");
+  const bannerTitle = document.getElementById("join-banner-title");
+  const bannerDesc = document.getElementById("join-banner-desc");
+  const bannerSpinner = document.getElementById("join-banner-spinner");
+
+  if (btnJoin) btnJoin.disabled = true;
+  if (banner) banner.classList.remove("hidden");
+  if (bannerTitle) bannerTitle.innerText = `Joining Thread Network '${netDisplayName}'...`;
+  if (bannerDesc) bannerDesc.innerText = `Applying operational dataset via Home Assistant Core OTBR...`;
+  if (bannerSpinner) {
+    bannerSpinner.className = "fa-solid fa-spinner fa-spin";
+    bannerSpinner.style.color = "#60a5fa";
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/otbr/join_network"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: datasetId,
+        raw_tlv: rawTlv,
+        make_preferred: makePref,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Failed to join Thread network");
+    }
+
+    if (bannerTitle) bannerTitle.innerText = `Successfully Joined Network!`;
+    if (bannerDesc) bannerDesc.innerText = data.message || `ZBT-1 is now active on '${netDisplayName}'.`;
+    if (bannerSpinner) {
+      bannerSpinner.className = "fa-solid fa-circle-check";
+      bannerSpinner.style.color = "#34d399";
+    }
+
+    await fetchOtbrChannelInfo();
+    await fetchJoinableNetworks();
+    await scanSelectedNetwork(false);
+
+    setTimeout(() => {
+      if (btnJoin) btnJoin.disabled = false;
+    }, 2000);
+  } catch (err) {
+    if (bannerTitle) bannerTitle.innerText = `Join Network Error`;
+    if (bannerDesc) bannerDesc.innerText = err.message || "Failed to join network";
+    if (bannerSpinner) {
+      bannerSpinner.className = "fa-solid fa-triangle-exclamation";
+      bannerSpinner.style.color = "#f87171";
+    }
+    if (btnJoin) btnJoin.disabled = false;
+  }
 }
