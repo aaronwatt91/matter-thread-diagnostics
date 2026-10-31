@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.1] - 2026-10-31
+
+### Fixed: Home Assistant WebSocket `otbr/set_channel` Schema & Direct REST Unreachable Handling
+- **Home Assistant Core WebSocket Command Schema Alignment**:
+  - Home Assistant Core's `otbr/set_channel` command schema strictly requires `type: "otbr/set_channel"` and `channel: int(11..26)` with no additional parameters. Removed erroneous `entry_id` key from the WebSocket payload which previously caused Home Assistant's schema validator to reject the command with `invalid_format: extra keys not allowed @ data['entry_id']`.
+- **Immediate Success on HA Core Execution**:
+  - When Home Assistant Core executes `otbr/set_channel`, HA Core directly sets the active channel on the OpenThread Border Router container. The add-on now records immediate success without making redundant, failing direct REST calls to `:8081` on the host network namespace.
+- **Accurate Error Reporting & Fail-Fast Fallback**:
+  - Reduced direct REST timeout per candidate from 8.0s to 3.0s for responsive UI handling.
+  - Returns clear, diagnostic error messages indicating the exact response from both Home Assistant WebSocket and OTBR REST API rather than a generic `:8081` connection failure.
+- **Unit Tests**:
+  - Added unit test in `test_diagnostics.py` verifying that `HAClient.set_otbr_channel` formats `cmd = {"type": "otbr/set_channel", "channel": 25}` strictly according to Home Assistant Core's schema with no extra keys.
+
 ## [2.1.0] - 2026-10-31
 
 ### Added: Dedicated Home Assistant Connect ZBT-1 / Thread Radio Channel Management Page

@@ -2384,7 +2384,7 @@ async function triggerChannelChange() {
   if (btnApply) btnApply.disabled = true;
   if (banner) banner.classList.remove("hidden");
   if (bannerTitle) bannerTitle.innerText = `Broadcasting Pending Dataset to Channel ${targetCh}...`;
-  if (bannerDesc) bannerDesc.innerText = `Connecting to OpenThread Border Router REST API (:8081) and Home Assistant Core...`;
+  if (bannerDesc) bannerDesc.innerText = `Applying Thread channel change via Home Assistant Core OTBR...`;
 
   try {
     const res = await fetch(apiPath("/api/otbr/set_channel"), {

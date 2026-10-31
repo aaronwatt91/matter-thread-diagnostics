@@ -806,7 +806,7 @@ class NetworkChecker:
             if fb not in candidates:
                 candidates.append(fb)
 
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             for base_url in candidates:
                 try:
                     # 1. Check if OTBR node is reachable

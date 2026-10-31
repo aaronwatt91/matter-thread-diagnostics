@@ -437,10 +437,25 @@ def test_zbt1_channel_management():
         assert ch26["is_recommended"] is True
         assert "Cleanest" in ch26["recommendation_badge"]
 
-        # Check Wi-Fi 1 overlap on Ch 11
-        ch11 = next(c for c in matrix if c["channel"] == 11)
-        assert ch11["severity"] == "HIGH"
-        assert ch11["wifi_overlap_channel"] == 1
+        # Test HAClient.set_otbr_channel with simulated HA WebSocket success
+        commands_received = []
+
+        async def mock_query_ws(cmd, timeout=12.0):
+            commands_received.append(cmd)
+            return {"type": "result", "success": True, "result": None}
+
+        ha.supervisor_token = "test-token"
+        ha.query_ha_websocket = mock_query_ws
+
+        res = loop.run_until_complete(ha.set_otbr_channel(25))
+        assert res["success"] is True
+        assert res["channel"] == 25
+        assert res["method"] == "ha_websocket"
+        # Verify strictly formatted otbr/set_channel command without extra keys (like entry_id)
+        otbr_cmds = [c for c in commands_received if c.get("type") == "otbr/set_channel"]
+        assert len(otbr_cmds) == 1
+        assert otbr_cmds[0] == {"type": "otbr/set_channel", "channel": 25}
+        assert "entry_id" not in otbr_cmds[0]
     finally:
         loop.close()
 

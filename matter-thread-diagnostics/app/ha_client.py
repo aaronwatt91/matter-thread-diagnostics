@@ -749,69 +749,94 @@ class HAClient:
         prev_channel = status_before.get("current_channel")
 
         # Step 1: Attempt Home Assistant Core WebSocket command `otbr/set_channel`
+        # Home Assistant Core's otbr/set_channel websocket command accepts strictly:
+        # {"type": "otbr/set_channel", "channel": int(11..26)} with no extra keys.
         ha_ws_success = False
         ha_ws_error = None
         if self.is_available:
             try:
-                # Look up OTBR config entry id
-                otbr_entries = await self.query_ha_websocket({"type": "config_entries/get", "domain": "otbr"})
-                entry_id = None
-                if isinstance(otbr_entries, dict) and isinstance(otbr_entries.get("result"), list):
-                    for entry in otbr_entries["result"]:
-                        if isinstance(entry, dict) and entry.get("entry_id"):
-                            entry_id = entry["entry_id"]
-                            break
-
                 cmd: Dict[str, Any] = {"type": "otbr/set_channel", "channel": int(channel)}
-                if entry_id:
-                    cmd["entry_id"] = entry_id
+                logger.info("Executing HA WebSocket command: %s", cmd)
+                ws_res = await self.query_ha_websocket(cmd, timeout=15.0)
+                logger.info("HA WebSocket otbr/set_channel response: %s", ws_res)
 
-                ws_res = await self.query_ha_websocket(cmd, timeout=12.0)
                 if isinstance(ws_res, dict) and ws_res.get("success"):
                     ha_ws_success = True
                 elif isinstance(ws_res, dict) and "error" in ws_res:
-                    ha_ws_error = str(ws_res["error"])
+                    err_obj = ws_res["error"]
+                    if isinstance(err_obj, dict):
+                        ha_ws_error = f"{err_obj.get('message', err_obj.get('code', str(err_obj)))}"
+                    else:
+                        ha_ws_error = str(err_obj)
+                elif isinstance(ws_res, dict) and "error" in ws_res.get("result", {}):
+                    ha_ws_error = str(ws_res["result"]["error"])
             except Exception as e:
                 ha_ws_error = str(e)
-                logger.debug("HA websocket otbr/set_channel call failed: %s", e)
+                logger.warning("HA websocket otbr/set_channel call failed: %s", e)
 
-        # Step 2: Attempt direct OpenThread Border Router REST API
+        # If HA WebSocket succeeded, Home Assistant Core has directly updated the channel
+        # on the OTBR add-on. We refresh datasets and return immediately.
+        if ha_ws_success:
+            try:
+                await self.get_thread_datasets()
+            except Exception:
+                pass
+
+            return {
+                "success": True,
+                "channel": int(channel),
+                "previous_channel": prev_channel,
+                "delay_seconds": int(delay_seconds),
+                "method": "ha_websocket",
+                "mode": "immediate_switch",
+                "message": (
+                    f"Successfully changed Thread channel to Channel {channel} on Home Assistant Connect ZBT-1 via Home Assistant OTBR!"
+                ),
+            }
+
+        # Step 2: Fallback to direct OpenThread Border Router REST API if HA WebSocket was unavailable or failed
+        logger.info("HA WebSocket failed or unavailable (error=%s), trying direct OTBR REST API...", ha_ws_error)
         otbr_direct_res = await NetworkChecker.set_otbr_channel_direct(
             channel=int(channel),
             delay_sec=int(delay_seconds),
             otbr_url=otbr_url,
         )
 
-        overall_success = ha_ws_success or otbr_direct_res.get("success", False)
+        if otbr_direct_res.get("success"):
+            try:
+                await self.get_thread_datasets()
+            except Exception:
+                pass
 
-        if not overall_success:
-            err_msg = otbr_direct_res.get("error") or ha_ws_error or "Could not change channel via HA WebSocket or OTBR REST API."
+            mode_str = otbr_direct_res.get("mode", "pending_migration" if delay_seconds > 0 else "immediate_switch")
             return {
-                "success": False,
-                "error": err_msg,
+                "success": True,
+                "channel": int(channel),
                 "previous_channel": prev_channel,
-                "requested_channel": channel,
-                "ha_ws_error": ha_ws_error,
-                "otbr_direct_error": otbr_direct_res.get("error"),
+                "delay_seconds": int(delay_seconds),
+                "method": "otbr_rest_api",
+                "mode": mode_str,
+                "message": (
+                    f"Successfully changed Thread channel to Channel {channel} on OpenThread Border Router REST API! "
+                    + (f"Thread mesh will migrate in {delay_seconds} seconds via Pending Operational Dataset." if delay_seconds > 0 else "Active channel updated immediately.")
+                ),
             }
 
-        # Step 3: Refresh Thread datasets in Home Assistant
-        try:
-            await self.get_thread_datasets()
-        except Exception:
-            pass
+        # Step 3: If both failed, construct a clear and descriptive error message
+        err_msg_parts = []
+        if ha_ws_error:
+            err_msg_parts.append(f"Home Assistant WebSocket: {ha_ws_error}")
+        if otbr_direct_res.get("error"):
+            err_msg_parts.append(f"OTBR REST API: {otbr_direct_res['error']}")
 
+        err_msg = " | ".join(err_msg_parts) if err_msg_parts else "Could not change channel via HA WebSocket or OTBR REST API."
         return {
-            "success": True,
-            "channel": int(channel),
+            "success": False,
+            "error": err_msg,
             "previous_channel": prev_channel,
-            "delay_seconds": int(delay_seconds),
-            "method": "ha_websocket+otbr_rest" if (ha_ws_success and otbr_direct_res.get("success")) else ("ha_websocket" if ha_ws_success else "otbr_rest_api"),
-            "mode": "pending_migration" if (delay_seconds > 0) else "immediate_switch",
-            "message": (
-                f"Successfully initiated channel change to Channel {channel} on Home Assistant Connect ZBT-1! "
-                + (f"Thread mesh will migrate in {delay_seconds} seconds via Pending Operational Dataset." if delay_seconds > 0 else "Active channel updated immediately.")
-            ),
+            "requested_channel": channel,
+            "ha_ws_error": ha_ws_error,
+            "otbr_direct_error": otbr_direct_res.get("error"),
         }
 
     async def get_all_available_thread_networks(
