@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.2] - 2026-10-31
+
+### Fixed: Automatic OTBR `extended_address` Resolution for `otbr/set_channel`
+- **Automatic OTBR Extended Address Resolution**:
+  - In modern Home Assistant Core, the `otbr/set_channel` WebSocket command schema requires the target border router's `extended_address` (`probatio.Required("extended_address"): str`).
+  - The add-on now queries `otbr/info` over Home Assistant WebSocket to automatically discover the border router's hardware extended address (e.g. `49f5daf7314f6b62`), falling back to `preferred_extended_address` from `thread/list_datasets` and live radio discovery.
+  - Passes the normalized lowercase extended address directly in `cmd = {"type": "otbr/set_channel", "channel": channel, "extended_address": ext_addr}`, satisfying Home Assistant's schema validator.
+  - Automatically retries without `extended_address` if running against a legacy Home Assistant Core version that does not accept extra keys.
+- **WebSocket-First Radio Reachability in `get_zbt1_channel_status`**:
+  - Injected `otbr/info` query into `get_zbt1_channel_status` so the Connect ZBT-1 radio state, XPAN, channel, and extended address are detected and marked reachable directly through Home Assistant Core, even when direct REST access to `:8081` is segregated on the host network namespace.
+- **Unit Tests**:
+  - Added unit test in `test_diagnostics.py` verifying `otbr/info` extraction and formatted `otbr/set_channel` with `extended_address`.
+
 ## [2.1.1] - 2026-10-31
 
 ### Fixed: Home Assistant WebSocket `otbr/set_channel` Schema & Direct REST Unreachable Handling

@@ -631,6 +631,7 @@ class HAClient:
             self.get_device_registry(),
             self.get_addon_info("core_openthread_border_router"),
             self.get_thread_datasets(),
+            self.query_ha_websocket({"type": "otbr/info"}),
             return_exceptions=True,
         )
 
@@ -638,6 +639,8 @@ class HAClient:
         device_registry = raw_probe[1] if isinstance(raw_probe[1], list) else []
         otbr_addon_info = raw_probe[2] if isinstance(raw_probe[2], dict) else {}
         datasets_res = raw_probe[3] if isinstance(raw_probe[3], dict) else {}
+        otbr_ws_info = raw_probe[4] if isinstance(raw_probe[4], dict) and isinstance(raw_probe[4].get("result"), dict) else {}
+        ws_router = next(iter(otbr_ws_info.get("result", {}).values()), {}) if otbr_ws_info.get("result") else {}
 
         # 1. Identify ZBT-1 / SkyConnect hardware from device registry or add-on
         hardware_device = None
@@ -660,12 +663,13 @@ class HAClient:
             hardware_name = otbr_addon_info.get("name")
 
         # 2. Extract current channel, XPAN, and OTBR state
-        current_channel = otbr_info.get("channel")
-        active_xpan = otbr_info.get("extended_pan_id")
+        current_channel = otbr_info.get("channel") or ws_router.get("channel")
+        active_xpan = otbr_info.get("extended_pan_id") or ws_router.get("extended_pan_id")
         network_name = otbr_info.get("network_name")
         pan_id = otbr_info.get("pan_id")
         otbr_state = otbr_info.get("state")
         mesh_prefix = otbr_info.get("mesh_local_prefix")
+        ext_address = otbr_info.get("ext_address") or ws_router.get("extended_address")
 
         # Fallback to preferred dataset if OTBR REST API was briefly initializing
         datasets_list = (datasets_res.get("result") or {}).get("datasets", []) if isinstance(datasets_res, dict) else []
@@ -681,6 +685,8 @@ class HAClient:
             network_name = pref_ds.get("network_name")
         if not pan_id and pref_ds:
             pan_id = pref_ds.get("pan_id")
+        if not ext_address and pref_ds and pref_ds.get("preferred_extended_address"):
+            ext_address = pref_ds.get("preferred_extended_address")
 
         # 3. Build channels 11 to 26 matrix
         from thread_analyzer import THREAD_WIFI_OVERLAP_MAP
@@ -711,19 +717,19 @@ class HAClient:
                 "name": hardware_name,
                 "model": hardware_model,
                 "manufacturer": hardware_manufacturer,
-                "detected": bool(hardware_device or otbr_info.get("reachable")),
+                "detected": bool(hardware_device or otbr_info.get("reachable") or ws_router),
                 "addon_version": otbr_addon_info.get("version"),
                 "addon_state": otbr_addon_info.get("state"),
             },
             "otbr": {
-                "reachable": bool(otbr_info.get("reachable")),
-                "url": otbr_info.get("otbr_url", otbr_url),
-                "state": otbr_state or "unknown",
+                "reachable": bool(otbr_info.get("reachable") or ws_router),
+                "url": ws_router.get("url") or otbr_info.get("otbr_url", otbr_url),
+                "state": otbr_state or ("leader" if ws_router else "unknown"),
                 "network_name": network_name or "Home Assistant Thread Network",
                 "extended_pan_id": active_xpan,
                 "pan_id": pan_id,
                 "mesh_local_prefix": mesh_prefix,
-                "ext_address": otbr_info.get("ext_address"),
+                "ext_address": ext_address,
                 "rloc16": otbr_info.get("rloc16"),
             },
             "current_channel": current_channel,
@@ -744,35 +750,94 @@ class HAClient:
         if channel < 11 or channel > 26:
             return {"success": False, "error": f"Invalid Thread channel {channel}. Valid channels are 11 to 26."}
 
-        # Step 0: Record previous channel
+        # Step 0: Record previous channel and retrieve current ZBT-1 status
         status_before = await self.get_zbt1_channel_status(otbr_url)
         prev_channel = status_before.get("current_channel")
+        active_xpan = (status_before.get("otbr") or {}).get("extended_pan_id")
 
-        # Step 1: Attempt Home Assistant Core WebSocket command `otbr/set_channel`
-        # Home Assistant Core's otbr/set_channel websocket command accepts strictly:
-        # {"type": "otbr/set_channel", "channel": int(11..26)} with no extra keys.
+        # Step 1: Discover OTBR extended_address from Home Assistant WebSocket API
+        # Home Assistant Core's otbr/set_channel command schema requires:
+        # {"type": "otbr/set_channel", "channel": int, "extended_address": str}
         ha_ws_success = False
         ha_ws_error = None
+        target_ext_addrs: List[str] = []
+
         if self.is_available:
             try:
-                cmd: Dict[str, Any] = {"type": "otbr/set_channel", "channel": int(channel)}
-                logger.info("Executing HA WebSocket command: %s", cmd)
-                ws_res = await self.query_ha_websocket(cmd, timeout=15.0)
+                # 1a. Query otbr/info to retrieve all loaded OTBR instances and their extended_address
+                otbr_info_res = await self.query_ha_websocket({"type": "otbr/info"}, timeout=8.0)
+                if isinstance(otbr_info_res, dict) and isinstance(otbr_info_res.get("result"), dict):
+                    for ext_addr, r_info in otbr_info_res["result"].items():
+                        if ext_addr and isinstance(ext_addr, str):
+                            clean_addr = ext_addr.lower().replace(":", "").strip()
+                            if clean_addr not in target_ext_addrs:
+                                if isinstance(r_info, dict) and (
+                                    r_info.get("channel") == prev_channel or
+                                    (active_xpan and str(r_info.get("extended_pan_id", "")).lower() == str(active_xpan).lower())
+                                ):
+                                    target_ext_addrs.insert(0, clean_addr)
+                                else:
+                                    target_ext_addrs.append(clean_addr)
+            except Exception as e:
+                logger.debug("Failed querying otbr/info: %s", e)
+
+            # 1b. Fallback to status_before ext_address
+            status_ext = (status_before.get("otbr") or {}).get("ext_address")
+            if status_ext:
+                clean_addr = str(status_ext).lower().replace(":", "").strip()
+                if clean_addr not in target_ext_addrs:
+                    target_ext_addrs.append(clean_addr)
+
+            # 1c. Fallback to thread/list_datasets for preferred_extended_address
+            if not target_ext_addrs:
+                try:
+                    ds_res = await self.get_thread_datasets()
+                    datasets = (ds_res.get("result") or {}).get("datasets", []) if isinstance(ds_res, dict) else []
+                    for d in datasets:
+                        if isinstance(d, dict) and d.get("preferred_extended_address"):
+                            clean_addr = str(d["preferred_extended_address"]).lower().replace(":", "").strip()
+                            if clean_addr not in target_ext_addrs:
+                                target_ext_addrs.append(clean_addr)
+                except Exception as e:
+                    logger.debug("Failed extracting preferred_extended_address from datasets: %s", e)
+
+            # 1d. Execute otbr/set_channel
+            if target_ext_addrs:
+                for ext_addr in target_ext_addrs:
+                    cmd = {
+                        "type": "otbr/set_channel",
+                        "channel": int(channel),
+                        "extended_address": ext_addr,
+                    }
+                    logger.info("Executing HA WebSocket command with extended_address: %s", cmd)
+                    ws_res = await self.query_ha_websocket(cmd, timeout=15.0)
+                    logger.info("HA WebSocket otbr/set_channel response: %s", ws_res)
+
+                    if isinstance(ws_res, dict) and ws_res.get("success"):
+                        ha_ws_success = True
+                        break
+                    elif isinstance(ws_res, dict) and "error" in ws_res:
+                        err_obj = ws_res["error"]
+                        ha_ws_error = err_obj.get("message", err_obj.get("code", str(err_obj))) if isinstance(err_obj, dict) else str(err_obj)
+                        # If schema failed with extra keys (legacy HA Core schema), retry without extended_address
+                        if "extra keys not allowed" in str(ha_ws_error):
+                            legacy_cmd = {"type": "otbr/set_channel", "channel": int(channel)}
+                            ws_legacy = await self.query_ha_websocket(legacy_cmd, timeout=15.0)
+                            if isinstance(ws_legacy, dict) and ws_legacy.get("success"):
+                                ha_ws_success = True
+                                break
+            else:
+                # If no extended address could be determined anywhere, try legacy command without extended_address
+                legacy_cmd = {"type": "otbr/set_channel", "channel": int(channel)}
+                logger.info("Executing legacy HA WebSocket command without extended_address: %s", legacy_cmd)
+                ws_res = await self.query_ha_websocket(legacy_cmd, timeout=15.0)
                 logger.info("HA WebSocket otbr/set_channel response: %s", ws_res)
 
                 if isinstance(ws_res, dict) and ws_res.get("success"):
                     ha_ws_success = True
                 elif isinstance(ws_res, dict) and "error" in ws_res:
                     err_obj = ws_res["error"]
-                    if isinstance(err_obj, dict):
-                        ha_ws_error = f"{err_obj.get('message', err_obj.get('code', str(err_obj)))}"
-                    else:
-                        ha_ws_error = str(err_obj)
-                elif isinstance(ws_res, dict) and "error" in ws_res.get("result", {}):
-                    ha_ws_error = str(ws_res["result"]["error"])
-            except Exception as e:
-                ha_ws_error = str(e)
-                logger.warning("HA websocket otbr/set_channel call failed: %s", e)
+                    ha_ws_error = err_obj.get("message", err_obj.get("code", str(err_obj))) if isinstance(err_obj, dict) else str(err_obj)
 
         # If HA WebSocket succeeded, Home Assistant Core has directly updated the channel
         # on the OTBR add-on. We refresh datasets and return immediately.
@@ -788,7 +853,7 @@ class HAClient:
                 "previous_channel": prev_channel,
                 "delay_seconds": int(delay_seconds),
                 "method": "ha_websocket",
-                "mode": "immediate_switch",
+                "mode": "pending_migration" if delay_seconds > 0 else "immediate_switch",
                 "message": (
                     f"Successfully changed Thread channel to Channel {channel} on Home Assistant Connect ZBT-1 via Home Assistant OTBR!"
                 ),

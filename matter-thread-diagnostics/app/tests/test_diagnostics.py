@@ -442,6 +442,18 @@ def test_zbt1_channel_management():
 
         async def mock_query_ws(cmd, timeout=12.0):
             commands_received.append(cmd)
+            if cmd.get("type") == "otbr/info":
+                return {
+                    "type": "result",
+                    "success": True,
+                    "result": {
+                        "49f5daf7314f6b62": {
+                            "channel": 21,
+                            "extended_address": "49f5daf7314f6b62",
+                            "extended_pan_id": "49f5daf7314f6b62",
+                        }
+                    },
+                }
             return {"type": "result", "success": True, "result": None}
 
         ha.supervisor_token = "test-token"
@@ -451,11 +463,14 @@ def test_zbt1_channel_management():
         assert res["success"] is True
         assert res["channel"] == 25
         assert res["method"] == "ha_websocket"
-        # Verify strictly formatted otbr/set_channel command without extra keys (like entry_id)
+        # Verify otbr/set_channel command includes the required extended_address
         otbr_cmds = [c for c in commands_received if c.get("type") == "otbr/set_channel"]
         assert len(otbr_cmds) == 1
-        assert otbr_cmds[0] == {"type": "otbr/set_channel", "channel": 25}
-        assert "entry_id" not in otbr_cmds[0]
+        assert otbr_cmds[0] == {
+            "type": "otbr/set_channel",
+            "channel": 25,
+            "extended_address": "49f5daf7314f6b62",
+        }
     finally:
         loop.close()
 
