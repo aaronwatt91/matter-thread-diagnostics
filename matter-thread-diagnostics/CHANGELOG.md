@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1] - 2026-10-31
+
+### Fixed: Active Network Option Enabled for Inspection & Re-synchronization
+- **Enabled Active Mesh in Selection Dropdown**:
+  - Previously, the network matching the ZBT-1's active PAN / XPAN was given `disabled = true`, rendering it greyed out and unselectable in the HTML dropdown.
+  - Removed `disabled` state so users can select and inspect any dataset (including `NEST-PAN-2E89`).
+  - Added dedicated **"Re-apply / Sync Active PAN Credentials"** action when the currently active network is selected, allowing users to re-push the Home Assistant active dataset to the OpenThread Border Router radio if it lost synchronization or after an add-on restart.
+
 ## [2.2.0] - 2026-10-31
 
 ### Added: 1-Click "Join Existing PAN / Thread Mesh" Picker

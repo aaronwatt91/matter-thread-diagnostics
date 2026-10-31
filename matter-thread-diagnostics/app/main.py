@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.2.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.2.1")
 
 
 @app.middleware("http")
@@ -159,7 +159,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.2.0",
+        "version": "2.2.1",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,

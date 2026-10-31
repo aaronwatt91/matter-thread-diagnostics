@@ -2559,11 +2559,9 @@ function renderJoinableNetworks(data) {
     let label = `${net.network_name} • PAN: ${net.pan_id} • Ch ${net.channel || "??"}`;
     if (net.preferred) label += " ★ Preferred";
     if (net.is_current) {
-      label += " (Current Active Mesh)";
-      opt.disabled = true;
-    } else {
-      joinableCount += 1;
+      label += " (Currently Active on ZBT-1)";
     }
+    joinableCount += 1;
     opt.innerText = label;
     select.appendChild(opt);
   });
@@ -2601,6 +2599,7 @@ function onJoinNetworkSelectChange(selectedValue) {
     if (btnJoin) {
       btnJoin.disabled = false;
       btnJoin.innerHTML = `<i class="fa-solid fa-file-import"></i> Import & Join Mesh`;
+      btnJoin.title = "Import external dataset TLV and join network";
     }
     return;
   }
@@ -2618,8 +2617,14 @@ function onJoinNetworkSelectChange(selectedValue) {
 
   if (btnJoin) {
     const isCurrent = selectedOpt?.dataset.isCurrent === "true";
-    btnJoin.disabled = isCurrent;
-    btnJoin.innerHTML = `<i class="fa-solid fa-link"></i> Join Selected PAN`;
+    btnJoin.disabled = false;
+    if (isCurrent) {
+      btnJoin.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Re-apply / Sync Active PAN Credentials`;
+      btnJoin.title = "Re-synchronize the OpenThread Border Router radio with this dataset";
+    } else {
+      btnJoin.innerHTML = `<i class="fa-solid fa-link"></i> Join Selected PAN`;
+      btnJoin.title = "Switch ZBT-1 to this Thread network";
+    }
   }
 }
 
@@ -2631,6 +2636,8 @@ async function triggerJoinNetwork() {
   let datasetId = null;
   let rawTlv = null;
   let netDisplayName = "";
+  const selectedOpt = select.querySelector(`option[value="${selectedVal}"]`);
+  const isCurrent = selectedOpt?.dataset.isCurrent === "true";
 
   if (selectedVal === "custom_tlv") {
     const tlvInput = document.getElementById("join-custom-tlv-input");
@@ -2642,19 +2649,31 @@ async function triggerJoinNetwork() {
     netDisplayName = "Custom Imported Dataset";
   } else {
     datasetId = selectedVal;
-    const selectedOpt = select.querySelector(`option[value="${selectedVal}"]`);
     netDisplayName = selectedOpt?.dataset.networkName || "Selected Network";
   }
 
   const makePref = document.getElementById("chk-make-preferred-dataset")?.checked ?? true;
 
-  const confirmed = window.confirm(
-    `Join Thread Network '${netDisplayName}'?\n\n` +
-    `• Your Home Assistant Connect ZBT-1 will switch its active PAN ID, Extended PAN ID, and Network Key to match this network.\n` +
-    `• It will become a Border Router / Router on the existing mesh.\n` +
-    (makePref ? `• This network will be marked as Home Assistant's Preferred Thread Dataset.\n\n` : `\n`) +
-    `Do you want to proceed?`
-  );
+  let confirmMsg = "";
+  if (isCurrent) {
+    confirmMsg = (
+      `Re-apply / Sync Thread Network '${netDisplayName}'?\n\n` +
+      `• Your Home Assistant Connect ZBT-1 is currently associated with this network.\n` +
+      `• This will re-synchronize the active operational dataset (PAN ID, Network Key, Channel) from Home Assistant into the OpenThread Border Router radio.\n` +
+      (makePref ? `• It will also re-assert this dataset as Home Assistant's Preferred Thread Network.\n\n` : `\n`) +
+      `Do you want to re-apply these network credentials to the ZBT-1 radio?`
+    );
+  } else {
+    confirmMsg = (
+      `Join Thread Network '${netDisplayName}'?\n\n` +
+      `• Your Home Assistant Connect ZBT-1 will switch its active PAN ID, Extended PAN ID, and Network Key to match this network.\n` +
+      `• It will become a Border Router / Router on the existing mesh.\n` +
+      (makePref ? `• This network will be marked as Home Assistant's Preferred Thread Dataset.\n\n` : `\n`) +
+      `Do you want to proceed?`
+    );
+  }
+
+  const confirmed = window.confirm(confirmMsg);
   if (!confirmed) return;
 
   const btnJoin = document.getElementById("btn-execute-join-network");
