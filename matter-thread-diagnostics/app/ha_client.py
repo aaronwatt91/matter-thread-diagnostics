@@ -423,6 +423,159 @@ class HAClient:
             return res["result"]
         return []
 
+    async def get_area_registry(self) -> List[Dict[str, Any]]:
+        """Fetch Home Assistant Area Registry (`config/area_registry/list`)."""
+        res = await self.query_ha_websocket({"type": "config/area_registry/list"})
+        if isinstance(res, dict) and res.get("success") and isinstance(res.get("result"), list):
+            return res["result"]
+        return []
+
+    async def get_entity_registry(self) -> List[Dict[str, Any]]:
+        """Fetch Home Assistant Entity Registry (`config/entity_registry/list`)."""
+        res = await self.query_ha_websocket({"type": "config/entity_registry/list"})
+        if isinstance(res, dict) and res.get("success") and isinstance(res.get("result"), list):
+            return res["result"]
+        return []
+
+    @staticmethod
+    def enrich_matter_nodes_with_ha_names(
+        matter_nodes: List[Dict[str, Any]],
+        device_registry: List[Dict[str, Any]],
+        area_registry: Optional[List[Dict[str, Any]]] = None,
+        entity_registry: Optional[List[Dict[str, Any]]] = None,
+        ha_states: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """
+        Cross-reference commissioned Matter nodes (`node_id`, `serial_number`, `ext_address`)
+        against Home Assistant's Device Registry, Area Registry, and Entity Registry so user-friendly
+        names (e.g. 'Living Room Light'), Areas ('Living Room'), and Entity IDs ('light.living_room_light')
+        are displayed across all tables, topology maps, purge prompts, and AI reports.
+        """
+        if not matter_nodes or not device_registry:
+            return
+
+        area_by_id: Dict[str, str] = {}
+        for a in area_registry or []:
+            if isinstance(a, dict) and a.get("area_id") and a.get("name"):
+                area_by_id[str(a["area_id"])] = str(a["name"]).strip()
+
+        state_friendly_by_eid: Dict[str, str] = {}
+        for s in ha_states or []:
+            if isinstance(s, dict) and s.get("entity_id"):
+                fn = (s.get("attributes") or {}).get("friendly_name")
+                if fn:
+                    state_friendly_by_eid[str(s["entity_id"])] = str(fn).strip()
+
+        entities_by_device_id: Dict[str, List[Dict[str, Any]]] = {}
+        for ent in entity_registry or []:
+            if isinstance(ent, dict) and ent.get("device_id") and not ent.get("disabled_by"):
+                entities_by_device_id.setdefault(str(ent["device_id"]), []).append(ent)
+
+        primary_domains = (
+            "light.", "switch.", "lock.", "climate.", "cover.", "fan.",
+            "media_player.", "vacuum.", "humidifier.", "water_heater.",
+            "valve.", "siren.", "binary_sensor.", "sensor.", "event.",
+        )
+
+        def _score_entity(e: Dict[str, Any]) -> tuple:
+            eid = str(e.get("entity_id") or "").lower()
+            cat = e.get("entity_category")
+            is_diag_or_cfg = 1 if cat in ("diagnostic", "config") else 0
+            dom_rank = next((i for i, d in enumerate(primary_domains) if eid.startswith(d)), 99)
+            has_user_name = 0 if e.get("name") else 1
+            return (is_diag_or_cfg, dom_rank, has_user_name, eid)
+
+        for node in matter_nodes:
+            if not isinstance(node, dict) or node.get("node_id") is None:
+                continue
+            try:
+                nid = int(node["node_id"])
+            except (ValueError, TypeError):
+                continue
+
+            node_hex_token = f"-{nid:016X}-"
+            node_hex_suffix = f"-{nid:016X}"
+            node_serial = str(node.get("serial_number") or "").strip().upper()
+            node_ext = str(node.get("ext_address") or "").strip().upper().replace(":", "")
+
+            matched_devices: List[Dict[str, Any]] = []
+            for d in device_registry:
+                if not isinstance(d, dict):
+                    continue
+                idents = d.get("identifiers") or []
+                conns = d.get("connections") or []
+                matched = False
+                for pair in idents:
+                    if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                        domain = str(pair[0]).lower()
+                        ident_val = str(pair[1]).upper()
+                        if domain == "matter":
+                            if node_hex_token in ident_val or ident_val.endswith(node_hex_suffix):
+                                matched = True
+                                break
+                            if node_serial and len(node_serial) >= 5 and f"SERIAL_{node_serial}" in ident_val:
+                                matched = True
+                                break
+                if not matched and node_ext and len(node_ext) >= 12:
+                    for cpair in conns:
+                        if isinstance(cpair, (list, tuple)) and len(cpair) >= 2:
+                            cval = str(cpair[1]).upper().replace(":", "").replace("-", "")
+                            if cval == node_ext:
+                                matched = True
+                                break
+                if matched:
+                    matched_devices.append(d)
+
+            if not matched_devices:
+                continue
+
+            # Prefer the device entry that has a user-assigned name (`name_by_user`), or `-MatterNodeDevice`
+            matched_devices.sort(
+                key=lambda dev: (
+                    0 if dev.get("name_by_user") else 1,
+                    0 if any("MATTERNODEDEVICE" in str(p[1]).upper() for p in (dev.get("identifiers") or []) if isinstance(p, (list, tuple)) and len(p) >= 2) else 1,
+                )
+            )
+            best_dev = matched_devices[0]
+            dev_id = str(best_dev.get("id") or "")
+
+            raw_model_name = node.get("hardware_model") or node.get("product_name") or f"Node {nid}"
+            node["hardware_model"] = raw_model_name
+            node["ha_device_id"] = dev_id
+
+            # Resolve Area
+            area_id = best_dev.get("area_id")
+            dev_entities = entities_by_device_id.get(dev_id, [])
+            dev_entities.sort(key=_score_entity)
+            if not area_id and dev_entities:
+                area_id = next((e.get("area_id") for e in dev_entities if e.get("area_id")), None)
+            ha_area = area_by_id.get(str(area_id), "") if area_id else ""
+            if ha_area:
+                node["ha_area"] = ha_area
+
+            # Resolve primary entity & user-friendly name
+            primary_entity_id = dev_entities[0].get("entity_id") if dev_entities else None
+            if primary_entity_id:
+                node["ha_entity_id"] = primary_entity_id
+
+            user_device_name = (best_dev.get("name_by_user") or "").strip()
+            user_entity_name = ""
+            if dev_entities:
+                for e in dev_entities:
+                    if e.get("name") and e.get("entity_category") not in ("diagnostic", "config"):
+                        user_entity_name = str(e["name"]).strip()
+                        break
+                if not user_entity_name and primary_entity_id and primary_entity_id in state_friendly_by_eid:
+                    cand_fn = state_friendly_by_eid[primary_entity_id]
+                    if cand_fn and cand_fn.lower() != raw_model_name.lower():
+                        user_entity_name = cand_fn
+
+            default_ha_name = (best_dev.get("name") or "").strip()
+            chosen_name = user_device_name or user_entity_name or default_ha_name
+            if chosen_name:
+                node["ha_name"] = chosen_name
+                node["product_name"] = chosen_name
+
     async def remove_matter_device_from_ha_registry(self, node_id: int) -> Dict[str, Any]:
         """
         Ensure any orphaned Home Assistant Device Registry entries for a purged Matter node_id

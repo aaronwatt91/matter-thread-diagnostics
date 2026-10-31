@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from thread_analyzer import ThreadAnalyzer
 from matter_client import MatterClient
-from ha_client import parse_thread_dataset_tlv
+from ha_client import HAClient, parse_thread_dataset_tlv
 from ai_engine import AIDiagnosticEngine
 
 
@@ -339,6 +339,69 @@ def test_border_router_multi_source_deduplication():
     edge_close = next(e for e in topo["edges"] if e["target"] == "node_10" or e["source"] == "node_10")
     edge_far = next(e for e in topo["edges"] if e["target"] == "node_11" or e["source"] == "node_11")
     assert edge_close["target_distance"] < edge_far["target_distance"], "Stronger RSSI node must have shorter target spring distance"
+
+
+def test_ha_friendly_name_and_area_enrichment():
+    """Verify Matter nodes are enriched with their Home Assistant friendly name, Area, and Entity ID."""
+    nodes = [
+        {
+            "node_id": 13,
+            "product_name": "Essentials A19",
+            "vendor_name": "Nanoleaf",
+            "serial_number": "NL12345",
+            "available": True,
+        },
+        {
+            "node_id": 14,
+            "product_name": "Eve Energy",
+            "vendor_name": "Eve Systems",
+            "available": True,
+        },
+    ]
+    device_registry = [
+        {
+            "id": "dev_13",
+            "name": "Nanoleaf A19",
+            "name_by_user": "Living Room Light",
+            "area_id": "living_room",
+            "identifiers": [["matter", "deviceid_8877665544332211-000000000000000D-MatterNodeDevice"]],
+        },
+        {
+            "id": "dev_14",
+            "name": "Eve Energy",
+            "name_by_user": None,
+            "area_id": "kitchen",
+            "identifiers": [["matter", "deviceid_8877665544332211-000000000000000E-MatterNodeDevice"]],
+        },
+    ]
+    area_registry = [
+        {"area_id": "living_room", "name": "Living Room"},
+        {"area_id": "kitchen", "name": "Kitchen"},
+    ]
+    entity_registry = [
+        {"device_id": "dev_13", "entity_id": "light.living_room_light", "name": None},
+        {"device_id": "dev_14", "entity_id": "switch.kitchen_coffee_plug", "name": "Kitchen Coffee Plug"},
+    ]
+
+    HAClient.enrich_matter_nodes_with_ha_names(
+        nodes,
+        device_registry=device_registry,
+        area_registry=area_registry,
+        entity_registry=entity_registry,
+    )
+
+    assert nodes[0]["ha_name"] == "Living Room Light"
+    assert nodes[0]["product_name"] == "Living Room Light"
+    assert nodes[0]["hardware_model"] == "Essentials A19"
+    assert nodes[0]["ha_area"] == "Living Room"
+    assert nodes[0]["ha_entity_id"] == "light.living_room_light"
+
+    assert nodes[1]["ha_name"] == "Kitchen Coffee Plug"
+    assert nodes[1]["product_name"] == "Kitchen Coffee Plug"
+    assert nodes[1]["hardware_model"] == "Eve Energy"
+    assert nodes[1]["ha_area"] == "Kitchen"
+    assert nodes[1]["ha_entity_id"] == "switch.kitchen_coffee_plug"
+
 
 
 

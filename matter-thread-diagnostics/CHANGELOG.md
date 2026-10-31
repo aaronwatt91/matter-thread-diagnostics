@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.9] - 2026-10-31
+
+### Added: Home Assistant Friendly Device Names, Room Areas & Entity IDs
+- **Automatic Home Assistant Device, Area & Entity Name Resolution (`HAClient.enrich_matter_nodes_with_ha_names`)**:
+  - Queries Home Assistant's `config/device_registry/list`, `config/area_registry/list`, and `config/entity_registry/list` during every scan and cross-references each Matter `node_id` (`deviceid_<fabric>-<node_id_hex>-MatterNodeDevice`), `serial_number`, and `ext_address`.
+  - Pulls in your custom Home Assistant device/entity name (e.g. **Living Room Light**, **Kitchen Coffee Plug**), Room Area badge (`📍 Living Room`), and primary entity ID (`light.living_room_light`) while preserving the underlying hardware model (`Essentials A19`, `Eve Energy`).
+  - Displays Home Assistant friendly names across the **Commissioned Matter Nodes** table, **Live Force-Directed Topology** map, **Node Link Quality** issue list, **Purge** confirmation dialogs, **Search** bars, and **AI Diagnostic Reports**.
+
 ## [2.0.8] - 2026-10-31
 
 ### Added: Purge / Decommission Matter Devices (Single & Bulk Offline Purge)

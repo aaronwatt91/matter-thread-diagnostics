@@ -200,7 +200,10 @@ class AIDiagnosticEngine:
         for n in telemetry.get("matter_server", {}).get("nodes", []):
             matter_nodes.append({
                 "node_id": n.get("node_id"),
-                "product_name": n.get("product_name"),
+                "name": n.get("ha_name") or n.get("product_name"),
+                "ha_area": n.get("ha_area"),
+                "ha_entity_id": n.get("ha_entity_id"),
+                "hardware_model": n.get("hardware_model") or n.get("product_name"),
                 "vendor_name": n.get("vendor_name"),
                 "available": n.get("available"),
                 "transport": n.get("transport"),

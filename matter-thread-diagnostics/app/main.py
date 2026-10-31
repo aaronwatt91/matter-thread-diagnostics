@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.8")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.9")
 
 
 @app.middleware("http")
@@ -148,7 +148,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.0.8",
+        "version": "2.0.9",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
@@ -396,6 +396,8 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
         NetworkChecker.inspect_ipv6_routes(),
         ha_client.get_addon_logs("core_matter_server", lines=100),
         ha_client.get_addon_logs("core_openthread_border_router", lines=100),
+        ha_client.get_area_registry(),
+        ha_client.get_entity_registry(),
         return_exceptions=True,
     )
 
@@ -409,8 +411,19 @@ async def gather_full_telemetry(run_active_pings: bool = True) -> Dict[str, Any]
     ipv6_inspection = _safe_unwrap(raw_probe[7], {"has_thread_ula_route": False, "detected_ula_prefixes": [], "sample_routes": []})
     matter_logs = _safe_unwrap(raw_probe[8], "")
     otbr_logs = _safe_unwrap(raw_probe[9], "")
+    area_registry = _safe_unwrap(raw_probe[10], [])
+    entity_registry = _safe_unwrap(raw_probe[11], [])
 
     all_matter_nodes: List[Dict[str, Any]] = matter_info.get("nodes", []) if isinstance(matter_info, dict) else []
+
+    # Enrich Matter nodes with Home Assistant friendly names (e.g. "Living Room Light"), Areas, and Entity IDs
+    HAClient.enrich_matter_nodes_with_ha_names(
+        all_matter_nodes,
+        device_registry=device_registry,
+        area_registry=area_registry,
+        entity_registry=entity_registry,
+        ha_states=ha_matter_entities,
+    )
 
     # Enrich Matter nodes with IPv6 addresses discovered via mDNS `_matter._tcp.local.`
     mdns_op_by_node_id = {

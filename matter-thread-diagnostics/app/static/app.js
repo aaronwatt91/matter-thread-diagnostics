@@ -1007,6 +1007,10 @@ function renderRulesAndTables(data) {
     const searchable = [
       `#${n.node_id}`,
       String(n.node_id || ""),
+      n.ha_name || "",
+      n.ha_area || "",
+      n.ha_entity_id || "",
+      n.hardware_model || "",
       n.product_name || "",
       n.vendor_name || "",
       n.node_label || "",
@@ -1099,16 +1103,22 @@ function renderRulesAndTables(data) {
           signalBadge = `<span class="badge badge-info">LQI ${lqiFmt}</span>`;
         }
 
+        const displayName = n.ha_name || n.product_name || `Node ${nid}`;
+        const hwModel = n.hardware_model && n.hardware_model !== displayName ? n.hardware_model : "";
+        const areaBadge = n.ha_area
+          ? ` <span class="badge badge-info" style="font-size:10px; padding:1px 6px;" title="Home Assistant Area">📍 ${escapeHtml(n.ha_area)}</span>`
+          : "";
+
         return `
           <tr style="border-bottom: 1px solid #37415166;">
             <td style="padding: 10px 8px; font-weight: 700;">#${nid}</td>
             <td style="padding: 10px 8px;">
-              <div>
+              <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
                 <span class="badge ${avail ? 'badge-success' : 'badge-danger'}" style="font-size:10px; padding:2px 6px;">${avail ? 'Online' : 'Offline'}</span>
-                <strong>${escapeHtml(n.product_name || `Node ${nid}`)}</strong>
+                <strong>${escapeHtml(displayName)}</strong>${areaBadge}
               </div>
-              <div style="font-size: 11px; color: var(--text-muted);">
-                ${escapeHtml(n.vendor_name || 'Unknown')} • Transport: <code>${escapeHtml(n.transport || 'thread')}</code>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                ${escapeHtml(n.vendor_name || 'Unknown')}${hwModel ? ` • ${escapeHtml(hwModel)}` : ''}${n.ha_entity_id ? ` • <code style="color:#94a3b8;">${escapeHtml(n.ha_entity_id)}</code>` : ''} • Transport: <code>${escapeHtml(n.transport || 'thread')}</code>
                 ${n.software_version ? ` • FW: ${escapeHtml(n.software_version)}` : ''}
               </div>
             </td>

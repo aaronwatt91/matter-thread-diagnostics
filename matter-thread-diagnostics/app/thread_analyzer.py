@@ -787,7 +787,10 @@ class ThreadAnalyzer:
         for idx, n in enumerate(matter_nodes):
             nid = str(n.get("node_id"))
             gid = f"node_{nid}"
-            pname = n.get("product_name", f"Matter Node {nid}")
+            pname = n.get("ha_name") or n.get("product_name") or f"Matter Node {nid}"
+            hw_model = n.get("hardware_model") or ""
+            ha_area = n.get("ha_area") or ""
+            ha_entity_id = n.get("ha_entity_id") or ""
             avail = bool(n.get("available", False))
             rssi = n.get("rssi")
             lqi = n.get("lqi")
@@ -826,7 +829,11 @@ class ThreadAnalyzer:
                     break
 
             details = (
-                f"Vendor: {n.get('vendor_name', 'Unknown')} | Role: {role_name} | "
+                (f"Area: {ha_area} | " if ha_area else "")
+                + f"Vendor: {n.get('vendor_name', 'Unknown')}"
+                + (f" ({hw_model})" if hw_model and hw_model != pname else "")
+                + (f" | Entity: {ha_entity_id}" if ha_entity_id else "")
+                + f" | Role: {role_name} | "
                 f"RSSI: {rssi_str}" + (f" ({lqi_str})" if lqi_str else "")
                 + (f" | RLOC16: {n_rloc}" if n_rloc else "")
                 + (f" | XPAN: {n_xpan}" if n_xpan else "")
@@ -838,6 +845,9 @@ class ThreadAnalyzer:
                 "id": gid,
                 "node_id": n.get("node_id"),
                 "label": pname,
+                "ha_area": ha_area,
+                "ha_entity_id": ha_entity_id,
+                "hardware_model": hw_model,
                 "type": node_type,
                 "routing_role": role_name,
                 "status": status,
