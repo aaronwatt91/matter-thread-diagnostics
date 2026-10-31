@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.9")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.1.0")
 
 
 @app.middleware("http")
@@ -122,6 +122,11 @@ class PurgeNodesBulkRequest(BaseModel):
     node_ids: List[int]
 
 
+class SetChannelRequest(BaseModel):
+    channel: int
+    delay_seconds: int = 30
+
+
 class RunDiagnosisRequest(BaseModel):
     user_notes: Optional[str] = None
     custom_data: Optional[Dict[str, Any]] = None
@@ -148,7 +153,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.0.9",
+        "version": "2.1.0",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
@@ -162,6 +167,29 @@ async def get_status():
         "otbr_url": config.otbr_url,
         "target_thread_network": config.target_thread_network,
     }
+
+
+@app.get("/api/otbr/channel")
+async def get_otbr_channel_status():
+    """Return live ZBT-1 / OTBR radio channel, hardware identity, and 11-26 RF spectrum matrix."""
+    return await ha_client.get_zbt1_channel_status(otbr_url=config.otbr_url)
+
+
+@app.post("/api/otbr/set_channel")
+async def set_otbr_channel_endpoint(req: SetChannelRequest):
+    """Change the Thread operating channel on Home Assistant Connect ZBT-1 / OTBR."""
+    if req.channel < 11 or req.channel > 26:
+        return {"success": False, "error": f"Invalid Thread channel {req.channel}. Valid 802.15.4 channels are 11 to 26."}
+
+    res = await ha_client.set_otbr_channel(
+        channel=req.channel,
+        delay_seconds=max(0, min(req.delay_seconds, 300)),
+        otbr_url=config.otbr_url,
+    )
+    # Clear telemetry cache so next scan reflects new channel immediately
+    global _last_telemetry_cache
+    _last_telemetry_cache = None
+    return res
 
 
 @app.post("/api/config")

@@ -781,6 +781,128 @@ class NetworkChecker:
         return {"reachable": False, "otbr_url": otbr_url, "state": "unreachable"}
 
     @staticmethod
+    async def set_otbr_channel_direct(
+        channel: int,
+        delay_sec: int = 30,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Directly update the operating Thread channel on OpenThread Border Router (OTBR)
+        via its REST API (:8081), supporting both graceful mesh migration (Pending Dataset with Delay Timer)
+        and immediate active dataset updates.
+        """
+        if channel < 11 or channel > 26:
+            return {"success": False, "error": f"Invalid channel {channel}. Thread channels must be between 11 and 26."}
+
+        candidates = []
+        if otbr_url:
+            candidates.append(otbr_url.rstrip("/"))
+        for fb in [
+            "http://core-openthread-border-router:8081",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+            "http://172.30.32.1:8081",
+        ]:
+            if fb not in candidates:
+                candidates.append(fb)
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            for base_url in candidates:
+                try:
+                    # 1. Check if OTBR node is reachable
+                    r_state = await client.get(f"{base_url}/node/state")
+                    if r_state.status_code != 200:
+                        continue
+
+                    # 2. Retrieve current active dataset to obtain current timestamps & parameters
+                    cur_ts_sec = int(time.time())
+                    active_ds: Dict[str, Any] = {}
+                    try:
+                        r_act = await client.get(f"{base_url}/node/dataset/active", headers={"Accept": "application/json"})
+                        if r_act.status_code == 200 and isinstance(r_act.json(), dict):
+                            active_ds = r_act.json()
+                            raw_ts = (active_ds.get("ActiveTimestamp") or {}).get("Seconds")
+                            if isinstance(raw_ts, int) and raw_ts > 0:
+                                cur_ts_sec = raw_ts
+                    except Exception as e:
+                        logger.debug("Could not read current active dataset from %s: %s", base_url, e)
+
+                    next_ts = cur_ts_sec + 1
+
+                    # 3. If delay_sec > 0, set Pending Dataset so the entire mesh transitions gracefully
+                    pending_success = False
+                    pending_err = None
+                    if delay_sec > 0:
+                        pending_payload = {
+                            "Channel": int(channel),
+                            "DelayTimer": int(delay_sec * 1000),
+                            "ActiveTimestamp": {"Seconds": next_ts, "Ticks": 0, "Authoritative": False},
+                            "PendingTimestamp": {"Seconds": next_ts, "Ticks": 0, "Authoritative": False},
+                        }
+                        try:
+                            r_pend = await client.put(
+                                f"{base_url}/node/dataset/pending",
+                                json=pending_payload,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            if r_pend.status_code in (200, 201, 204):
+                                pending_success = True
+                            else:
+                                pending_err = f"HTTP {r_pend.status_code}: {r_pend.text}"
+                        except Exception as e:
+                            pending_err = str(e)
+
+                    # 4. If immediate (delay_sec == 0) or if pending returned 404/not supported, update active dataset directly
+                    active_success = False
+                    active_err = None
+                    if delay_sec == 0 or not pending_success:
+                        active_payload = {
+                            "Channel": int(channel),
+                            "ActiveTimestamp": {"Seconds": next_ts, "Ticks": 0, "Authoritative": False},
+                        }
+                        try:
+                            r_put_act = await client.put(
+                                f"{base_url}/node/dataset/active",
+                                json=active_payload,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            if r_put_act.status_code in (200, 201, 204):
+                                active_success = True
+                            else:
+                                active_err = f"HTTP {r_put_act.status_code}: {r_put_act.text}"
+                        except Exception as e:
+                            active_err = str(e)
+
+                    overall_success = pending_success or active_success
+                    if overall_success:
+                        logger.info(
+                            "Successfully set Thread channel to %s on %s (pending=%s, active=%s, delay=%ss)",
+                            channel, base_url, pending_success, active_success, delay_sec,
+                        )
+                        return {
+                            "success": True,
+                            "otbr_url": base_url,
+                            "channel": channel,
+                            "delay_seconds": delay_sec,
+                            "pending_dataset_set": pending_success,
+                            "active_dataset_set": active_success,
+                            "mode": "pending_migration" if pending_success else "immediate_active",
+                        }
+                    else:
+                        logger.warning(
+                            "Failed setting Thread channel on %s: pending_err=%s, active_err=%s",
+                            base_url, pending_err, active_err,
+                        )
+                except Exception as e:
+                    logger.debug("Attempt to set channel on %s failed: %s", base_url, e)
+                    continue
+
+        return {
+            "success": False,
+            "error": "Could not connect to OpenThread Border Router REST API (:8081). Ensure the OTBR add-on is running.",
+        }
+
+    @staticmethod
     async def ping_address(ip_addr: str, count: int = 2, timeout_sec: int = 1) -> Dict[str, Any]:
         """Execute a real ICMP/ICMPv6 ping against a target IPv6 or IPv4 address."""
         if not ip_addr:

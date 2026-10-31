@@ -108,6 +108,16 @@ document.addEventListener("DOMContentLoaded", () => {
     btnPurgeOffline.addEventListener("click", () => triggerBulkPurgeOfflineNodes(btnPurgeOffline));
   }
 
+  const btnRefreshChannel = document.getElementById("btn-refresh-channel-status");
+  if (btnRefreshChannel) {
+    btnRefreshChannel.addEventListener("click", () => fetchOtbrChannelInfo(true));
+  }
+
+  const btnApplyChannel = document.getElementById("btn-apply-channel-change");
+  if (btnApplyChannel) {
+    btnApplyChannel.addEventListener("click", () => triggerChannelChange());
+  }
+
   const btnRefreshTopo = document.getElementById("btn-refresh-topology");
   if (btnRefreshTopo) {
     btnRefreshTopo.addEventListener("click", async () => {
@@ -272,6 +282,8 @@ function activateTab(tabId) {
     } else {
       fetchAndRenderTopology();
     }
+  } else if (tabId === "tab-channel") {
+    fetchOtbrChannelInfo();
   }
 }
 
@@ -2138,4 +2150,327 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+/* =========================================================================
+   ZBT-1 & OpenThread Border Router (OTBR) Thread Channel Management
+   ========================================================================= */
+
+let currentOtbrChannelData = null;
+let selectedTargetChannel = 25;
+let channelMigrationInterval = null;
+
+async function fetchOtbrChannelInfo(showSpinner = false) {
+  const refreshBtn = document.getElementById("btn-refresh-channel-status");
+  const origHtml = refreshBtn ? refreshBtn.innerHTML : "";
+  if (showSpinner && refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Checking Radio...`;
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/otbr/channel"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    currentOtbrChannelData = data;
+    renderChannelTab(data);
+  } catch (err) {
+    console.error("Failed fetching OTBR channel info:", err);
+    const grid = document.getElementById("channel-picker-grid");
+    if (grid) {
+      grid.innerHTML = `<div style="padding:12px; color:var(--color-danger);"><i class="fa-solid fa-triangle-exclamation"></i> Could not connect to OpenThread Border Router API: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (showSpinner && refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerHTML = origHtml;
+    }
+  }
+}
+
+function renderChannelTab(data) {
+  if (!data) return;
+
+  const hw = data.hardware || {};
+  const otbr = data.otbr || {};
+  const curCh = data.current_channel;
+
+  // 1. Hardware card details
+  const nameEl = document.getElementById("zbt1-hardware-name");
+  const modelEl = document.getElementById("zbt1-hardware-model");
+  const stateBadge = document.getElementById("zbt1-radio-state");
+  const otbrBadge = document.getElementById("zbt1-otbr-status");
+
+  if (nameEl) nameEl.innerText = hw.name || "Home Assistant Connect ZBT-1";
+  if (modelEl) modelEl.innerText = hw.model || "Silicon Labs EFR32MG21 (Nabu Casa)";
+  if (stateBadge) {
+    const st = (otbr.state || "unknown").toLowerCase();
+    stateBadge.innerText = `State: ${st.toUpperCase()}`;
+    stateBadge.className = `badge ${st === "leader" || st === "router" ? "badge-success" : (st === "detached" ? "badge-warning" : "badge-info")}`;
+  }
+  if (otbrBadge) {
+    otbrBadge.innerText = otbr.reachable ? `OTBR Online (:8081)` : `OTBR Offline`;
+    otbrBadge.className = `badge ${otbr.reachable ? "badge-success" : "badge-warning"}`;
+  }
+
+  // 2. Current Channel & Frequency
+  const chNumEl = document.getElementById("zbt1-current-channel-num");
+  const freqEl = document.getElementById("zbt1-current-freq");
+  const rfBadgeContainer = document.getElementById("zbt1-current-rf-badge");
+
+  if (chNumEl) chNumEl.innerText = curCh ? `Ch ${curCh}` : "Unknown";
+  if (freqEl) {
+    const freq = curCh ? 2405 + (curCh - 11) * 5 : null;
+    freqEl.innerText = freq ? `(${freq} MHz)` : "";
+  }
+  if (rfBadgeContainer) {
+    if (curCh) {
+      const chInfo = (data.channels_matrix || []).find(c => c.channel === curCh) || {};
+      const sev = chInfo.severity || "UNKNOWN";
+      if (curCh === 26) {
+        rfBadgeContainer.innerHTML = `<span class="badge badge-success" style="font-size:11px;"><i class="fa-solid fa-shield-check"></i> Channel 26 — Cleanest (0% Wi-Fi Overlap)</span>`;
+      } else if (curCh === 25) {
+        rfBadgeContainer.innerHTML = `<span class="badge badge-success" style="font-size:11px;"><i class="fa-solid fa-check"></i> Channel 25 — Recommended (Clear of Wi-Fi 11)</span>`;
+      } else if (sev === "HIGH") {
+        rfBadgeContainer.innerHTML = `<span class="badge badge-danger" style="font-size:11px;"><i class="fa-solid fa-triangle-exclamation"></i> High Interference: Overlaps Wi-Fi Ch ${chInfo.wifi_overlap_channel || '1/6/11'}</span>`;
+      } else {
+        rfBadgeContainer.innerHTML = `<span class="badge badge-warning" style="font-size:11px;"><i class="fa-solid fa-circle-exclamation"></i> Moderate: Guard Band between Wi-Fi channels</span>`;
+      }
+    } else {
+      rfBadgeContainer.innerHTML = `<span class="badge badge-warning" style="font-size:11px;">Channel not reported by radio</span>`;
+    }
+  }
+
+  // 3. Network Identity
+  const netNameEl = document.getElementById("zbt1-network-name");
+  const xpanEl = document.getElementById("zbt1-xpan");
+  const panidEl = document.getElementById("zbt1-panid");
+  const rloc16El = document.getElementById("zbt1-rloc16");
+
+  if (netNameEl) netNameEl.innerText = otbr.network_name || "Thread Mesh";
+  if (xpanEl) xpanEl.innerText = otbr.extended_pan_id || "--";
+  if (panidEl) panidEl.innerText = otbr.pan_id || "--";
+  if (rloc16El) rloc16El.innerText = otbr.rloc16 || "--";
+
+  // Pick sensible target channel if not yet selected
+  if (curCh && selectedTargetChannel === curCh) {
+    selectedTargetChannel = curCh === 25 ? 26 : 25;
+  }
+
+  // 4. Render 16-channel picker grid
+  renderChannelPickerGrid(data.channels_matrix || [], curCh);
+}
+
+function renderChannelPickerGrid(channels, curCh) {
+  const grid = document.getElementById("channel-picker-grid");
+  if (!grid) return;
+
+  grid.innerHTML = channels.map(ch => {
+    const isCur = curCh !== null && curCh !== undefined && ch.channel === curCh;
+    const isSel = ch.channel === selectedTargetChannel;
+
+    let borderCol = "#334155";
+    let bgCol = "#1e293b";
+    let badgeHtml = "";
+
+    if (isSel) {
+      borderCol = "#10b981";
+      bgCol = "#064e3b44";
+    } else if (isCur) {
+      borderCol = "#38bdf8";
+      bgCol = "#0c4a6e33";
+    }
+
+    if (ch.channel === 26) {
+      badgeHtml = `<span class="badge badge-success" style="font-size:9px; padding:1px 5px;">★ Best</span>`;
+    } else if (ch.channel === 25) {
+      badgeHtml = `<span class="badge badge-success" style="font-size:9px; padding:1px 5px;">★ Recommended</span>`;
+    } else if (ch.severity === "HIGH") {
+      badgeHtml = `<span class="badge badge-danger" style="font-size:9px; padding:1px 5px;">Wi-Fi ${ch.wifi_overlap_channel}</span>`;
+    } else {
+      badgeHtml = `<span class="badge badge-warning" style="font-size:9px; padding:1px 5px;">Guard Band</span>`;
+    }
+
+    return `
+      <div
+        class="channel-tile"
+        data-channel="${ch.channel}"
+        data-freq="${ch.frequency_mhz}"
+        data-rec="${escapeHtml(ch.recommendation_badge || '')}"
+        style="
+          background: ${bgCol};
+          border: 2px solid ${borderCol};
+          padding: 10px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+          text-align: center;
+          transition: all 0.2s ease;
+          position: relative;
+        "
+        title="${escapeHtml(ch.description || '')}"
+      >
+        ${isCur ? `<span style="position:absolute; top:-8px; right:4px; font-size:8px; background:#38bdf8; color:#0f172a; padding:1px 4px; border-radius:3px; font-weight:800;">ACTIVE</span>` : ''}
+        <div style="font-size: 15px; font-weight: 800; color: ${isSel ? '#34d399' : (isCur ? '#38bdf8' : '#f8fafc')};">
+          Ch ${ch.channel}
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+          ${ch.frequency_mhz} MHz
+        </div>
+        <div>${badgeHtml}</div>
+      </div>
+    `;
+  }).join("");
+
+  // Attach click listener to channel tiles
+  grid.querySelectorAll(".channel-tile").forEach(tile => {
+    tile.addEventListener("click", () => {
+      const ch = parseInt(tile.getAttribute("data-channel"), 10);
+      selectedTargetChannel = ch;
+      const freq = tile.getAttribute("data-freq");
+      const rec = tile.getAttribute("data-rec");
+
+      const labelEl = document.getElementById("selected-target-channel-label");
+      if (labelEl) {
+        labelEl.innerText = `Channel ${ch} (${freq} MHz) — ${rec}`;
+      }
+
+      // Re-render picker grid to highlight selected tile
+      if (currentOtbrChannelData && currentOtbrChannelData.channels_matrix) {
+        renderChannelPickerGrid(currentOtbrChannelData.channels_matrix, currentOtbrChannelData.current_channel);
+      }
+    });
+  });
+
+  // Update selected target channel label
+  const curTargetInfo = channels.find(c => c.channel === selectedTargetChannel) || {};
+  const labelEl = document.getElementById("selected-target-channel-label");
+  if (labelEl) {
+    labelEl.innerText = `Channel ${selectedTargetChannel} (${curTargetInfo.frequency_mhz || 2475} MHz) — ${curTargetInfo.recommendation_badge || 'Selected'}`;
+  }
+}
+
+async function triggerChannelChange() {
+  const curCh = currentOtbrChannelData?.current_channel;
+  const targetCh = selectedTargetChannel;
+
+  if (curCh && targetCh === curCh) {
+    alert(`Home Assistant Connect ZBT-1 is already running on Channel ${targetCh}. Select a different channel to migrate.`);
+    return;
+  }
+
+  const modeRadio = document.querySelector('input[name="channel-migration-mode"]:checked');
+  const delaySec = parseInt(modeRadio?.value || "30", 10);
+  const freq = 2405 + (targetCh - 11) * 5;
+
+  const modeText = delaySec > 0
+    ? `Graceful Mesh Migration (${delaySec}-second delay countdown)\nThread will broadcast a Pending Operational Dataset so all battery sensors and routers switch channels together.`
+    : `Immediate Switch (0-second delay)\nThe active radio dataset will update immediately.`;
+
+  const confirmed = window.confirm(
+    `Change Home Assistant Connect ZBT-1 Thread Channel?\n\n` +
+    `• Target Channel: Channel ${targetCh} (${freq} MHz)\n` +
+    `• Migration Strategy: ${modeText}\n\n` +
+    `Do you want to proceed with this channel migration?`
+  );
+  if (!confirmed) return;
+
+  const btnApply = document.getElementById("btn-apply-channel-change");
+  const banner = document.getElementById("channel-migration-banner");
+  const bannerTitle = document.getElementById("migration-banner-title");
+  const bannerDesc = document.getElementById("migration-banner-desc");
+  const badgeCountdown = document.getElementById("migration-countdown-badge");
+  const progressBar = document.getElementById("migration-progress-bar");
+
+  if (btnApply) btnApply.disabled = true;
+  if (banner) banner.classList.remove("hidden");
+  if (bannerTitle) bannerTitle.innerText = `Broadcasting Pending Dataset to Channel ${targetCh}...`;
+  if (bannerDesc) bannerDesc.innerText = `Connecting to OpenThread Border Router REST API (:8081) and Home Assistant Core...`;
+
+  try {
+    const res = await fetch(apiPath("/api/otbr/set_channel"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel: targetCh,
+        delay_seconds: delaySec,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Channel change failed");
+    }
+
+    if (delaySec > 0) {
+      if (bannerTitle) bannerTitle.innerText = `Thread Mesh Synchronizing to Channel ${targetCh}...`;
+      if (bannerDesc) bannerDesc.innerText = `Pending Operational Dataset active. All devices are counting down together.`;
+
+      let remaining = delaySec;
+      if (channelMigrationInterval) clearInterval(channelMigrationInterval);
+
+      channelMigrationInterval = setInterval(() => {
+        remaining -= 1;
+        if (badgeCountdown) badgeCountdown.innerText = `${remaining}s`;
+        if (progressBar) {
+          const pct = Math.min(100, Math.round(((delaySec - remaining) / delaySec) * 100));
+          progressBar.style.width = `${pct}%`;
+        }
+
+        if (remaining <= 0) {
+          clearInterval(channelMigrationInterval);
+          channelMigrationInterval = null;
+          completeChannelMigrationSuccess(targetCh);
+        }
+      }, 1000);
+    } else {
+      completeChannelMigrationSuccess(targetCh);
+    }
+  } catch (err) {
+    if (channelMigrationInterval) {
+      clearInterval(channelMigrationInterval);
+      channelMigrationInterval = null;
+    }
+    if (bannerTitle) bannerTitle.innerText = `Channel Change Error`;
+    if (bannerDesc) bannerDesc.innerText = err.message;
+    if (badgeCountdown) {
+      badgeCountdown.innerText = `Failed`;
+      badgeCountdown.className = `badge badge-danger`;
+    }
+    if (btnApply) btnApply.disabled = false;
+  }
+}
+
+async function completeChannelMigrationSuccess(targetCh) {
+  const btnApply = document.getElementById("btn-apply-channel-change");
+  const bannerTitle = document.getElementById("migration-banner-title");
+  const bannerDesc = document.getElementById("migration-banner-desc");
+  const badgeCountdown = document.getElementById("migration-countdown-badge");
+  const progressBar = document.getElementById("migration-progress-bar");
+
+  if (bannerTitle) bannerTitle.innerText = `Channel Change Completed Successfully!`;
+  if (bannerDesc) bannerDesc.innerText = `Home Assistant Connect ZBT-1 is now operating on Channel ${targetCh}. Re-scanning mesh telemetry...`;
+  if (badgeCountdown) {
+    badgeCountdown.innerText = `Active`;
+    badgeCountdown.className = `badge badge-success`;
+  }
+  if (progressBar) progressBar.style.width = `100%`;
+
+  await fetchOtbrChannelInfo();
+  await scanSelectedNetwork(false);
+
+  setTimeout(() => {
+    if (btnApply) btnApply.disabled = false;
+    const banner = document.getElementById("channel-migration-banner");
+    if (banner) {
+      banner.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-circle-check" style="color:#34d399; font-size:18px;"></i>
+            <span style="color:#a7f3d0; font-size:13px; font-weight:700;">ZBT-1 successfully operating on Channel ${targetCh}!</span>
+          </div>
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('channel-migration-banner').classList.add('hidden')" style="padding:2px 8px; font-size:11px;">Dismiss</button>
+        </div>
+      `;
+    }
+  }, 2500);
 }

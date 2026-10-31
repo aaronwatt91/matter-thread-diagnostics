@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.0] - 2026-10-31
+
+### Added: Dedicated Home Assistant Connect ZBT-1 / Thread Radio Channel Management Page
+- **Dedicated `ZBT-1 / Thread Channel` Navigation Tab**:
+  - Added a dedicated management page for inspecting your Home Assistant Connect ZBT-1 / SkyConnect radio status and migrating your active Thread mesh operating channel.
+- **Dual-Channel Migration Engine (HA WebSocket + Direct OTBR REST API)**:
+  - Added `NetworkChecker.set_otbr_channel_direct()` and `HAClient.set_otbr_channel()` calling both Home Assistant's `otbr/set_channel` WebSocket command and the direct OpenThread Border Router REST API (`PUT /node/dataset/pending` and `PUT /node/dataset/active` on `:8081`).
+  - Supports **Graceful Mesh Migration (30-second delay timer)**: broadcasts a Thread Pending Operational Dataset across your mesh so battery-powered sensors and smart plugs switch simultaneously without dropping off the network.
+  - Supports **Immediate Channel Switch (0s delay)**: directly updates the active radio dataset.
+  - Automatically refreshes Home Assistant's local Thread dataset cache to eliminate stale channel caching bugs.
+- **Interactive 2.4 GHz RF Coexistence Spectrum & Channel Picker**:
+  - Visual 2.4 GHz spectrum chart aligning Thread channels 11 to 26 with standard 20 MHz Wi-Fi channels 1, 6, and 11.
+  - 16-channel interactive selector with clear badges highlighting **Channel 26 (Cleanest / 0% Wi-Fi overlap)**, **Channel 25 (Recommended guard band)**, and highlighting channels with Wi-Fi interference.
+  - Live animated countdown progress bar during mesh migration.
+
 ## [2.0.9] - 2026-10-31
 
 ### Added: Home Assistant Friendly Device Names, Room Areas & Entity IDs

@@ -617,6 +617,203 @@ class HAClient:
         """Fetch matter integration diagnostics if available."""
         return await self.query_ha_websocket({"type": "matter/diagnostics"})
 
+    async def get_zbt1_channel_status(
+        self,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Retrieve live status of Home Assistant Connect ZBT-1 / SkyConnect / OTBR Thread radio:
+        hardware identity, current channel, active dataset, OTBR state, and comprehensive 2.4 GHz
+        RF spectrum matrix across channels 11 to 26.
+        """
+        raw_probe = await asyncio.gather(
+            NetworkChecker.inspect_otbr_rest_api(otbr_url=otbr_url),
+            self.get_device_registry(),
+            self.get_addon_info("core_openthread_border_router"),
+            self.get_thread_datasets(),
+            return_exceptions=True,
+        )
+
+        otbr_info = raw_probe[0] if isinstance(raw_probe[0], dict) else {"reachable": False}
+        device_registry = raw_probe[1] if isinstance(raw_probe[1], list) else []
+        otbr_addon_info = raw_probe[2] if isinstance(raw_probe[2], dict) else {}
+        datasets_res = raw_probe[3] if isinstance(raw_probe[3], dict) else {}
+
+        # 1. Identify ZBT-1 / SkyConnect hardware from device registry or add-on
+        hardware_device = None
+        for dev in device_registry:
+            if not isinstance(dev, dict):
+                continue
+            combined = f"{dev.get('manufacturer', '')} {dev.get('model', '')} {dev.get('name', '')}".lower()
+            if any(k in combined for k in ("zbt-1", "skyconnect", "nabu casa", "connect zbt-1")):
+                hardware_device = dev
+                break
+
+        hardware_name = "Home Assistant Connect ZBT-1"
+        hardware_model = "Connect ZBT-1 (Silicon Labs EFR32MG21)"
+        hardware_manufacturer = "Nabu Casa"
+        if hardware_device:
+            hardware_name = hardware_device.get("name_by_user") or hardware_device.get("name") or hardware_name
+            hardware_model = hardware_device.get("model") or hardware_model
+            hardware_manufacturer = hardware_device.get("manufacturer") or hardware_manufacturer
+        elif otbr_addon_info.get("name"):
+            hardware_name = otbr_addon_info.get("name")
+
+        # 2. Extract current channel, XPAN, and OTBR state
+        current_channel = otbr_info.get("channel")
+        active_xpan = otbr_info.get("extended_pan_id")
+        network_name = otbr_info.get("network_name")
+        pan_id = otbr_info.get("pan_id")
+        otbr_state = otbr_info.get("state")
+        mesh_prefix = otbr_info.get("mesh_local_prefix")
+
+        # Fallback to preferred dataset if OTBR REST API was briefly initializing
+        datasets_list = (datasets_res.get("result") or {}).get("datasets", []) if isinstance(datasets_res, dict) else []
+        pref_ds = next((d for d in datasets_list if isinstance(d, dict) and d.get("preferred")), None)
+        if not pref_ds and datasets_list:
+            pref_ds = datasets_list[0] if isinstance(datasets_list[0], dict) else None
+
+        if not current_channel and pref_ds:
+            current_channel = pref_ds.get("channel")
+        if not active_xpan and pref_ds:
+            active_xpan = pref_ds.get("extended_pan_id")
+        if not network_name and pref_ds:
+            network_name = pref_ds.get("network_name")
+        if not pan_id and pref_ds:
+            pan_id = pref_ds.get("pan_id")
+
+        # 3. Build channels 11 to 26 matrix
+        from thread_analyzer import THREAD_WIFI_OVERLAP_MAP
+        channels_matrix = []
+        for ch in range(11, 27):
+            freq = 2405 + (ch - 11) * 5
+            ov = THREAD_WIFI_OVERLAP_MAP.get(ch, {})
+            wifi_ch = ov.get("wifi_channel")
+            sev = ov.get("severity", "UNKNOWN")
+            is_rec = ch in (25, 26)
+            is_cur = current_channel is not None and int(current_channel) == ch
+
+            rec_badge = "Best (Cleanest)" if ch == 26 else ("Recommended" if ch == 25 else ("Guard Band" if ch in (15, 20) else f"Wi-Fi Ch {wifi_ch} Overlap"))
+
+            channels_matrix.append({
+                "channel": ch,
+                "frequency_mhz": freq,
+                "wifi_overlap_channel": wifi_ch,
+                "severity": sev,
+                "is_current": is_cur,
+                "is_recommended": is_rec,
+                "recommendation_badge": rec_badge,
+                "description": ov.get("interference", ""),
+            })
+
+        return {
+            "hardware": {
+                "name": hardware_name,
+                "model": hardware_model,
+                "manufacturer": hardware_manufacturer,
+                "detected": bool(hardware_device or otbr_info.get("reachable")),
+                "addon_version": otbr_addon_info.get("version"),
+                "addon_state": otbr_addon_info.get("state"),
+            },
+            "otbr": {
+                "reachable": bool(otbr_info.get("reachable")),
+                "url": otbr_info.get("otbr_url", otbr_url),
+                "state": otbr_state or "unknown",
+                "network_name": network_name or "Home Assistant Thread Network",
+                "extended_pan_id": active_xpan,
+                "pan_id": pan_id,
+                "mesh_local_prefix": mesh_prefix,
+                "ext_address": otbr_info.get("ext_address"),
+                "rloc16": otbr_info.get("rloc16"),
+            },
+            "current_channel": current_channel,
+            "channels_matrix": channels_matrix,
+        }
+
+    async def set_otbr_channel(
+        self,
+        channel: int,
+        delay_seconds: int = 30,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Change the Thread network operating channel on Home Assistant Connect ZBT-1 / OTBR.
+        Uses Home Assistant WebSocket API `otbr/set_channel` and direct OpenThread Border Router
+        REST API (:8081) for reliable execution.
+        """
+        if channel < 11 or channel > 26:
+            return {"success": False, "error": f"Invalid Thread channel {channel}. Valid channels are 11 to 26."}
+
+        # Step 0: Record previous channel
+        status_before = await self.get_zbt1_channel_status(otbr_url)
+        prev_channel = status_before.get("current_channel")
+
+        # Step 1: Attempt Home Assistant Core WebSocket command `otbr/set_channel`
+        ha_ws_success = False
+        ha_ws_error = None
+        if self.is_available:
+            try:
+                # Look up OTBR config entry id
+                otbr_entries = await self.query_ha_websocket({"type": "config_entries/get", "domain": "otbr"})
+                entry_id = None
+                if isinstance(otbr_entries, dict) and isinstance(otbr_entries.get("result"), list):
+                    for entry in otbr_entries["result"]:
+                        if isinstance(entry, dict) and entry.get("entry_id"):
+                            entry_id = entry["entry_id"]
+                            break
+
+                cmd: Dict[str, Any] = {"type": "otbr/set_channel", "channel": int(channel)}
+                if entry_id:
+                    cmd["entry_id"] = entry_id
+
+                ws_res = await self.query_ha_websocket(cmd, timeout=12.0)
+                if isinstance(ws_res, dict) and ws_res.get("success"):
+                    ha_ws_success = True
+                elif isinstance(ws_res, dict) and "error" in ws_res:
+                    ha_ws_error = str(ws_res["error"])
+            except Exception as e:
+                ha_ws_error = str(e)
+                logger.debug("HA websocket otbr/set_channel call failed: %s", e)
+
+        # Step 2: Attempt direct OpenThread Border Router REST API
+        otbr_direct_res = await NetworkChecker.set_otbr_channel_direct(
+            channel=int(channel),
+            delay_sec=int(delay_seconds),
+            otbr_url=otbr_url,
+        )
+
+        overall_success = ha_ws_success or otbr_direct_res.get("success", False)
+
+        if not overall_success:
+            err_msg = otbr_direct_res.get("error") or ha_ws_error or "Could not change channel via HA WebSocket or OTBR REST API."
+            return {
+                "success": False,
+                "error": err_msg,
+                "previous_channel": prev_channel,
+                "requested_channel": channel,
+                "ha_ws_error": ha_ws_error,
+                "otbr_direct_error": otbr_direct_res.get("error"),
+            }
+
+        # Step 3: Refresh Thread datasets in Home Assistant
+        try:
+            await self.get_thread_datasets()
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "channel": int(channel),
+            "previous_channel": prev_channel,
+            "delay_seconds": int(delay_seconds),
+            "method": "ha_websocket+otbr_rest" if (ha_ws_success and otbr_direct_res.get("success")) else ("ha_websocket" if ha_ws_success else "otbr_rest_api"),
+            "mode": "pending_migration" if (delay_seconds > 0) else "immediate_switch",
+            "message": (
+                f"Successfully initiated channel change to Channel {channel} on Home Assistant Connect ZBT-1! "
+                + (f"Thread mesh will migrate in {delay_seconds} seconds via Pending Operational Dataset." if delay_seconds > 0 else "Active channel updated immediately.")
+            ),
+        }
+
     async def get_all_available_thread_networks(
         self,
         otbr_url: str = "http://core-openthread-border-router:8081",

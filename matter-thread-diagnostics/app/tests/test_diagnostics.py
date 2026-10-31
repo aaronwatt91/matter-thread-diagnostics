@@ -11,6 +11,7 @@ from thread_analyzer import ThreadAnalyzer
 from matter_client import MatterClient
 from ha_client import HAClient, parse_thread_dataset_tlv
 from ai_engine import AIDiagnosticEngine
+from network_checker import NetworkChecker
 
 
 def test_parse_thread_dataset_tlv():
@@ -401,6 +402,47 @@ def test_ha_friendly_name_and_area_enrichment():
     assert nodes[1]["hardware_model"] == "Eve Energy"
     assert nodes[1]["ha_area"] == "Kitchen"
     assert nodes[1]["ha_entity_id"] == "switch.kitchen_coffee_plug"
+
+
+def test_zbt1_channel_management():
+    """Verify ZBT-1 / OTBR channel boundary validation and 11-26 RF spectrum matrix generation."""
+    import asyncio
+
+    # Test invalid channel boundaries (< 11 or > 26)
+    loop = asyncio.new_event_loop()
+    try:
+        err_low = loop.run_until_complete(NetworkChecker.set_otbr_channel_direct(10))
+        assert err_low["success"] is False
+        assert "Invalid channel" in err_low["error"]
+
+        err_high = loop.run_until_complete(NetworkChecker.set_otbr_channel_direct(27))
+        assert err_high["success"] is False
+        assert "Invalid channel" in err_high["error"]
+
+        ha = HAClient()
+        ha_err_low = loop.run_until_complete(ha.set_otbr_channel(9))
+        assert ha_err_low["success"] is False
+        assert "Invalid Thread channel" in ha_err_low["error"]
+
+        status = loop.run_until_complete(ha.get_zbt1_channel_status())
+        assert "hardware" in status
+        assert "channels_matrix" in status
+        matrix = status["channels_matrix"]
+        assert len(matrix) == 16, f"Expected 16 channels (11 to 26), got {len(matrix)}"
+
+        # Check Ch 25 & 26 recommendation tags
+        ch25 = next(c for c in matrix if c["channel"] == 25)
+        ch26 = next(c for c in matrix if c["channel"] == 26)
+        assert ch25["is_recommended"] is True
+        assert ch26["is_recommended"] is True
+        assert "Cleanest" in ch26["recommendation_badge"]
+
+        # Check Wi-Fi 1 overlap on Ch 11
+        ch11 = next(c for c in matrix if c["channel"] == 11)
+        assert ch11["severity"] == "HIGH"
+        assert ch11["wifi_overlap_channel"] == 1
+    finally:
+        loop.close()
 
 
 
