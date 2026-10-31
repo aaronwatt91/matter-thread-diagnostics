@@ -103,6 +103,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  const btnPurgeOffline = document.getElementById("btn-purge-offline-nodes");
+  if (btnPurgeOffline) {
+    btnPurgeOffline.addEventListener("click", () => triggerBulkPurgeOfflineNodes(btnPurgeOffline));
+  }
+
   const btnRefreshTopo = document.getElementById("btn-refresh-topology");
   if (btnRefreshTopo) {
     btnRefreshTopo.addEventListener("click", async () => {
@@ -1031,6 +1036,17 @@ function renderRulesAndTables(data) {
     }
   }
 
+  const offlineNodesList = allNodes.filter(n => !n.available);
+  const btnPurgeOffline = document.getElementById("btn-purge-offline-nodes");
+  if (btnPurgeOffline) {
+    if (matterServer.connected && offlineNodesList.length > 0) {
+      btnPurgeOffline.style.display = "inline-flex";
+      btnPurgeOffline.innerHTML = `<i class="fa-solid fa-trash-can"></i> Purge Offline (${offlineNodesList.length})`;
+    } else {
+      btnPurgeOffline.style.display = "none";
+    }
+  }
+
   const tbodyNodes = document.getElementById("tbody-matter-nodes");
   if (tbodyNodes) {
     if (!matterServer.connected) {
@@ -1115,9 +1131,14 @@ function renderRulesAndTables(data) {
               ${ulaIp ? escapeHtml(ulaIp) : '<span style="color:var(--text-muted)">None reported</span>'}
             </td>
             <td style="padding: 10px 8px;">
-              <button type="button" class="btn btn-outline btn-ping-node" data-node-id="${nid}" data-ipv6="${escapeHtml(ulaIp)}" style="font-size: 11px; padding: 4px 10px;">
-                <i class="fa-solid fa-bolt"></i> Ping
-              </button>
+              <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                <button type="button" class="btn btn-outline btn-ping-node" data-node-id="${nid}" data-ipv6="${escapeHtml(ulaIp)}" style="font-size: 11px; padding: 4px 10px;">
+                  <i class="fa-solid fa-bolt"></i> Ping
+                </button>
+                <button type="button" class="btn btn-outline btn-purge-node" data-node-id="${nid}" data-node-name="${escapeHtml(n.product_name || `Node ${nid}`)}" style="font-size: 11px; padding: 4px 10px; border-color: #ef444466; color: #f87171;" title="Decommission and purge this device from Matter Server &amp; Home Assistant">
+                  <i class="fa-solid fa-trash-can"></i> Purge
+                </button>
+              </div>
               <div id="ping-res-${nid}" style="font-size: 11px; margin-top: 4px;"></div>
             </td>
           </tr>
@@ -1129,6 +1150,14 @@ function renderRulesAndTables(data) {
           const nodeId = parseInt(btn.getAttribute("data-node-id"), 10);
           const ipv6 = btn.getAttribute("data-ipv6") || "";
           triggerLiveNodePing(nodeId, ipv6, btn);
+        });
+      });
+
+      document.querySelectorAll(".btn-purge-node").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const nodeId = parseInt(btn.getAttribute("data-node-id"), 10);
+          const nodeName = btn.getAttribute("data-node-name") || `Node #${nodeId}`;
+          triggerPurgeNode(nodeId, nodeName, btn);
         });
       });
     }
@@ -1205,13 +1234,27 @@ function renderRulesAndTables(data) {
   const nodesDetail = document.getElementById("nodes-detail-list");
   let nodeHtml = "";
   if (nq.offline_nodes && nq.offline_nodes.length > 0) {
-    nodeHtml += nq.offline_nodes.map(n => `<div style="color:var(--color-danger); margin-bottom:4px;">🔴 Node #${n.node_id} (${escapeHtml(n.name)}) — ${escapeHtml(n.reason)}</div>`).join("");
+    nodeHtml += nq.offline_nodes.map(n => `
+      <div style="color:var(--color-danger); margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span>🔴 Node #${n.node_id} (${escapeHtml(n.name)}) — ${escapeHtml(n.reason)}</span>
+        <button type="button" class="btn btn-outline btn-purge-inline" data-node-id="${n.node_id}" data-node-name="${escapeHtml(n.name)}" style="font-size:10px; padding:2px 8px; border-color:#ef444466; color:#f87171; flex-shrink:0;">
+          <i class="fa-solid fa-trash-can"></i> Purge
+        </button>
+      </div>
+    `).join("");
   }
   if (nq.weak_nodes && nq.weak_nodes.length > 0) {
     nodeHtml += nq.weak_nodes.map(n => `<div style="color:var(--color-warning); margin-bottom:4px;">⚠️ Node #${n.node_id} (${escapeHtml(n.name)}) — ${escapeHtml(n.reason)}</div>`).join("");
   }
   if (nq.wrong_network_nodes && nq.wrong_network_nodes.length > 0) {
-    nodeHtml += nq.wrong_network_nodes.map(n => `<div style="color:#f87171; margin-bottom:4px;">🔀 Node #${n.node_id} (${escapeHtml(n.name)}) — ${escapeHtml(n.reason)}</div>`).join("");
+    nodeHtml += nq.wrong_network_nodes.map(n => `
+      <div style="color:#f87171; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span>🔀 Node #${n.node_id} (${escapeHtml(n.name)}) — ${escapeHtml(n.reason)}</span>
+        <button type="button" class="btn btn-outline btn-purge-inline" data-node-id="${n.node_id}" data-node-name="${escapeHtml(n.name)}" style="font-size:10px; padding:2px 8px; border-color:#ef444466; color:#f87171; flex-shrink:0;">
+          <i class="fa-solid fa-trash-can"></i> Purge
+        </button>
+      </div>
+    `).join("");
   }
   const matterErrs = telemetry.logs_sample?.matter_server_recent_errors || [];
   if (matterErrs.length > 0) {
@@ -1222,6 +1265,130 @@ function renderRulesAndTables(data) {
     nodeHtml = `<div style="color:var(--color-success)">🟢 All commissioned nodes responding with healthy link quality and no recent log errors.</div>`;
   }
   nodesDetail.innerHTML = nodeHtml;
+  nodesDetail.querySelectorAll(".btn-purge-inline").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const nodeId = parseInt(btn.getAttribute("data-node-id"), 10);
+      const nodeName = btn.getAttribute("data-node-name") || `Node #${nodeId}`;
+      triggerPurgeNode(nodeId, nodeName, btn);
+    });
+  });
+}
+
+/* Purge / Decommission Matter Node (Single & Bulk) */
+async function triggerPurgeNode(nodeId, nodeName, btnElem) {
+  const confirmed = window.confirm(
+    `Purge ${nodeName} (Node #${nodeId}) from your Matter & Thread network?\n\n` +
+    `This will decommission and remove Node #${nodeId} from python-matter-server and clean up its Home Assistant Device Registry entry.`
+  );
+  if (!confirmed) return;
+
+  const resBox = document.getElementById(`ping-res-${nodeId}`);
+  const origHtml = btnElem ? btnElem.innerHTML : "";
+  if (btnElem) {
+    btnElem.disabled = true;
+    btnElem.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Purging...`;
+  }
+  if (resBox) {
+    resBox.innerHTML = `<span style="color:#fbbf24;">Decommissioning Node #${nodeId}...</span>`;
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/matter/purge_node"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: nodeId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (data.telemetry) {
+        currentTelemetry = data.telemetry;
+        renderKPIs(currentTelemetry);
+        renderRulesAndTables(currentTelemetry);
+        if (currentTelemetry.topology) {
+          renderTopologyData(currentTelemetry.topology);
+        }
+      } else {
+        await fetchLiveDiagnostics();
+      }
+      const inspector = document.getElementById("node-inspector");
+      if (inspector) inspector.classList.add("hidden");
+    } else {
+      const errMsg = data.matter_server?.error || data.error || "Purge failed";
+      if (resBox) {
+        resBox.innerHTML = `<span style="color:var(--color-danger);">Purge failed: ${escapeHtml(errMsg)}</span>`;
+      } else {
+        alert(`Could not purge Node #${nodeId}: ${errMsg}`);
+      }
+    }
+  } catch (err) {
+    if (resBox) {
+      resBox.innerHTML = `<span style="color:var(--color-danger);">Error: ${escapeHtml(err.message)}</span>`;
+    } else {
+      alert(`Error purging Node #${nodeId}: ${err.message}`);
+    }
+  } finally {
+    if (btnElem) {
+      btnElem.disabled = false;
+      btnElem.innerHTML = origHtml || `<i class="fa-solid fa-trash-can"></i> Purge`;
+    }
+  }
+}
+
+async function triggerBulkPurgeOfflineNodes(btnElem) {
+  const allNodes = currentTelemetry?.telemetry?.matter_server?.nodes || [];
+  const offlineNodes = allNodes.filter(n => !n.available);
+  if (offlineNodes.length === 0) {
+    alert("There are no offline Matter nodes to purge.");
+    return;
+  }
+
+  const summaryList = offlineNodes
+    .map(n => `• Node #${n.node_id}: ${n.product_name || 'Matter Device'} (${n.vendor_name || 'Unknown'})`)
+    .join("\n");
+
+  const confirmed = window.confirm(
+    `Purge all ${offlineNodes.length} offline Matter node(s) from your network?\n\n` +
+    `${summaryList}\n\n` +
+    `This will permanently remove these offline nodes from python-matter-server and Home Assistant.`
+  );
+  if (!confirmed) return;
+
+  const origHtml = btnElem ? btnElem.innerHTML : "";
+  if (btnElem) {
+    btnElem.disabled = true;
+    btnElem.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Purging ${offlineNodes.length} Node(s)...`;
+  }
+
+  try {
+    const nodeIds = offlineNodes.map(n => n.node_id);
+    const res = await fetch(apiPath("/api/matter/purge_nodes_bulk"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_ids: nodeIds }),
+    });
+    const data = await res.json();
+    if (data.telemetry) {
+      currentTelemetry = data.telemetry;
+      renderKPIs(currentTelemetry);
+      renderRulesAndTables(currentTelemetry);
+      if (currentTelemetry.topology) {
+        renderTopologyData(currentTelemetry.topology);
+      }
+    } else {
+      await fetchLiveDiagnostics();
+    }
+    if (data.failed && data.failed.length > 0) {
+      const failStr = data.failed.map(f => `Node #${f.node_id}: ${f.error}`).join("\n");
+      alert(`Purged ${data.purged_node_ids?.length || 0} node(s).\nFailed (${data.failed.length}):\n${failStr}`);
+    }
+  } catch (err) {
+    alert(`Bulk purge error: ${err.message}`);
+  } finally {
+    if (btnElem) {
+      btnElem.disabled = false;
+      btnElem.innerHTML = origHtml;
+    }
+  }
 }
 
 /* Live On-Demand Matter + ICMPv6 Node Ping */
@@ -1670,12 +1837,28 @@ function renderSvgTopology(nodes, edges) {
         const content = document.getElementById("inspector-content");
         panel.classList.remove("hidden");
         title.innerText = `${n.label} (${n.routing_role || n.type.replace('_', ' ').toUpperCase()})${n.preferred ? ' ★ Preferred Router' : ''}`;
+        const hasMatterNodeId = n.node_id !== undefined && n.node_id !== null;
         content.innerHTML = `
           <div style="font-size: 13px; line-height: 1.6;">
             <div><strong>Status:</strong> <span class="badge ${n.status === 'online' ? 'badge-success' : 'badge-warning'}">${n.status.toUpperCase()}</span></div>
             <div><strong>Telemetry:</strong> ${escapeHtml(n.details || '')}</div>
+            ${hasMatterNodeId ? `
+              <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btn-inspector-purge" class="btn btn-outline" style="font-size: 11px; padding: 4px 12px; border-color: #ef444488; color: #f87171;">
+                  <i class="fa-solid fa-trash-can"></i> Purge Node #${n.node_id} from Network
+                </button>
+              </div>
+            ` : ''}
           </div>
         `;
+        if (hasMatterNodeId) {
+          const btnInspPurge = document.getElementById("btn-inspector-purge");
+          if (btnInspPurge) {
+            btnInspPurge.addEventListener("click", () => {
+              triggerPurgeNode(n.node_id, n.label || `Node #${n.node_id}`, btnInspPurge);
+            });
+          }
+        }
       }
     };
 

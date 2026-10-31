@@ -423,6 +423,43 @@ class HAClient:
             return res["result"]
         return []
 
+    async def remove_matter_device_from_ha_registry(self, node_id: int) -> Dict[str, Any]:
+        """
+        Ensure any orphaned Home Assistant Device Registry entries for a purged Matter node_id
+        are also cleaned up from Home Assistant Core.
+        """
+        if not self.is_available:
+            return {"removed_devices": 0}
+        try:
+            devices = await self.get_device_registry()
+            node_hex_token = f"-{int(node_id):016X}-"
+            removed_ids: List[str] = []
+            for d in devices:
+                if not isinstance(d, dict):
+                    continue
+                dev_id = d.get("id")
+                idents = d.get("identifiers") or []
+                is_matching_matter_node = False
+                for pair in idents:
+                    if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                        domain = str(pair[0]).lower()
+                        ident_val = str(pair[1]).upper()
+                        if domain == "matter" and node_hex_token in ident_val:
+                            is_matching_matter_node = True
+                            break
+                if is_matching_matter_node and dev_id:
+                    for entry_id in d.get("config_entries") or []:
+                        await self.query_ha_websocket({
+                            "type": "config/device_registry/remove_config_entry",
+                            "device_id": dev_id,
+                            "config_entry_id": entry_id,
+                        })
+                    removed_ids.append(dev_id)
+            return {"removed_devices": len(removed_ids), "device_ids": removed_ids}
+        except Exception as e:
+            logger.debug("HA device registry cleanup for node %s skipped: %s", node_id, e)
+            return {"removed_devices": 0, "error": str(e)}
+
     async def get_matter_diagnostics(self) -> Dict[str, Any]:
         """Fetch matter integration diagnostics if available."""
         return await self.query_ha_websocket({"type": "matter/diagnostics"})

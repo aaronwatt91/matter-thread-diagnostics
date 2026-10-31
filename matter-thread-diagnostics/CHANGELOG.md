@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.8] - 2026-10-31
+
+### Added: Purge / Decommission Matter Devices (Single & Bulk Offline Purge)
+- **Matter Server `remove_node` + Home Assistant Device Registry Cleanup**:
+  - Added `MatterClient.remove_node()` (`command="remove_node"`, `args={"node_id": ...}`) in `app/matter_client.py` and `HAClient.remove_matter_device_from_ha_registry()` in `app/ha_client.py` to decommission and purge nodes from `python-matter-server` and remove any orphaned device entries from Home Assistant's Device Registry.
+  - Added `POST /api/matter/purge_node` and `POST /api/matter/purge_nodes_bulk` in `app/main.py` with immediate telemetry, health score, and topology graph cache eviction (`_evict_purged_nodes_from_cache`).
+- **Per-Node & Bulk Offline Purge Controls Across UI**:
+  - Added a **Purge** button next to **Ping** on every row in the **Commissioned Matter Nodes** table.
+  - Added a **Purge Offline (`N`)** bulk button in the **Commissioned Matter Nodes** header when offline/ghost nodes are present.
+  - Added inline **Purge** buttons in **Rule 4 (Node Link Quality)** for offline/wrong-network nodes and inside the **Topology Device Inspector** panel when clicking a node on the mesh map.
+
 ## [2.0.7] - 2026-10-30
 
 ### Fixed: API Key Redaction in Logs, Supervisor `hassio_role: manager` for Log Access & OpenThread 0–3 LQI Scale

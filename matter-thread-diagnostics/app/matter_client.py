@@ -246,6 +246,35 @@ class MatterClient:
                 logger.debug("ping_node failed on %s: %s", url, e)
         return {"node_id": node_id, "success": False, "error": "Matter Server unreachable"}
 
+    async def remove_node(self, node_id: int, timeout: float = 15.0) -> Dict[str, Any]:
+        """
+        Decommission and purge a Matter node from the Matter fabric and python-matter-server store
+        via the `remove_node` WebSocket command.
+        """
+        last_err = "Matter Server unreachable"
+        for url in self._candidate_urls():
+            try:
+                async with websockets.connect(url, open_timeout=4.0, max_size=8 * 1024 * 1024) as ws:
+                    # Consume greeting
+                    await asyncio.wait_for(ws.recv(), timeout=3.0)
+                    msg = await self._send_command(
+                        ws,
+                        f"remove_node_{node_id}",
+                        "remove_node",
+                        args={"node_id": int(node_id)},
+                        timeout=timeout,
+                    )
+                    if "error_code" in msg:
+                        err_detail = msg.get("details") or f"Error code {msg.get('error_code')}"
+                        logger.warning("remove_node(%s) returned error from Matter Server: %s", node_id, err_detail)
+                        return {"node_id": int(node_id), "success": False, "error": err_detail}
+                    logger.info("Successfully purged Matter node #%s via %s", node_id, url)
+                    return {"node_id": int(node_id), "success": True, "result": msg.get("result")}
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                logger.debug("remove_node failed on %s: %s", url, e)
+        return {"node_id": int(node_id), "success": False, "error": last_err}
+
     def _format_nodes(self, raw_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Parse python-matter-server nodes and extract real Thread Network Diagnostics

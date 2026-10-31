@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.7")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.0.8")
 
 
 @app.middleware("http")
@@ -114,6 +114,14 @@ class PingNodeRequest(BaseModel):
     ipv6_address: Optional[str] = None
 
 
+class PurgeNodeRequest(BaseModel):
+    node_id: int
+
+
+class PurgeNodesBulkRequest(BaseModel):
+    node_ids: List[int]
+
+
 class RunDiagnosisRequest(BaseModel):
     user_notes: Optional[str] = None
     custom_data: Optional[Dict[str, Any]] = None
@@ -140,7 +148,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.0.1",
+        "version": "2.0.8",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
@@ -238,6 +246,101 @@ async def ping_matter_node(req: PingNodeRequest):
         "node_id": req.node_id,
         "matter_ping": matter_res,
         "icmpv6_ping": icmp_res,
+    }
+
+
+def _evict_purged_nodes_from_cache(purged_ids: List[int]) -> Optional[Dict[str, Any]]:
+    """Immediately update cached telemetry, health score, and topology after purging Matter node(s)."""
+    global _last_telemetry_cache
+    if not _last_telemetry_cache or not purged_ids:
+        return _last_telemetry_cache
+
+    purged_set = {int(nid) for nid in purged_ids}
+    telemetry = _last_telemetry_cache.get("telemetry", {})
+    ms = telemetry.get("matter_server", {})
+    remaining_nodes = [
+        n for n in (ms.get("nodes") or [])
+        if int(n.get("node_id", -1)) not in purged_set
+    ]
+    ms["nodes"] = remaining_nodes
+
+    target_id = (config.target_thread_network or "").strip()
+    target_net = _last_telemetry_cache.get("selected_target_network")
+    rules = _last_telemetry_cache.get("rule_evaluations", {})
+    split_net = rules.get("split_network", {})
+    rf_analysis = rules.get("rf_coexistence", {})
+    ipv6_inspection = rules.get("ipv6_routing", {})
+    all_routers = telemetry.get("border_routers", [])
+    ping_results = (telemetry.get("reachability_probes") or {}).get("results", [])
+
+    node_quality = ThreadAnalyzer.evaluate_node_link_quality(remaining_nodes, target_network_id=target_id)
+    rules["node_quality"] = node_quality
+
+    topology_data = ThreadAnalyzer.build_real_mesh_topology(
+        discovered_routers=all_routers,
+        matter_nodes=remaining_nodes,
+        target_net=target_net,
+        target_id=target_id,
+        is_split=split_net.get("is_split_network", False),
+        ping_results=ping_results,
+    )
+    _last_telemetry_cache["topology"] = topology_data
+
+    base_score = node_quality.get("health_score", 100)
+    if split_net.get("is_split_network"):
+        base_score = min(base_score, 45)
+    if not ipv6_inspection.get("has_thread_ula_route") and (all_routers or remaining_nodes):
+        base_score = min(base_score, 55)
+    if rf_analysis.get("severity") == "HIGH":
+        base_score = max(0, base_score - 15)
+    if node_quality.get("wrong_network_count", 0) > 0:
+        base_score = max(0, base_score - 15)
+    _last_telemetry_cache["summary_score"] = base_score
+    return _last_telemetry_cache
+
+
+@app.post("/api/matter/purge_node")
+async def purge_matter_node(req: PurgeNodeRequest):
+    """Decommission and purge a Matter node from python-matter-server and Home Assistant Device Registry."""
+    node_id = int(req.node_id)
+    logger.info("User requested purge of Matter node #%s", node_id)
+    matter_res = await matter_client.remove_node(node_id, timeout=15.0)
+    ha_reg_res = await ha_client.remove_matter_device_from_ha_registry(node_id)
+
+    success = bool(matter_res.get("success") or ha_reg_res.get("removed_devices", 0) > 0)
+    updated_telemetry = _evict_purged_nodes_from_cache([node_id]) if success else _last_telemetry_cache
+
+    return {
+        "success": success,
+        "node_id": node_id,
+        "matter_server": matter_res,
+        "ha_device_registry": ha_reg_res,
+        "telemetry": updated_telemetry,
+    }
+
+
+@app.post("/api/matter/purge_nodes_bulk")
+async def purge_matter_nodes_bulk(req: PurgeNodesBulkRequest):
+    """Purge multiple Matter nodes (e.g. all offline/ghost nodes) in bulk."""
+    node_ids = [int(nid) for nid in req.node_ids]
+    logger.info("User requested bulk purge of %d Matter node(s): %s", len(node_ids), node_ids)
+    purged_ids: List[int] = []
+    failed: List[Dict[str, Any]] = []
+
+    for nid in node_ids:
+        matter_res = await matter_client.remove_node(nid, timeout=15.0)
+        ha_reg_res = await ha_client.remove_matter_device_from_ha_registry(nid)
+        if matter_res.get("success") or ha_reg_res.get("removed_devices", 0) > 0:
+            purged_ids.append(nid)
+        else:
+            failed.append({"node_id": nid, "error": matter_res.get("error", "Purge failed")})
+
+    updated_telemetry = _evict_purged_nodes_from_cache(purged_ids) if purged_ids else _last_telemetry_cache
+    return {
+        "success": len(purged_ids) > 0,
+        "purged_node_ids": purged_ids,
+        "failed": failed,
+        "telemetry": updated_telemetry,
     }
 
 

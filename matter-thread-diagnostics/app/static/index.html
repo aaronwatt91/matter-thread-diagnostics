@@ -172,6 +172,9 @@
               <option value="router">Thread Routers / Leader</option>
               <option value="end_device">End Devices / Sleepy (SED)</option>
             </select>
+            <button id="btn-purge-offline-nodes" type="button" class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; border-color: #ef444488; color: #f87171; display: none;" title="Decommission and purge all offline/ghost Matter nodes from the network">
+              <i class="fa-solid fa-trash-can"></i> Purge Offline (0)
+            </button>
             <span id="matter-table-count" class="badge badge-info">0 Nodes</span>
           </div>
         </div>
@@ -186,7 +189,7 @@
                 <th style="padding: 10px 8px;">RF Signal (RSSI / LQI)</th>
                 <th style="padding: 10px 8px;">Neighbors / Counters</th>
                 <th style="padding: 10px 8px;">Thread IPv6 ULA</th>
-                <th style="padding: 10px 8px;">Live Test</th>
+                <th style="padding: 10px 8px;">Actions</th>
               </tr>
             </thead>
             <tbody id="tbody-matter-nodes">
