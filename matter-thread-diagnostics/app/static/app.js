@@ -275,15 +275,14 @@ function initDeviceSearchAndTopologyControls() {
     });
   }
 
-  // Topology Layout Mode Switcher (Force, Tree, Radial, Room)
+  // Topology Layout Mode Switcher (Force, Transit, Matrix, Sankey, Radar, Sunburst, Chord)
   document.querySelectorAll(".btn-layout-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".btn-layout-mode").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const mode = btn.getAttribute("data-layout") || "force";
       topologyPhysicsState.layoutMode = mode;
-      computeLayoutTargetPositions();
-      topologyPhysicsState.energy = 1.0;
+      dispatchTopologyRender();
     });
   });
 
@@ -1627,9 +1626,12 @@ async function fetchAndRenderTopology() {
   }
 }
 
+let lastTopologyData = { nodes: [], edges: [] };
+
 function renderTopologyData(data) {
   if (!data) return;
-  renderSvgTopology(data.nodes || [], data.edges || []);
+  lastTopologyData = data;
+  dispatchTopologyRender();
 
   const brs = (data.nodes || []).filter(n => n.type === "border_router");
   const scanElem = document.getElementById("topology-last-scan");
@@ -1642,6 +1644,120 @@ function renderTopologyData(data) {
     const brNames = brs.map(b => b.label).join(", ");
     countElem.innerText = `Discovered Border Routers (${brs.length}): ${brNames || 'None detected yet'}`;
   }
+}
+
+function dispatchTopologyRender() {
+  if (!lastTopologyData) return;
+  const nodes = lastTopologyData.nodes || [];
+  const edges = lastTopologyData.edges || [];
+  const mode = topologyPhysicsState.layoutMode || "force";
+
+  const svg = document.getElementById("mesh-svg");
+  const matrixContainer = document.getElementById("topology-matrix-container");
+  if (!svg || !matrixContainer) return;
+
+  if (topologyPhysicsState.animFrameId) {
+    cancelAnimationFrame(topologyPhysicsState.animFrameId);
+    topologyPhysicsState.animFrameId = null;
+  }
+
+  if (mode === "matrix") {
+    svg.style.display = "none";
+    matrixContainer.classList.remove("hidden");
+    renderSignalMatrix(matrixContainer, nodes, edges);
+    return;
+  }
+
+  svg.style.display = "block";
+  matrixContainer.classList.add("hidden");
+
+  if (mode === "force") {
+    renderSvgTopology(nodes, edges);
+  } else if (mode === "transit") {
+    renderTransitMap(nodes, edges);
+  } else if (mode === "sankey") {
+    renderSankeyFlow(nodes, edges);
+  } else if (mode === "radar") {
+    renderRadarScope(nodes, edges);
+  } else if (mode === "sunburst") {
+    renderSunburst(nodes, edges);
+  } else if (mode === "chord") {
+    renderChordBundle(nodes, edges);
+  } else {
+    renderSvgTopology(nodes, edges);
+  }
+}
+
+function showNodeInspector(n) {
+  if (!n) return;
+  const panel = document.getElementById("node-inspector");
+  const title = document.getElementById("inspector-title");
+  const content = document.getElementById("inspector-content");
+  if (!panel || !title || !content) return;
+
+  panel.classList.remove("hidden");
+  title.innerText = `${n.label || 'Device'} (${n.routing_role || (n.type ? n.type.replace('_', ' ').toUpperCase() : 'THREAD DEVICE')})${n.preferred ? ' ★ Preferred Router' : ''}`;
+  const hasMatterNodeId = n.node_id !== undefined && n.node_id !== null;
+  content.innerHTML = `
+    <div style="font-size: 13px; line-height: 1.6;">
+      <div><strong>Status:</strong> <span class="badge ${n.status === 'online' ? 'badge-success' : 'badge-warning'}">${(n.status || 'ONLINE').toUpperCase()}</span></div>
+      ${n.ha_area ? `<div><strong>Area / Room:</strong> <span class="badge badge-info">📍 ${escapeHtml(n.ha_area)}</span></div>` : ''}
+      ${n.rssi !== null && n.rssi !== undefined ? `<div><strong>Signal Strength:</strong> <code>${escapeHtml(String(n.rssi))} dBm</code></div>` : ''}
+      <div><strong>Telemetry:</strong> ${escapeHtml(n.details || 'Cluster 0x0035 Thread link active')}</div>
+      ${hasMatterNodeId ? `
+        <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+          <button type="button" id="btn-inspector-purge" class="btn btn-outline" style="font-size: 11px; padding: 4px 12px; border-color: #ef444488; color: #f87171;">
+            <i class="fa-solid fa-trash-can"></i> Purge Node #${n.node_id} from Network
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  if (hasMatterNodeId) {
+    const btnInspPurge = document.getElementById("btn-inspector-purge");
+    if (btnInspPurge) {
+      btnInspPurge.addEventListener("click", () => {
+        triggerPurgeNode(n.node_id, n.label || `Node #${n.node_id}`, btnInspPurge);
+      });
+    }
+  }
+}
+
+function renderEmptyTopology(svg, width, height) {
+  svg.innerHTML = "";
+  const cx = width / 2;
+  const cy = height / 2;
+  const textGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  icon.setAttribute("x", cx);
+  icon.setAttribute("y", cy - 15);
+  icon.setAttribute("fill", "#64748b");
+  icon.setAttribute("font-size", "36");
+  icon.setAttribute("text-anchor", "middle");
+  icon.textContent = "📡";
+  textGroup.appendChild(icon);
+
+  const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  title.setAttribute("x", cx);
+  title.setAttribute("y", cy + 22);
+  title.setAttribute("fill", "#e2e8f0");
+  title.setAttribute("font-size", "15");
+  title.setAttribute("font-weight", "600");
+  title.setAttribute("text-anchor", "middle");
+  title.textContent = "No Live Thread Border Routers or Matter Devices Discovered Yet";
+  textGroup.appendChild(title);
+
+  const subtitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  subtitle.setAttribute("x", cx);
+  subtitle.setAttribute("y", cy + 46);
+  subtitle.setAttribute("fill", "#94a3b8");
+  subtitle.setAttribute("font-size", "12");
+  subtitle.setAttribute("text-anchor", "middle");
+  subtitle.textContent = "Click '2. Scan Selected Network' above to probe mDNS (_meshcop._udp), OTBR, and Matter Server.";
+  textGroup.appendChild(subtitle);
+
+  svg.appendChild(textGroup);
 }
 
 function renderSvgTopology(nodes, edges) {
@@ -1661,37 +1777,7 @@ function renderSvgTopology(nodes, edges) {
   const cy = height / 2;
 
   if (!nodes || nodes.length === 0) {
-    const textGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-
-    const icon = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    icon.setAttribute("x", cx);
-    icon.setAttribute("y", cy - 15);
-    icon.setAttribute("fill", "#64748b");
-    icon.setAttribute("font-size", "36");
-    icon.setAttribute("text-anchor", "middle");
-    icon.textContent = "📡";
-    textGroup.appendChild(icon);
-
-    const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    title.setAttribute("x", cx);
-    title.setAttribute("y", cy + 22);
-    title.setAttribute("fill", "#e2e8f0");
-    title.setAttribute("font-size", "15");
-    title.setAttribute("font-weight", "600");
-    title.setAttribute("text-anchor", "middle");
-    title.textContent = "No Live Thread Border Routers or Matter Devices Discovered Yet";
-    textGroup.appendChild(title);
-
-    const subtitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    subtitle.setAttribute("x", cx);
-    subtitle.setAttribute("y", cy + 46);
-    subtitle.setAttribute("fill", "#94a3b8");
-    subtitle.setAttribute("font-size", "12");
-    subtitle.setAttribute("text-anchor", "middle");
-    subtitle.textContent = "Click '2. Scan Selected Network' above to probe mDNS (_meshcop._udp), OTBR, and Matter Server.";
-    textGroup.appendChild(subtitle);
-
-    svg.appendChild(textGroup);
+    renderEmptyTopology(svg, width, height);
     return;
   }
 
@@ -1912,33 +1998,7 @@ function renderSvgTopology(nodes, edges) {
         g.releasePointerCapture(ev.pointerId);
       } catch (_) {}
       if (!dragMoved) {
-        const panel = document.getElementById("node-inspector");
-        const title = document.getElementById("inspector-title");
-        const content = document.getElementById("inspector-content");
-        panel.classList.remove("hidden");
-        title.innerText = `${n.label} (${n.routing_role || n.type.replace('_', ' ').toUpperCase()})${n.preferred ? ' ★ Preferred Router' : ''}`;
-        const hasMatterNodeId = n.node_id !== undefined && n.node_id !== null;
-        content.innerHTML = `
-          <div style="font-size: 13px; line-height: 1.6;">
-            <div><strong>Status:</strong> <span class="badge ${n.status === 'online' ? 'badge-success' : 'badge-warning'}">${n.status.toUpperCase()}</span></div>
-            <div><strong>Telemetry:</strong> ${escapeHtml(n.details || '')}</div>
-            ${hasMatterNodeId ? `
-              <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
-                <button type="button" id="btn-inspector-purge" class="btn btn-outline" style="font-size: 11px; padding: 4px 12px; border-color: #ef444488; color: #f87171;">
-                  <i class="fa-solid fa-trash-can"></i> Purge Node #${n.node_id} from Network
-                </button>
-              </div>
-            ` : ''}
-          </div>
-        `;
-        if (hasMatterNodeId) {
-          const btnInspPurge = document.getElementById("btn-inspector-purge");
-          if (btnInspPurge) {
-            btnInspPurge.addEventListener("click", () => {
-              triggerPurgeNode(n.node_id, n.label || `Node #${n.node_id}`, btnInspPurge);
-            });
-          }
-        }
+        showNodeInspector(n);
       }
     };
 
@@ -2447,6 +2507,915 @@ function applyTopologyVisibilityFilter() {
       e.lblBgElem.style.display = lblDisplay;
     }
   });
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 1: Subway / Transit Map (Schematic Metro Tracks)
+   ========================================================================== */
+function renderTransitMap(nodes, edges) {
+  const svg = document.getElementById("mesh-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 720);
+  const height = Math.max(rect.height || 540, 500);
+
+  if (!nodes || nodes.length === 0) {
+    renderEmptyTopology(svg, width, height);
+    return;
+  }
+
+  const affinity = resolveBorderRouterAffinity(nodes, edges);
+  topologyPhysicsState.affinityData = affinity;
+
+  const viewportG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(viewportG);
+
+  // Background metro coordinate grid
+  const gridG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  gridG.setAttribute("opacity", "0.12");
+  for (let x = 40; x < width; x += 55) {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", x); l.setAttribute("y1", 0);
+    l.setAttribute("x2", x); l.setAttribute("y2", height);
+    l.setAttribute("stroke", "#475569"); l.setAttribute("stroke-width", "1");
+    gridG.appendChild(l);
+  }
+  for (let y = 40; y < height; y += 55) {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", 0); l.setAttribute("y1", y);
+    l.setAttribute("x2", width); l.setAttribute("y2", y);
+    l.setAttribute("stroke", "#475569"); l.setAttribute("stroke-width", "1");
+    gridG.appendChild(l);
+  }
+  viewportG.appendChild(gridG);
+
+  const linesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const stationsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.appendChild(linesG);
+  viewportG.appendChild(stationsG);
+
+  const tbrs = nodes.filter(n => n.type === "border_router");
+  const routers = nodes.filter(n => n.type === "router");
+  const seds = nodes.filter(n => n.type !== "border_router" && n.type !== "router");
+
+  const posMap = {};
+  const tbrCount = Math.max(tbrs.length, 1);
+  tbrs.forEach((tbr, idx) => {
+    const y = ((idx + 1) / (tbrCount + 1)) * (height - 80) + 40;
+    posMap[tbr.id] = { x: 130, y };
+  });
+
+  const rtrCount = Math.max(routers.length, 1);
+  routers.forEach((rtr, idx) => {
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    const rows = Math.ceil(rtrCount / 2);
+    const x = 320 + col * 160;
+    const y = ((row + 1) / (rows + 1)) * (height - 80) + 40;
+    posMap[rtr.id] = { x, y };
+  });
+
+  const sedCount = Math.max(seds.length, 1);
+  seds.forEach((sed, idx) => {
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    const rows = Math.ceil(sedCount / 2);
+    const x = Math.min(width - 160, 680) + col * 90;
+    const y = ((row + 1) / (rows + 1)) * (height - 80) + 40;
+    posMap[sed.id] = { x, y };
+  });
+
+  nodes.forEach((n, idx) => {
+    if (!posMap[n.id]) {
+      posMap[n.id] = { x: 220 + (idx * 45) % (width - 300), y: 80 + (idx * 35) % (height - 120) };
+    }
+  });
+
+  // Draw 45°/90° Metro Track Lines
+  edges.forEach((e) => {
+    const sId = typeof e.source === "object" ? e.source.id : e.source;
+    const tId = typeof e.target === "object" ? e.target.id : e.target;
+    const p1 = posMap[sId];
+    const p2 = posMap[tId];
+    if (!p1 || !p2) return;
+
+    const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: "#38bdf8" };
+    const lineColor = aff.color || "#0284c7";
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    let d = "";
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const midX = p1.x + (dx - dy);
+      d = `M ${p1.x} ${p1.y} L ${midX} ${p1.y} L ${p2.x} ${p2.y}`;
+    } else {
+      const midY = p1.y + (dy - dx);
+      d = `M ${p1.x} ${p1.y} L ${p1.x} ${midY} L ${p2.x} ${p2.y}`;
+    }
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", lineColor);
+    path.setAttribute("stroke-width", "5");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("stroke-opacity", "0.85");
+    linesG.appendChild(path);
+  });
+
+  // Draw Stations
+  nodes.forEach((n) => {
+    const pos = posMap[n.id];
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.style.cursor = "pointer";
+    g.setAttribute("transform", `translate(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`);
+
+    const isTbr = n.type === "border_router";
+    const isRouter = n.type === "router";
+
+    if (isTbr) {
+      const outerRing = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      outerRing.setAttribute("r", "16");
+      outerRing.setAttribute("fill", "#0f172a");
+      outerRing.setAttribute("stroke", "#f8fafc");
+      outerRing.setAttribute("stroke-width", "3");
+      g.appendChild(outerRing);
+
+      const innerCore = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      innerCore.setAttribute("r", "9");
+      innerCore.setAttribute("fill", n.vendor === "nest" ? "#4285F4" : (n.vendor === "apple" ? "#94a3b8" : "#03A9F4"));
+      g.appendChild(innerCore);
+    } else if (isRouter) {
+      const disc = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      disc.setAttribute("r", "10");
+      disc.setAttribute("fill", "#ffffff");
+      disc.setAttribute("stroke", "#10b981");
+      disc.setAttribute("stroke-width", "3.5");
+      g.appendChild(disc);
+    } else {
+      const tick = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      tick.setAttribute("r", "7");
+      tick.setAttribute("fill", n.status === "offline" ? "#ef4444" : "#ffffff");
+      tick.setAttribute("stroke", "#8b5cf6");
+      tick.setAttribute("stroke-width", "2.5");
+      g.appendChild(tick);
+    }
+
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", isTbr ? -22 : 14);
+    lbl.setAttribute("y", "4");
+    lbl.setAttribute("fill", "#f8fafc");
+    lbl.setAttribute("font-size", isTbr ? "12" : "11");
+    lbl.setAttribute("font-weight", isTbr ? "700" : "600");
+    lbl.setAttribute("text-anchor", isTbr ? "end" : "start");
+    lbl.textContent = n.label || `Node #${n.node_id}`;
+    g.appendChild(lbl);
+
+    g.addEventListener("click", () => showNodeInspector(n));
+    stationsG.appendChild(g);
+    n.elem = g;
+  });
+
+  const headerG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  headerG.setAttribute("transform", "translate(20, 30)");
+  headerG.innerHTML = `
+    <rect width="185" height="26" rx="6" fill="#0f172acc" stroke="#334155" />
+    <text x="12" y="17" fill="#38bdf8" font-size="11" font-weight="700">🚇 THREAD METRO TRANSIT</text>
+  `;
+  svg.appendChild(headerG);
+  updateTopologyLegend();
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 2: 2D Signal Cross-Matrix & Link Budget Heatmap
+   ========================================================================== */
+function renderSignalMatrix(container, nodes, edges) {
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!nodes || nodes.length === 0) {
+    container.innerHTML = `<div style="padding: 40px; text-align: center; color: #64748b;"><i class="fa-solid fa-satellite-dish" style="font-size: 32px; margin-bottom: 8px;"></i><p>No Thread nodes discovered yet. Click '2. Scan Selected Network' above.</p></div>`;
+    return;
+  }
+
+  // Build direct adjacency lookup
+  const linkMap = {};
+  let totalSignalSum = 0;
+  let signalCount = 0;
+  let bestRssi = -999;
+  let worstRssi = 999;
+
+  (edges || []).forEach(e => {
+    const s = typeof e.source === "object" ? e.source.id : e.source;
+    const t = typeof e.target === "object" ? e.target.id : e.target;
+    linkMap[`${s}_${t}`] = e;
+    linkMap[`${t}_${s}`] = e;
+
+    if (e.rssi !== null && e.rssi !== undefined) {
+      const val = Number(e.rssi);
+      totalSignalSum += val;
+      signalCount++;
+      if (val > bestRssi) bestRssi = val;
+      if (val < worstRssi) worstRssi = val;
+    }
+  });
+
+  const avgRssi = signalCount > 0 ? (totalSignalSum / signalCount).toFixed(1) : null;
+  const directLinkCount = edges ? edges.length : 0;
+  const maxPossibleLinks = Math.max(1, (nodes.length * (nodes.length - 1)) / 2);
+  const densityPct = Math.round((directLinkCount / maxPossibleLinks) * 100);
+
+  // Top Metric Cards
+  let html = `
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px;">
+      <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Total Devices</div>
+        <div style="font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 2px;">${nodes.length}</div>
+      </div>
+      <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Direct RF Links</div>
+        <div style="font-size: 18px; font-weight: 700; color: #38bdf8; margin-top: 2px;">${directLinkCount}</div>
+      </div>
+      <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Mesh Density</div>
+        <div style="font-size: 18px; font-weight: 700; color: #10b981; margin-top: 2px;">${densityPct}%</div>
+      </div>
+      <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Avg Link Signal</div>
+        <div style="font-size: 18px; font-weight: 700; color: ${avgRssi && Number(avgRssi) > -70 ? '#34d399' : '#f59e0b'}; margin-top: 2px;">
+          ${avgRssi ? `${avgRssi} dBm` : 'N/A'}
+        </div>
+      </div>
+    </div>
+
+    <div style="overflow-x: auto; max-width: 100%; border: 1px solid #334155; border-radius: 6px;">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th class="sticky-col" style="min-width: 180px;">Device / Peer</th>
+  `;
+
+  nodes.forEach((n) => {
+    const shortName = (n.label || `Node ${n.node_id}`).substring(0, 14);
+    html += `<th title="${escapeHtml(n.label || '')}">${escapeHtml(shortName)}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  nodes.forEach((rowNode) => {
+    const roleIcon = rowNode.type === "border_router" ? "📡" : (rowNode.type === "router" ? "🔁" : "🔋");
+    html += `
+      <tr>
+        <td class="sticky-col" style="cursor: pointer;" title="Click to inspect device" onclick="showNodeInspector(lastTopologyData.nodes.find(x => x.id === '${rowNode.id}'))">
+          <span style="margin-right: 6px;">${roleIcon}</span>
+          <strong>${escapeHtml(rowNode.label || `Node ${rowNode.node_id}`)}</strong>
+          ${rowNode.ha_area ? `<span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">📍 ${escapeHtml(rowNode.ha_area)}</span>` : ''}
+        </td>
+    `;
+
+    nodes.forEach((colNode) => {
+      if (rowNode.id === colNode.id) {
+        html += `<td style="background: #0f172a;"><span style="color: #475569;">—</span></td>`;
+        return;
+      }
+
+      const link = linkMap[`${rowNode.id}_${colNode.id}`];
+      if (!link) {
+        html += `<td><span style="color: #334155;">·</span></td>`;
+      } else {
+        const rssi = link.rssi !== null && link.rssi !== undefined ? Number(link.rssi) : null;
+        let bg = "#1e293b";
+        let textCol = "#38bdf8";
+        let badge = "LINK";
+
+        if (rssi !== null) {
+          badge = `${rssi} dBm`;
+          if (rssi >= -60) { bg = "#064e3b"; textCol = "#6ee7b7"; }
+          else if (rssi >= -70) { bg = "#14532d"; textCol = "#a3e635"; }
+          else if (rssi >= -80) { bg = "#713f12"; textCol = "#fde047"; }
+          else { bg = "#7f1d1d"; textCol = "#fca5a5"; }
+        }
+
+        html += `
+          <td style="cursor: pointer;" title="Direct link between ${escapeHtml(rowNode.label)} and ${escapeHtml(colNode.label)} (${badge})" onclick="showNodeInspector(lastTopologyData.nodes.find(x => x.id === '${rowNode.id}'))">
+            <span class="matrix-cell" style="background: ${bg}; color: ${textCol};">${badge}</span>
+          </td>
+        `;
+      }
+    });
+
+    html += `</tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  container.innerHTML = html;
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 3: Sankey / Alluvial Routing Flow
+   ========================================================================== */
+function renderSankeyFlow(nodes, edges) {
+  const svg = document.getElementById("mesh-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 720);
+  const height = Math.max(rect.height || 540, 500);
+
+  if (!nodes || nodes.length === 0) {
+    renderEmptyTopology(svg, width, height);
+    return;
+  }
+
+  const affinity = resolveBorderRouterAffinity(nodes, edges);
+  topologyPhysicsState.affinityData = affinity;
+
+  const tbrs = nodes.filter(n => n.type === "border_router");
+  const routers = nodes.filter(n => n.type === "router");
+  const seds = nodes.filter(n => n.type !== "border_router" && n.type !== "router");
+
+  const colX = {
+    tbr: 70,
+    router: width / 2 - 80,
+    sed: width - 230,
+  };
+
+  const nodePos = {};
+  const assignCol = (colNodes, x) => {
+    const count = Math.max(colNodes.length, 1);
+    colNodes.forEach((n, idx) => {
+      const y = ((idx + 1) / (count + 1)) * (height - 90) + 40;
+      nodePos[n.id] = { x, y };
+    });
+  };
+
+  assignCol(tbrs, colX.tbr);
+  assignCol(routers, colX.router);
+  assignCol(seds, colX.sed);
+
+  nodes.forEach((n, idx) => {
+    if (!nodePos[n.id]) {
+      nodePos[n.id] = { x: width / 2, y: 50 + idx * 40 };
+    }
+  });
+
+  const ribbonsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const nodesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(ribbonsG);
+  svg.appendChild(nodesG);
+
+  // Column Headers
+  const cols = [
+    { label: "1. BORDER ROUTERS (GATEWAYS)", x: colX.tbr + 75 },
+    { label: "2. ROUTERS (MESH BACKBONE)", x: colX.router + 75 },
+    { label: "3. SLEEPY SENSORS (END DEVICES)", x: colX.sed + 75 },
+  ];
+  cols.forEach(c => {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", c.x);
+    t.setAttribute("y", "26");
+    t.setAttribute("fill", "#38bdf8");
+    t.setAttribute("font-size", "11");
+    t.setAttribute("font-weight", "700");
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = c.label;
+    svg.appendChild(t);
+  });
+
+  // Flow Ribbons
+  edges.forEach((e) => {
+    const sId = typeof e.source === "object" ? e.source.id : e.source;
+    const tId = typeof e.target === "object" ? e.target.id : e.target;
+    let p1 = nodePos[sId];
+    let p2 = nodePos[tId];
+    if (!p1 || !p2) return;
+
+    // Direct ribbons from left to right
+    if (p1.x > p2.x) { const tmp = p1; p1 = p2; p2 = tmp; }
+
+    const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: "#38bdf8" };
+    const strokeColor = aff.color || "#0284c7";
+
+    const x1 = p1.x + 155;
+    const y1 = p1.y + 17;
+    const x2 = p2.x;
+    const y2 = p2.y + 17;
+    const cX = x1 + (x2 - x1) * 0.5;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M ${x1} ${y1} C ${cX} ${y1}, ${cX} ${y2}, ${x2} ${y2}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", strokeColor);
+    path.setAttribute("stroke-width", "3.5");
+    path.setAttribute("stroke-opacity", "0.65");
+    path.style.transition = "stroke-width 0.2s, stroke-opacity 0.2s";
+
+    path.addEventListener("mouseenter", () => {
+      path.setAttribute("stroke-width", "6.5");
+      path.setAttribute("stroke-opacity", "1.0");
+    });
+    path.addEventListener("mouseleave", () => {
+      path.setAttribute("stroke-width", "3.5");
+      path.setAttribute("stroke-opacity", "0.65");
+    });
+
+    ribbonsG.appendChild(path);
+  });
+
+  // Node Pill Cards
+  nodes.forEach((n) => {
+    const pos = nodePos[n.id];
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.style.cursor = "pointer";
+    g.setAttribute("transform", `translate(${pos.x}, ${pos.y})`);
+
+    const isTbr = n.type === "border_router";
+    const isRouter = n.type === "router";
+    const cardBorder = isTbr ? "#38bdf8" : (isRouter ? "#10b981" : "#8b5cf6");
+
+    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bgRect.setAttribute("width", "155");
+    bgRect.setAttribute("height", "34");
+    bgRect.setAttribute("rx", "6");
+    bgRect.setAttribute("fill", "#0f172a");
+    bgRect.setAttribute("stroke", cardBorder);
+    bgRect.setAttribute("stroke-width", "1.5");
+    g.appendChild(bgRect);
+
+    const iconText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    iconText.setAttribute("x", "12");
+    iconText.setAttribute("y", "21");
+    iconText.setAttribute("font-size", "12");
+    iconText.textContent = isTbr ? "📡" : (isRouter ? "🔁" : "🔋");
+    g.appendChild(iconText);
+
+    const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    nameText.setAttribute("x", "30");
+    nameText.setAttribute("y", "21");
+    nameText.setAttribute("fill", "#f8fafc");
+    nameText.setAttribute("font-size", "11");
+    nameText.setAttribute("font-weight", "600");
+    nameText.textContent = (n.label || `Node ${n.node_id}`).substring(0, 16);
+    g.appendChild(nameText);
+
+    if (n.rssi !== null && n.rssi !== undefined) {
+      const rssiBadge = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      rssiBadge.setAttribute("x", "146");
+      rssiBadge.setAttribute("y", "21");
+      rssiBadge.setAttribute("fill", Number(n.rssi) > -70 ? "#34d399" : "#fbbf24");
+      rssiBadge.setAttribute("font-size", "9");
+      rssiBadge.setAttribute("font-weight", "700");
+      rssiBadge.setAttribute("text-anchor", "end");
+      rssiBadge.textContent = `${n.rssi}`;
+      g.appendChild(rssiBadge);
+    }
+
+    g.addEventListener("click", () => showNodeInspector(n));
+    nodesG.appendChild(g);
+    n.elem = g;
+  });
+
+  updateTopologyLegend();
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 4: Tactical Sonar / Radar Scope
+   ========================================================================== */
+function renderRadarScope(nodes, edges) {
+  const svg = document.getElementById("mesh-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
+  const height = Math.max(rect.height || 540, 500);
+
+  if (!nodes || nodes.length === 0) {
+    renderEmptyTopology(svg, width, height);
+    return;
+  }
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const R = Math.min(cx, cy) - 35;
+
+  // Radar Base Scope Circle
+  const scopeBg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  scopeBg.setAttribute("cx", cx);
+  scopeBg.setAttribute("cy", cy);
+  scopeBg.setAttribute("r", R);
+  scopeBg.setAttribute("fill", "#030712");
+  scopeBg.setAttribute("stroke", "#0284c7");
+  scopeBg.setAttribute("stroke-width", "2");
+  svg.appendChild(scopeBg);
+
+  // Concentric Range Rings
+  const rings = [
+    { pct: 0.25, label: "-40 dBm (Point-Blank)" },
+    { pct: 0.50, label: "-60 dBm (Strong)" },
+    { pct: 0.75, label: "-75 dBm (Good)" },
+    { pct: 1.00, label: "-90 dBm (Fringe)" },
+  ];
+
+  rings.forEach((r) => {
+    const ringCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    ringCircle.setAttribute("cx", cx);
+    ringCircle.setAttribute("cy", cy);
+    ringCircle.setAttribute("r", R * r.pct);
+    ringCircle.setAttribute("fill", "none");
+    ringCircle.setAttribute("stroke", "#0369a1");
+    ringCircle.setAttribute("stroke-width", "1");
+    ringCircle.setAttribute("stroke-dasharray", "4,4");
+    svg.appendChild(ringCircle);
+
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", cx + 8);
+    lbl.setAttribute("y", cy - R * r.pct + 12);
+    lbl.setAttribute("fill", "#38bdf8");
+    lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("font-family", "monospace");
+    lbl.textContent = r.label;
+    svg.appendChild(lbl);
+  });
+
+  // Crosshair Axes
+  const axesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  axesG.setAttribute("stroke", "#0c4a6e");
+  axesG.setAttribute("stroke-width", "1");
+  axesG.innerHTML = `
+    <line x1="${cx - R}" y1="${cy}" x2="${cx + R}" y2="${cy}" />
+    <line x1="${cx}" y1="${cy - R}" x2="${cx}" y2="${cy + R}" />
+    <line x1="${cx - R * 0.7}" y1="${cy - R * 0.7}" x2="${cx + R * 0.7}" y2="${cy + R * 0.7}" stroke-dasharray="2,4" />
+    <line x1="${cx - R * 0.7}" y1="${cy + R * 0.7}" x2="${cx + R * 0.7}" y2="${cy - R * 0.7}" stroke-dasharray="2,4" />
+  `;
+  svg.appendChild(axesG);
+
+  // Animated Rotating Sweep Beam
+  const sweepG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  sweepG.setAttribute("class", "radar-sweep-beam");
+  sweepG.style.transformOrigin = `${cx}px ${cy}px`;
+  sweepG.innerHTML = `
+    <defs>
+      <linearGradient id="sweepGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.4" />
+        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <path d="M ${cx} ${cy} L ${cx + R} ${cy} A ${R} ${R} 0 0 1 ${cx + R * 0.707} ${cy + R * 0.707} Z" fill="url(#sweepGrad)" />
+    <line x1="${cx}" y1="${cy}" x2="${cx + R}" y2="${cy}" stroke="#38bdf8" stroke-width="2" />
+  `;
+  svg.appendChild(sweepG);
+
+  // Plot Target Blips
+  const blipsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(blipsG);
+
+  const N = Math.max(nodes.length, 1);
+  nodes.forEach((n, idx) => {
+    let r = R * 0.55;
+    if (n.type === "border_router") {
+      r = R * 0.18;
+    } else if (n.rssi !== null && n.rssi !== undefined) {
+      const norm = Math.max(0.12, Math.min(0.95, (-30 - Number(n.rssi)) / 65));
+      r = R * norm;
+    } else if (n.type === "end_device") {
+      r = R * 0.78;
+    }
+
+    const angle = (2 * Math.PI * idx) / N - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.style.cursor = "pointer";
+    g.setAttribute("transform", `translate(${x}, ${y})`);
+
+    const isWeak = n.status === "weak" || (n.rssi !== null && Number(n.rssi) < -80);
+    const blipColor = n.type === "border_router" ? "#38bdf8" : (isWeak ? "#f59e0b" : "#22c55e");
+
+    if (isWeak || n.status === "offline") {
+      const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      halo.setAttribute("r", "14");
+      halo.setAttribute("fill", "none");
+      halo.setAttribute("stroke", blipColor);
+      halo.setAttribute("stroke-width", "1.5");
+      halo.setAttribute("stroke-dasharray", "3,2");
+      g.appendChild(halo);
+    }
+
+    const blip = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    blip.setAttribute("r", n.type === "border_router" ? "8" : "5.5");
+    blip.setAttribute("fill", blipColor);
+    blip.setAttribute("stroke", "#ffffff");
+    blip.setAttribute("stroke-width", "1.5");
+    g.appendChild(blip);
+
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", "10");
+    lbl.setAttribute("y", "4");
+    lbl.setAttribute("fill", "#f8fafc");
+    lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("font-family", "monospace");
+    lbl.setAttribute("font-weight", "600");
+    lbl.textContent = `${n.label || `Node ${n.node_id}`}${n.rssi ? ` (${n.rssi}dBm)` : ''}`;
+    g.appendChild(lbl);
+
+    g.addEventListener("click", () => showNodeInspector(n));
+    blipsG.appendChild(g);
+    n.elem = g;
+  });
+
+  // Tactical Corner Header
+  const head = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  head.setAttribute("x", "20");
+  head.setAttribute("y", "30");
+  head.setAttribute("fill", "#22c55e");
+  head.setAttribute("font-size", "11");
+  head.setAttribute("font-family", "monospace");
+  head.setAttribute("font-weight", "700");
+  head.textContent = `🎯 SONAR SWEEP: ${nodes.length} TARGETS ACQUIRED`;
+  svg.appendChild(head);
+
+  updateTopologyLegend();
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 5: Radial Sunburst Partition View
+   ========================================================================== */
+function renderSunburst(nodes, edges) {
+  const svg = document.getElementById("mesh-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
+  const height = Math.max(rect.height || 540, 500);
+
+  if (!nodes || nodes.length === 0) {
+    renderEmptyTopology(svg, width, height);
+    return;
+  }
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const affinity = resolveBorderRouterAffinity(nodes, edges);
+  topologyPhysicsState.affinityData = affinity;
+
+  const tbrs = nodes.filter(n => n.type === "border_router");
+  const nonTbrs = nodes.filter(n => n.type !== "border_router");
+
+  const sunburstG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(sunburstG);
+
+  // Center Core Circle (Thread Network PAN)
+  const coreCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  coreCircle.setAttribute("cx", cx);
+  coreCircle.setAttribute("cy", cy);
+  coreCircle.setAttribute("r", "52");
+  coreCircle.setAttribute("fill", "#0f172a");
+  coreCircle.setAttribute("stroke", "#38bdf8");
+  coreCircle.setAttribute("stroke-width", "2.5");
+  sunburstG.appendChild(coreCircle);
+
+  const coreText1 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  coreText1.setAttribute("x", cx);
+  coreText1.setAttribute("y", cy - 6);
+  coreText1.setAttribute("fill", "#38bdf8");
+  coreText1.setAttribute("font-size", "11");
+  coreText1.setAttribute("font-weight", "700");
+  coreText1.setAttribute("text-anchor", "middle");
+  coreText1.textContent = "THREAD PAN";
+  sunburstG.appendChild(coreText1);
+
+  const coreText2 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  coreText2.setAttribute("x", cx);
+  coreText2.setAttribute("y", cy + 12);
+  coreText2.setAttribute("fill", "#94a3b8");
+  coreText2.setAttribute("font-size", "10");
+  coreText2.setAttribute("font-weight", "600");
+  coreText2.setAttribute("text-anchor", "middle");
+  coreText2.textContent = `${nodes.length} Devices`;
+  sunburstG.appendChild(coreText2);
+
+  // SVG Donut Arc Helper
+  const describeArc = (x, y, r1, r2, startAngle, endAngle) => {
+    const p1 = { x: x + r2 * Math.cos(startAngle), y: y + r2 * Math.sin(startAngle) };
+    const p2 = { x: x + r2 * Math.cos(endAngle), y: y + r2 * Math.sin(endAngle) };
+    const p3 = { x: x + r1 * Math.cos(endAngle), y: y + r1 * Math.sin(endAngle) };
+    const p4 = { x: x + r1 * Math.cos(startAngle), y: y + r1 * Math.sin(startAngle) };
+    const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+    return `M ${p1.x} ${p1.y} A ${r2} ${r2} 0 ${largeArc} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${r1} ${r1} 0 ${largeArc} 0 ${p4.x} ${p4.y} Z`;
+  };
+
+  // Ring 1: Border Routers (r: 60 -> 135)
+  const tbrCount = Math.max(tbrs.length, 1);
+  const tbrAngleSpan = (2 * Math.PI) / tbrCount;
+
+  tbrs.forEach((tbr, idx) => {
+    const a1 = idx * tbrAngleSpan - Math.PI / 2;
+    const a2 = a1 + tbrAngleSpan - 0.04;
+    const aff = affinity.brMap[tbr.id] || { color: "#0284c7" };
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", describeArc(cx, cy, 60, 135, a1, a2));
+    path.setAttribute("fill", aff.color || "#0284c7");
+    path.setAttribute("fill-opacity", "0.85");
+    path.setAttribute("stroke", "#0f172a");
+    path.setAttribute("stroke-width", "2");
+    path.style.cursor = "pointer";
+
+    path.addEventListener("click", () => showNodeInspector(tbr));
+    sunburstG.appendChild(path);
+    tbr.elem = path;
+
+    const midAngle = (a1 + a2) / 2;
+    const midR = 98;
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", cx + midR * Math.cos(midAngle));
+    lbl.setAttribute("y", cy + midR * Math.sin(midAngle) + 4);
+    lbl.setAttribute("fill", "#ffffff");
+    lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("font-weight", "700");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.textContent = (tbr.label || `TBR ${idx + 1}`).substring(0, 12);
+    sunburstG.appendChild(lbl);
+  });
+
+  // Ring 2: Member Devices (r: 142 -> 235)
+  const nonTbrCount = Math.max(nonTbrs.length, 1);
+  const nonTbrAngleSpan = (2 * Math.PI) / nonTbrCount;
+
+  nonTbrs.forEach((n, idx) => {
+    const a1 = idx * nonTbrAngleSpan - Math.PI / 2;
+    const a2 = a1 + nonTbrAngleSpan - 0.03;
+    const isRouter = n.type === "router";
+    const sliceColor = isRouter ? "#10b981" : "#8b5cf6";
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", describeArc(cx, cy, 142, 235, a1, a2));
+    path.setAttribute("fill", sliceColor);
+    path.setAttribute("fill-opacity", "0.78");
+    path.setAttribute("stroke", "#0f172a");
+    path.setAttribute("stroke-width", "1.5");
+    path.style.cursor = "pointer";
+
+    path.addEventListener("click", () => showNodeInspector(n));
+    sunburstG.appendChild(path);
+    n.elem = path;
+
+    const midAngle = (a1 + a2) / 2;
+    const midR = 188;
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", cx + midR * Math.cos(midAngle));
+    lbl.setAttribute("y", cy + midR * Math.sin(midAngle) + 3);
+    lbl.setAttribute("fill", "#ffffff");
+    lbl.setAttribute("font-size", "9");
+    lbl.setAttribute("font-weight", "600");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.textContent = (n.label || `Node ${n.node_id}`).substring(0, 10);
+    sunburstG.appendChild(lbl);
+  });
+
+  const header = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  header.setAttribute("x", "20");
+  header.setAttribute("y", "30");
+  header.setAttribute("fill", "#38bdf8");
+  header.setAttribute("font-size", "11");
+  header.setAttribute("font-weight", "700");
+  header.textContent = "🍩 RADIAL SUNBURST PARTITION HIERARCHY";
+  svg.appendChild(header);
+
+  updateTopologyLegend();
+}
+
+/* ==========================================================================
+   VISUAL PERSPECTIVE 6: Circular Chord / Routing Ribbon Bundle
+   ========================================================================== */
+function renderChordBundle(nodes, edges) {
+  const svg = document.getElementById("mesh-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
+  const height = Math.max(rect.height || 540, 500);
+
+  if (!nodes || nodes.length === 0) {
+    renderEmptyTopology(svg, width, height);
+    return;
+  }
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const R = Math.min(cx, cy) - 75;
+
+  const chordsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const perimeterG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(chordsG);
+  svg.appendChild(perimeterG);
+
+  const N = Math.max(nodes.length, 1);
+  const posMap = {};
+
+  nodes.forEach((n, idx) => {
+    const angle = (2 * Math.PI * idx) / N - Math.PI / 2;
+    posMap[n.id] = {
+      x: cx + R * Math.cos(angle),
+      y: cy + R * Math.sin(angle),
+      angle,
+    };
+  });
+
+  const chordElemsByNode = {};
+  nodes.forEach(n => { chordElemsByNode[n.id] = []; });
+
+  // Interior Curved Chords
+  edges.forEach((e) => {
+    const sId = typeof e.source === "object" ? e.source.id : e.source;
+    const tId = typeof e.target === "object" ? e.target.id : e.target;
+    const p1 = posMap[sId];
+    const p2 = posMap[tId];
+    if (!p1 || !p2) return;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "#38bdf8");
+    path.setAttribute("stroke-width", "2.2");
+    path.setAttribute("stroke-opacity", "0.5");
+    path.style.transition = "stroke 0.2s, stroke-width 0.2s, stroke-opacity 0.2s";
+
+    chordsG.appendChild(path);
+    if (chordElemsByNode[sId]) chordElemsByNode[sId].push(path);
+    if (chordElemsByNode[tId]) chordElemsByNode[tId].push(path);
+  });
+
+  // Perimeter Node Badges
+  nodes.forEach((n) => {
+    const pos = posMap[n.id];
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.style.cursor = "pointer";
+
+    const isTbr = n.type === "border_router";
+    const isRouter = n.type === "router";
+    const color = isTbr ? "#38bdf8" : (isRouter ? "#10b981" : "#8b5cf6");
+
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", pos.x);
+    circle.setAttribute("cy", pos.y);
+    circle.setAttribute("r", isTbr ? "9" : "7");
+    circle.setAttribute("fill", color);
+    circle.setAttribute("stroke", "#0f172a");
+    circle.setAttribute("stroke-width", "2");
+    g.appendChild(circle);
+
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    const isRight = Math.cos(pos.angle) >= 0;
+    const lx = pos.x + (isRight ? 12 : -12);
+    const ly = pos.y + 4;
+    lbl.setAttribute("x", lx);
+    lbl.setAttribute("y", ly);
+    lbl.setAttribute("fill", "#f8fafc");
+    lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("font-weight", isTbr ? "700" : "600");
+    lbl.setAttribute("text-anchor", isRight ? "start" : "end");
+    lbl.textContent = (n.label || `Node ${n.node_id}`).substring(0, 14);
+    g.appendChild(lbl);
+
+    // Hover isolate interaction
+    g.addEventListener("mouseenter", () => {
+      const activeSet = new Set(chordElemsByNode[n.id] || []);
+      chordsG.childNodes.forEach((ch) => {
+        if (activeSet.has(ch)) {
+          ch.setAttribute("stroke", "#10b981");
+          ch.setAttribute("stroke-width", "4");
+          ch.setAttribute("stroke-opacity", "1.0");
+        } else {
+          ch.setAttribute("stroke-opacity", "0.06");
+        }
+      });
+    });
+
+    g.addEventListener("mouseleave", () => {
+      chordsG.childNodes.forEach((ch) => {
+        ch.setAttribute("stroke", "#38bdf8");
+        ch.setAttribute("stroke-width", "2.2");
+        ch.setAttribute("stroke-opacity", "0.5");
+      });
+    });
+
+    g.addEventListener("click", () => showNodeInspector(n));
+    perimeterG.appendChild(g);
+    n.elem = g;
+  });
+
+  const header = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  header.setAttribute("x", "20");
+  header.setAttribute("y", "30");
+  header.setAttribute("fill", "#38bdf8");
+  header.setAttribute("font-size", "11");
+  header.setAttribute("font-weight", "700");
+  header.textContent = "🕸️ CIRCULAR CHORD / ROUTING RIBBON BUNDLE";
+  svg.appendChild(header);
+
+  updateTopologyLegend();
 }
 
 function updateTopologySearchHighlight() {

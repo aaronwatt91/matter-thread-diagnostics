@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.4.0] - 2026-11-01
+
+### Added: 6 Distinct Network Topology Visual Perspectives
+- **1. 🚇 Subway / Transit Map View**:
+  - Schematic metro/transit styling with 45°/90° rectilinear colored tracks and station nodes.
+  - Border Routers rendered as large double-ringed Central Interchange Stations / Terminal Hubs.
+  - Thread Routers rendered as transfer station discs along backbone lines.
+  - Battery End Devices (SEDs) rendered as local stop station ticks along branch tracks.
+- **2. 🎛️ Signal Cross-Matrix / 2D Heatmap Grid**:
+  - Interactive high-density 2D tabular matrix comparing every device against every peer.
+  - Summary metric cards for Total Devices, Direct RF Links, Mesh Density %, and Average Mesh Link Signal.
+  - Color-coded cells showing exact link RSSI (>-60 dBm emerald, -60 to -70 lime, -70 to -80 amber, <-80 red).
+  - Sticky headers and row labels with direct node inspection on click.
+- **3. 🌊 Sankey / Alluvial Routing Flow Diagram**:
+  - Left-to-right fluid stream diagram: Border Routers (Gateways) &rarr; Routers (Mesh Backbone) &rarr; Battery Sensors.
+  - Glassmorphism node cards with live signal dBm badges.
+  - Fluid cubic bezier ribbons with hover focus and thickness scaled by routing importance.
+- **4. 🎯 Tactical Sonar / Radar Scope**:
+  - Dark military tactical radar scope with concentric range rings (-40 dBm, -60 dBm, -75 dBm, -90 dBm).
+  - Crosshair axes and degree ticks.
+  - Continuously rotating animated sweeping sonar beam.
+  - Target blips plotted in true polar space based on real RF signal distance with warning halo beacons.
+- **5. 🍩 Radial Sunburst Partition Hierarchy**:
+  - Multi-tiered circular ring partition: Center Network PAN &rarr; Border Router slices &rarr; Router repeaters &rarr; End Devices.
+  - Arc sizes proportional to child device counts with full partition color groupings.
+- **6. 🕸️ Circular Chord / Routing Ribbon Bundle**:
+  - Clean outer perimeter circle with outward-radiating device labels.
+  - Quadratic bezier routing ribbons connecting peers through the center.
+  - Interactive Spotlight Hover: hovering any device illuminates only its direct connections while dimming all other chords.
+
+
 ## [2.3.0] - 2026-11-01
 
 ### Added: Multi-Perspective Topology Views, Dynamic Heatmaps & Filters

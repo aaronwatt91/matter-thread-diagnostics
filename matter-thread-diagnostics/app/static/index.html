@@ -299,18 +299,27 @@
             <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #38bdf8;">
               <i class="fa-solid fa-shapes"></i> Layout:
             </span>
-            <div class="btn-group" role="group" style="display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid #475569;">
-              <button type="button" class="btn btn-layout-mode active" data-layout="force" style="padding: 5px 11px; font-size: 12px;" title="Organic RF signal-strength physics simulation">
-                <i class="fa-solid fa-atom"></i> Force / RF Mesh
+            <div class="btn-group" role="group" style="display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid #475569; flex-wrap: wrap;">
+              <button type="button" class="btn btn-layout-mode active" data-layout="force" style="padding: 5px 9px; font-size: 11px;" title="Organic RF signal-strength physics simulation">
+                <i class="fa-solid fa-atom"></i> Force Mesh
               </button>
-              <button type="button" class="btn btn-layout-mode" data-layout="tree" style="padding: 5px 11px; font-size: 12px;" title="Hierarchical Tree: TBR at Top -> Routers -> End Devices">
-                <i class="fa-solid fa-sitemap"></i> Tree / Hierarchy
+              <button type="button" class="btn btn-layout-mode" data-layout="transit" style="padding: 5px 9px; font-size: 11px;" title="Subway / Transit Map view with trunk lines and station hubs">
+                <i class="fa-solid fa-train-subway"></i> 1. Transit Map
               </button>
-              <button type="button" class="btn btn-layout-mode" data-layout="radial" style="padding: 5px 11px; font-size: 12px;" title="Concentric Orbit Rings: TBR in Center -> Routers -> Sensors">
-                <i class="fa-solid fa-circle-dot"></i> Concentric / Orbit
+              <button type="button" class="btn btn-layout-mode" data-layout="matrix" style="padding: 5px 9px; font-size: 11px;" title="2D Signal Cross-Matrix and link budget heatmap">
+                <i class="fa-solid fa-table-cells"></i> 2. Signal Matrix
               </button>
-              <button type="button" class="btn btn-layout-mode" data-layout="room" style="padding: 5px 11px; font-size: 12px;" title="Grouped by Home Assistant Room / Area">
-                <i class="fa-solid fa-house-laptop"></i> Room / Area
+              <button type="button" class="btn btn-layout-mode" data-layout="sankey" style="padding: 5px 9px; font-size: 11px;" title="Left-to-right routing flow: TBRs -> Routers -> End Devices">
+                <i class="fa-solid fa-water"></i> 3. Routing Flow
+              </button>
+              <button type="button" class="btn btn-layout-mode" data-layout="radar" style="padding: 5px 9px; font-size: 11px;" title="Tactical Sonar Radar Scope with RSSI distance rings and sweep">
+                <i class="fa-solid fa-crosshairs"></i> 4. Radar Scope
+              </button>
+              <button type="button" class="btn btn-layout-mode" data-layout="sunburst" style="padding: 5px 9px; font-size: 11px;" title="Multi-tiered circular sunburst rings with drilldown">
+                <i class="fa-solid fa-circle-notch"></i> 5. Sunburst
+              </button>
+              <button type="button" class="btn btn-layout-mode" data-layout="chord" style="padding: 5px 9px; font-size: 11px;" title="Perimeter circle with routing ribbons">
+                <i class="fa-solid fa-bezier-curve"></i> 6. Chord Bundle
               </button>
             </div>
           </div>
@@ -358,8 +367,9 @@
           <span style="margin-left: auto; color: #38bdf8; font-size: 11px;"><i class="fa-solid fa-up-down-left-right"></i> Drag nodes • Scroll to zoom • Distance = Signal Strength</span>
         </div>
 
-        <div id="topology-canvas-container" style="position: relative; overflow: hidden;">
-          <svg id="mesh-svg" width="100%" height="540" style="cursor: grab; user-select: none;"></svg>
+        <div id="topology-canvas-container" style="position: relative; overflow: hidden; min-height: 540px; border-radius: 8px; background: #0a0f1d; border: 1px solid #1e293b;">
+          <svg id="mesh-svg" width="100%" height="540" style="cursor: grab; user-select: none; display: block;"></svg>
+          <div id="topology-matrix-container" class="hidden" style="min-height: 540px; max-height: 600px; overflow: auto; padding: 16px;"></div>
         </div>
         <div id="topology-status-bar" style="font-size: 12px; color: var(--text-muted); margin-top: 8px; display: flex; justify-content: space-between;">
           <span id="topology-last-scan">Ready to scan mesh</span>
