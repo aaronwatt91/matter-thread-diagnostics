@@ -1095,6 +1095,10 @@ function renderThreadView(data) {
 
   renderKPIs(data);
   renderRulesAndTables(data);
+  const rulesGrid = document.querySelector(".rules-grid");
+  if (rulesGrid) {
+    rulesGrid.style.display = "grid";
+  }
   if (data.topology) {
     renderTopologyData(data.topology);
   }
@@ -1124,8 +1128,13 @@ async function fetchZigbeeDiagnostics(switchToScanTab = false) {
     renderZigbeeView(data);
 
     if (topFeedback) {
-      topFeedback.style.color = "var(--color-success)";
-      topFeedback.innerHTML = `✓ Zigbee scan complete: ${escapeHtml(data.coordinator?.name || 'Coordinator')} online • ${data.total_devices || 0} Devices (${data.routers_count || 0} Routers, ${data.end_devices_count || 0} End Devices)`;
+      if (data.scan_warning) {
+        topFeedback.style.color = "#fbbf24";
+        topFeedback.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(data.scan_warning)}`;
+      } else {
+        topFeedback.style.color = "var(--color-success)";
+        topFeedback.innerHTML = `✓ Zigbee scan complete: ${escapeHtml(data.coordinator?.name || 'Coordinator')} online • ${data.total_devices || 0} Devices (${data.routers_count || 0} Routers, ${data.end_devices_count || 0} End Devices)`;
+      }
     }
 
     if (switchToScanTab) {
@@ -1370,6 +1379,10 @@ function renderZigbeeView(data) {
   if (!data) return;
   renderZigbeeKPIs(data);
   renderZigbeeTables(data);
+  const rulesGrid = document.querySelector(".rules-grid");
+  if (rulesGrid) {
+    rulesGrid.style.display = "none";
+  }
   if (data.topology) {
     renderTopologyData(data.topology);
   }

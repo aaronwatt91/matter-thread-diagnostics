@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.6.1] - 2026-11-01
+
+### Fixed: Tab Isolation & Zigbee Scanner HTTP 500 Error
+- **Fixed Tab Isolation & Layout Leak**:
+  - Removed an extraneous closing `</div>` in `index.html` that prematurely closed `<section id="tab-rules">`, preventing the 4 diagnostic rule cards ("1. Multi-Border Router Synchronization", "2. 2.4 GHz RF Coexistence", "3. Host Kernel IPv6 ULA Routes & ICMPv6 Pings", "4. Node Link Quality & Server Logs") from leaking and displaying across all navigation tabs.
+  - Dynamically hides the 4 Thread-specific rule cards when switched to Zigbee mode, and cleanly restores them when switching back to Thread.
+- **Resolved Zigbee Scan HTTP 500 Error**:
+  - **Type-Safe Ingestion**: Built `_safe_int`, `_safe_float`, and `_safe_str` helpers in `zigbee_analyzer.py` to guard against Home Assistant string LQI values (`"unknown"`, `"unavailable"`), non-numeric RSSI strings, hex/negative NWKs, and integer IEEE addresses.
+  - **Channel Arithmetic**: Safeguarded 2.4 GHz frequency calculation `freq_mhz = 2405 + 5 * (ch_int - 11)` against string channel values.
+  - **Graceful Error Handling & Fallback**: Wrapped `get_zigbee_telemetry` and `@app.get("/api/zigbee/scan")` in top-level exception handlers with diagnostic logging and realistic fallback data, ensuring `HTTP 500` is never thrown.
+  - **Unit Tests**: Added `test_zigbee_defensive_types_and_resilience()` verifying parsing resilience with corrupted or non-standard inputs.
+
 ## [2.6.0] - 2026-11-01
 
 ### Added: Zigbee & Thread Dual-Protocol Network Scanner & Unified Diagnostics

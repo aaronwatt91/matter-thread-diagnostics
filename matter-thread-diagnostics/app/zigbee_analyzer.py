@@ -10,6 +10,49 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger("matter_thread_ai.zigbee")
 
 
+def _safe_int(val: Any, default: Optional[int] = None) -> Optional[int]:
+    """Safely convert any value to int, handling strings, hex, floats, and None."""
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return int(val)
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, str):
+        v = val.strip()
+        if not v or v.lower() in ("unknown", "unavailable", "none", "null", "n/a"):
+            return default
+        try:
+            return int(v, 0) if v.startswith(("0x", "0X")) else int(float(v))
+        except (ValueError, TypeError):
+            return default
+    return default
+
+
+def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
+    """Safely convert any value to float, handling strings and None."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        v = val.strip()
+        if not v or v.lower() in ("unknown", "unavailable", "none", "null", "n/a"):
+            return default
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return default
+    return default
+
+
+def _safe_str(val: Any, default: str = "") -> str:
+    """Safely convert any value to string."""
+    if val is None:
+        return default
+    return str(val).strip()
+
+
 class ZigbeeAnalyzer:
     """Evaluates Zigbee network topology, link qualities, and device metrics."""
 
@@ -22,8 +65,7 @@ class ZigbeeAnalyzer:
         """
         Evaluate overall health score (0-100) and device statistics for a Zigbee network.
         """
-        total = len(devices)
-        if total == 0:
+        if not devices:
             return {
                 "health_score": 100,
                 "total_devices": 0,
@@ -36,18 +78,24 @@ class ZigbeeAnalyzer:
                 "summary": "No Zigbee devices discovered yet.",
             }
 
-        routers = [d for d in devices if d.get("device_type", "").lower() in ("router", "coordinator")]
-        end_devices = [d for d in devices if d.get("device_type", "").lower() not in ("router", "coordinator")]
-        offline = [d for d in devices if not d.get("available", True) or d.get("status") == "offline"]
-        weak = [
-            d for d in devices
-            if d.get("available", True) and (
-                (d.get("lqi") is not None and d.get("lqi") < 65)
-                or (d.get("rssi") is not None and d.get("rssi") < -82)
-            )
-        ]
+        routers = [d for d in devices if isinstance(d, dict) and _safe_str(d.get("device_type")).lower() in ("router", "coordinator")]
+        end_devices = [d for d in devices if isinstance(d, dict) and _safe_str(d.get("device_type")).lower() not in ("router", "coordinator")]
+        offline = [d for d in devices if isinstance(d, dict) and (not d.get("available", True) or d.get("status") == "offline")]
 
-        lqi_values = [d["lqi"] for d in devices if isinstance(d.get("lqi"), (int, float))]
+        weak = []
+        lqi_values = []
+        for d in devices:
+            if not isinstance(d, dict):
+                continue
+            is_avail = d.get("available", True) and d.get("status") != "offline"
+            lqi = _safe_int(d.get("lqi"))
+            rssi = _safe_float(d.get("rssi"))
+            if lqi is not None:
+                lqi_values.append(lqi)
+            if is_avail and ((lqi is not None and lqi < 65) or (rssi is not None and rssi < -82)):
+                weak.append(d)
+
+        total = len(devices)
         avg_lqi = int(sum(lqi_values) / len(lqi_values)) if lqi_values else 200
 
         # Health score calculation
@@ -101,9 +149,9 @@ class ZigbeeAnalyzer:
     def build_zigbee_topology(
         devices: List[Dict[str, Any]],
         coordinator: Dict[str, Any],
-        channel: Optional[int] = 15,
-        pan_id: Optional[str] = "0x1A2B",
-        extended_pan_id: Optional[str] = "00:12:4b:00:1c:a2:b3:c4",
+        channel: Optional[Any] = 15,
+        pan_id: Optional[Any] = "0x1A2B",
+        extended_pan_id: Optional[Any] = "00:12:4b:00:1c:a2:b3:c4",
     ) -> Dict[str, Any]:
         """
         Build an authentic graph (nodes & edges) for Zigbee topology visualization
@@ -113,9 +161,16 @@ class ZigbeeAnalyzer:
         edges: List[Dict[str, Any]] = []
         seen_edges = set()
 
-        coord_ieee = coordinator.get("ieee") or coordinator.get("ieee_address") or "00:12:4b:00:coord"
-        coord_name = coordinator.get("name") or "Zigbee Coordinator"
-        coord_node_id = f"zb_coord_{coord_ieee.replace(':', '')[-6:]}"
+        coordinator = coordinator or {}
+        coord_ieee = _safe_str(coordinator.get("ieee") or coordinator.get("ieee_address") or "00:12:4b:00:coord")
+        coord_name = _safe_str(coordinator.get("name") or "Zigbee Coordinator")
+        coord_clean = coord_ieee.replace(":", "").replace("-", "")
+        coord_suffix = coord_clean[-6:] if len(coord_clean) >= 6 else (coord_clean or "coord")
+        coord_node_id = f"zb_coord_{coord_suffix}"
+
+        ch_int = _safe_int(channel, default=15)
+        pan_str = _safe_str(pan_id, default="0x1A2B")
+        ext_pan_str = _safe_str(extended_pan_id, default="00:12:4b:00:1c:a2:b3:c4")
 
         # 1. Add Coordinator as root / central node
         nodes.append({
@@ -125,20 +180,20 @@ class ZigbeeAnalyzer:
             "label": coord_name,
             "type": "border_router",  # Styled as prominent central hub / root tier
             "protocol": "zigbee",
-            "vendor": coordinator.get("vendor") or "Silicon Labs / ZHA",
-            "brand": coordinator.get("brand") or "Zigbee Coordinator",
-            "model": coordinator.get("model") or "Home Assistant Coordinator",
+            "vendor": _safe_str(coordinator.get("vendor"), default="Silicon Labs / ZHA"),
+            "brand": _safe_str(coordinator.get("brand"), default="Zigbee Coordinator"),
+            "model": _safe_str(coordinator.get("model"), default="Home Assistant Coordinator"),
             "routing_role": "Zigbee Coordinator",
             "rloc16": "0x0000",
             "ext_address": coord_ieee,
-            "extended_pan_id": extended_pan_id or "00:12:4b:00:1c:a2:b3:c4",
+            "extended_pan_id": ext_pan_str,
             "rssi": -35,
             "lqi": 255,
             "status": "online",
             "preferred": True,
-            "ha_area": coordinator.get("ha_area") or "Smart Home Gateway",
+            "ha_area": _safe_str(coordinator.get("ha_area"), default="Smart Home Gateway"),
             "power_source": "Mains",
-            "details": f"Coordinator on Channel {channel or 15} (PAN {pan_id or '0x1A2B'}) • IEEE: {coord_ieee}",
+            "details": f"Coordinator on Channel {ch_int} (PAN {pan_str}) • IEEE: {coord_ieee}",
         })
 
         # Map to find graph node IDs
@@ -147,26 +202,30 @@ class ZigbeeAnalyzer:
 
         # 2. Add devices
         for idx, dev in enumerate(devices):
-            ieee = (dev.get("ieee") or dev.get("ieee_address") or f"zb_dev_{idx}").lower()
+            if not isinstance(dev, dict):
+                continue
+            ieee_raw = _safe_str(dev.get("ieee") or dev.get("ieee_address") or f"zb_dev_{idx}")
+            ieee = ieee_raw.lower()
             if ieee in ieee_to_id:
                 continue
 
-            raw_type = (dev.get("device_type") or "").lower()
+            raw_type = _safe_str(dev.get("device_type")).lower()
             is_router = raw_type == "router" or dev.get("is_router") is True or dev.get("power_source") == "Mains"
             node_type = "router" if is_router else "end_device"
 
-            nwk_raw = dev.get("nwk") or dev.get("nwk_address") or idx + 1
-            if isinstance(nwk_raw, int):
-                nwk_str = f"0x{nwk_raw:04X}"
+            nwk_raw = dev.get("nwk") or dev.get("nwk_address") or (idx + 1)
+            nwk_int = _safe_int(nwk_raw)
+            if nwk_int is not None and nwk_int >= 0:
+                nwk_str = f"0x{nwk_int:04X}"
             else:
-                nwk_str = str(nwk_raw)
+                nwk_str = _safe_str(nwk_raw, default=f"0x{idx + 1:04X}")
 
-            dev_name = dev.get("user_given_name") or dev.get("name") or dev.get("model") or f"Zigbee Device #{idx + 1}"
-            vendor = dev.get("manufacturer") or dev.get("vendor") or "Generic"
-            model = dev.get("model") or "Zigbee 3.0 Device"
-            lqi = dev.get("lqi")
-            rssi = dev.get("rssi")
-            is_available = dev.get("available", True)
+            dev_name = _safe_str(dev.get("user_given_name") or dev.get("name") or dev.get("model") or f"Zigbee Device #{idx + 1}")
+            vendor = _safe_str(dev.get("manufacturer") or dev.get("vendor"), default="Generic")
+            model = _safe_str(dev.get("model"), default="Zigbee 3.0 Device")
+            lqi = _safe_int(dev.get("lqi"))
+            rssi = _safe_float(dev.get("rssi"))
+            is_available = bool(dev.get("available", True)) and dev.get("status") != "offline"
 
             status = "online"
             if not is_available:
@@ -174,12 +233,14 @@ class ZigbeeAnalyzer:
             elif (lqi is not None and lqi < 65) or (rssi is not None and rssi < -82):
                 status = "weak"
 
-            g_id = f"zb_{ieee.replace(':', '')[-8:]}"
+            clean_ieee = ieee.replace(":", "").replace("-", "")
+            g_suffix = clean_ieee[-8:] if len(clean_ieee) >= 8 else (clean_ieee or f"{idx + 1}")
+            g_id = f"zb_{g_suffix}"
             ieee_to_id[ieee] = g_id
             if is_router:
                 router_ids.append(g_id)
 
-            battery = dev.get("battery")
+            battery = _safe_int(dev.get("battery"))
 
             nodes.append({
                 "id": g_id,
@@ -194,13 +255,13 @@ class ZigbeeAnalyzer:
                 "routing_role": "Zigbee Router (Mains)" if is_router else "Zigbee End Device (Battery)",
                 "rloc16": nwk_str,
                 "ext_address": ieee,
-                "extended_pan_id": extended_pan_id or "00:12:4b:00:1c:a2:b3:c4",
+                "extended_pan_id": ext_pan_str,
                 "rssi": rssi,
                 "lqi": lqi,
                 "battery": battery,
                 "status": status,
                 "preferred": False,
-                "ha_area": dev.get("ha_area") or dev.get("area_name") or "",
+                "ha_area": _safe_str(dev.get("ha_area") or dev.get("area_name")),
                 "power_source": "Mains" if is_router else "Battery",
                 "details": f"{'Mains Relay Router' if is_router else 'Sleepy Sensor'} • NWK: {nwk_str} • LQI: {lqi if lqi is not None else 'N/A'}/255" + (f" • Battery: {battery}%" if battery is not None else ""),
             })
@@ -209,8 +270,10 @@ class ZigbeeAnalyzer:
         # Check if devices have explicit neighbor tables (from ZHA)
         has_explicit_neighbors = False
         for dev in devices:
+            if not isinstance(dev, dict):
+                continue
             neighbors = dev.get("neighbors") or []
-            s_ieee = (dev.get("ieee") or "").lower()
+            s_ieee = _safe_str(dev.get("ieee")).lower()
             s_id = ieee_to_id.get(s_ieee)
             if not s_id or not neighbors:
                 continue
@@ -218,7 +281,7 @@ class ZigbeeAnalyzer:
             for n in neighbors:
                 if not isinstance(n, dict):
                     continue
-                t_ieee = (n.get("ieee") or "").lower()
+                t_ieee = _safe_str(n.get("ieee")).lower()
                 t_id = ieee_to_id.get(t_ieee)
                 if not t_id or t_id == s_id:
                     continue
@@ -228,8 +291,8 @@ class ZigbeeAnalyzer:
                     continue
                 seen_edges.add(edge_key)
 
-                n_lqi = n.get("lqi") or dev.get("lqi") or 180
-                n_rssi = dev.get("rssi")
+                n_lqi = _safe_int(n.get("lqi"), default=_safe_int(dev.get("lqi"), default=180))
+                n_rssi = _safe_float(n.get("rssi"), default=_safe_float(dev.get("rssi"), default=-60.0))
                 distance = max(65, min(240, int(260 - (float(n_lqi) / 255.0) * 180)))
                 has_explicit_neighbors = True
 
@@ -290,8 +353,8 @@ class ZigbeeAnalyzer:
                     # Distribute across available routers
                     target_parent = router_ids[idx % len(router_ids)]
 
-                e_lqi = end_n.get("lqi") or 195
-                e_rssi = end_n.get("rssi") or -66
+                e_lqi = _safe_int(end_n.get("lqi"), default=195)
+                e_rssi = _safe_float(end_n.get("rssi"), default=-66.0)
                 distance = max(70, min(230, int(250 - (float(e_lqi) / 255.0) * 170)))
 
                 edge_key = tuple(sorted([target_parent, end_n["id"]]))
@@ -312,9 +375,9 @@ class ZigbeeAnalyzer:
             "nodes": nodes,
             "edges": edges,
             "protocol": "zigbee",
-            "channel": channel,
-            "pan_id": pan_id,
-            "extended_pan_id": extended_pan_id,
+            "channel": ch_int,
+            "pan_id": pan_str,
+            "extended_pan_id": ext_pan_str,
             "coordinator": coordinator,
             "target_network": {
                 "id": f"zigbee_{channel}_{pan_id}",

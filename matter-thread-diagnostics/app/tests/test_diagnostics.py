@@ -685,6 +685,27 @@ def test_ha_client_zigbee_telemetry_fallback():
         loop.close()
 
 
+def test_zigbee_defensive_types_and_resilience():
+    # Test with string LQIs, numeric IEEE, negative NWK, string channel
+    corrupted_devices = [
+        {"name": "Aqara Door", "ieee": 12345678, "nwk": "0x1234", "device_type": "end_device", "lqi": "unknown", "rssi": "None", "available": True},
+        {"name": "Sonoff Plug", "ieee": "00:12:4b:00:1c:a2:b3:c4", "nwk": -1, "device_type": "router", "lqi": "150", "rssi": -65.5, "available": True},
+        {"name": "Offline Sensor", "ieee": "00:15:8d:00:01:23:45:67", "nwk": None, "device_type": "end_device", "lqi": None, "rssi": None, "available": False},
+    ]
+    coord = {"name": "SkyConnect Coordinator", "ieee": 987654321, "channel": "20", "pan_id": 0x1A2B}
+
+    health = ZigbeeAnalyzer.evaluate_zigbee_health(corrupted_devices)
+    assert health["total_devices"] == 3
+    assert health["routers_count"] == 1
+    assert health["end_devices_count"] == 2
+    assert health["offline_count"] == 1
+
+    topo = ZigbeeAnalyzer.build_zigbee_topology(corrupted_devices, coord, channel="20", pan_id=0x1A2B)
+    assert len(topo["nodes"]) == 4
+    assert len(topo["edges"]) >= 2
+
+
+
 
 
 
