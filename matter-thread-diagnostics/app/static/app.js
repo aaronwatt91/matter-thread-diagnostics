@@ -4483,7 +4483,10 @@ const BLAIR_CAMERA_PRESETS = {
   guest_room: { pos: [1.75, 5.5, -12.5], target: [1.75, 3.75, -7.28] },
   nursery: { pos: [4.27, 5.5, -12.5], target: [4.27, 3.75, -7.28] },
   family_bathroom: { pos: [-3.5, 5.2, -4.95], target: [1.22, 3.75, -4.95] },
-  driveway: { pos: [4.30, 3.2, 8.5], target: [4.30, 0.90, 3.20] }
+  driveway: { pos: [4.30, 3.2, 8.5], target: [4.30, 0.90, 3.20] },
+  garden: { pos: [-12.0, 9.0, 14.0], target: [0.0, 2.0, -4.5] },
+  gas_tank: { pos: [-6.5, 3.2, -6.0], target: [-1.3, 1.2, -7.5] },
+  utility_pylon: { pos: [11.0, 5.5, 12.0], target: [6.4, 3.5, 7.2] }
 };
 
 const house3DState = {
@@ -4677,7 +4680,8 @@ function classifyMeshCategory(meshName) {
     nm.includes("roof_") ||
     nm.includes("fascia_") ||
     nm.includes("rainwater_") ||
-    nm.includes("first_floor_ceiling")
+    nm.includes("first_floor_ceiling") ||
+    nm.includes("solar_pv_")
   ) {
     return "roof_ceiling";
   }
@@ -4709,7 +4713,10 @@ function classifyMeshCategory(meshName) {
     nm.includes("driveway") ||
     nm.includes("car_peugeot") ||
     nm.includes("ev_charger") ||
-    nm.includes("ev_charging")
+    nm.includes("ev_charging") ||
+    nm.includes("landscape_") ||
+    nm.includes("utility_") ||
+    nm.includes("gas_")
   ) {
     return "driveway_car";
   }

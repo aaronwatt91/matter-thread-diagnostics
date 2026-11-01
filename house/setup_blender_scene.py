@@ -33,8 +33,10 @@ def setup_blair_scene():
     collections_map = {
         "01_Architecture_Exterior": [
             "Exterior_Walls", "Separating_Party_Wall", "Roof_Main", "Roof_Ridge_Tiles",
-            "Fascia_and_Soffits", "Rainwater_Gutters", "Roof_Solar_Panels", "EV_Charger",
-            "Windows_Frames", "Windows_Glass", "Front_Entrance_Door", "Rear_French_Doors",
+            "Fascia_and_Soffits", "Rainwater_Gutters", "Roof_Solar_Panels", "Solar_PV_Cabling",
+            "Utility_Pylon_Grid", "Utility_Pole_Fittings", "Utility_Insulators", "Utility_Warning_Plate",
+            "Gas_Storage_Tank", "Gas_Tank_Fittings", "Gas_Supply_Pipes", "Gas_Warning_Sign",
+            "EV_Charger", "Windows_Frames", "Windows_Glass", "Front_Entrance_Door", "Rear_French_Doors",
             "Exterior_Hardware_Chrome", "Driveway"
         ],
         "02_Vehicle_Peugeot_e2008": [
@@ -56,6 +58,11 @@ def setup_blair_scene():
             "Kitchen_Cabinets", "Kitchen_Worktop", "Kitchen_Sink_Hob",
             "Kitchen_Combi_Boiler", "Kitchen_Boiler_Fittings", "Kitchen_Boiler_Pipes",
             "Sanitaryware"
+        ],
+        "06_Landscape_and_Garden": [
+            "Landscape_Grass", "Landscape_Paving", "Landscape_Fencing",
+            "Landscape_Bushes", "Landscape_Bushes_Dark",
+            "Landscape_Trees_Trunk", "Landscape_Trees_Foliage"
         ]
     }
 
@@ -102,12 +109,33 @@ def setup_blair_scene():
     cam_car_obj.rotation_euler = (1.25, 0.0, 1.05)
     scene_collection.objects.link(cam_car_obj)
 
+    cam_pylon_data = bpy.data.cameras.new(name="Cam_Utility_Pylon_Grid")
+    cam_pylon_data.lens = 28
+    cam_pylon_obj = bpy.data.objects.new(name="Camera_Utility_Pylon_and_Service_Drop", object_data=cam_pylon_data)
+    cam_pylon_obj.location = (11.0, -12.0, 5.5)
+    cam_pylon_obj.rotation_euler = (1.22, 0.0, 0.85)
+    scene_collection.objects.link(cam_pylon_obj)
+
     cam_bed_data = bpy.data.cameras.new(name="Cam_Bedrooms_Overhead")
     cam_bed_data.lens = 28
     cam_bed_obj = bpy.data.objects.new(name="Camera_First_Floor_Bedrooms", object_data=cam_bed_data)
     cam_bed_obj.location = (2.81, 4.44, 9.5)
     cam_bed_obj.rotation_euler = (0.0, 0.0, 0.0)
     scene_collection.objects.link(cam_bed_obj)
+
+    cam_land_data = bpy.data.cameras.new(name="Cam_Landscape_Garden_Overview")
+    cam_land_data.lens = 24
+    cam_land_obj = bpy.data.objects.new(name="Camera_Landscape_Overview", object_data=cam_land_data)
+    cam_land_obj.location = (-12.0, -14.0, 9.0)
+    cam_land_obj.rotation_euler = (1.15, 0.0, -0.72)
+    scene_collection.objects.link(cam_land_obj)
+
+    cam_gas_data = bpy.data.cameras.new(name="Cam_Gas_Tank_Side")
+    cam_gas_data.lens = 32
+    cam_gas_obj = bpy.data.objects.new(name="Camera_Gas_Tank_and_Boiler", object_data=cam_gas_data)
+    cam_gas_obj.location = (-6.5, 6.0, 3.2)
+    cam_gas_obj.rotation_euler = (1.25, 0.0, -1.35)
+    scene_collection.objects.link(cam_gas_obj)
 
     bpy.context.scene.camera = cam_front_obj
 

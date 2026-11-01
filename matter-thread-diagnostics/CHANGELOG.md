@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.8.4] - 2026-11-01
+
+### Added: Upgraded Blair House Model (63 PBR Mesh Objects & Landscaped Grounds)
+- **Swapped 3D Model Asset**:
+  - Upgraded `Taylor_Wimpey_Blair.glb` to the comprehensive 2.01 MB build containing 63 named PBR mesh objects.
+- **New Site & Ground Features**:
+  - **White Pebble Dash Exterior**: Facade rendered in authentic Scottish white roughcast pebble dash with crisp mineral stone aggregate.
+  - **Complete Landscaped Garden & Grounds**: Green grass terrain, flagstone entrance path, side stepping stones, rear patio terrace, 1.8m timber privacy fencing, boundary hedge rows, and 4 mature branching trees with lush foliage canopies.
+  - **Bulk LPG Gas Storage Tank**: Cylindrical bulk LPG vessel on reinforced concrete plinth with regulator, gauge, warning sign, and continuous high-vis yellow gas pipe connecting to the kitchen combi boiler.
+  - **Roadside Utility Pylon & Grid Service Drop**: Wooden distribution pole with climbing rungs, steel cross-arm, porcelain insulators, and catenary ABC aerial service drop running down through conduit into the entrance hall meter cupboard.
+  - **Solar PV Cabling System**: Roof DC isolator switch and conduit running from the 5-panel solar array down through the loft into the consumer unit inverter.
+  - **Corner Rainwater Drainage**: Downpipes with swan-neck offset bends aligned directly to all four corners of the house.
+  - **Snug 3.5mm Door Framings**: Interior door leaves fitted inside casings with realistic 3.5mm perimeter gaps and dual chrome lever handles.
+- **Expanded Camera Presets**:
+  - Added new camera presets for **Landscaped Garden & Grounds**, **LPG Gas Tank & Boiler Feed**, and **Utility Pylon & Service Drop**.
+
 ## [2.8.3] - 2026-11-01
 
 ### Added: Progressive Layered X-Ray Peeler (0% to 100%)

@@ -155,6 +155,102 @@ class MeshGroup:
         self.add_quad(v0, v3, v2, v1)  # Start cap
         self.add_quad(v4, v5, v6, v7)  # End cap
 
+    def add_pipe(self, p0, p1, radius, segments=8):
+        """
+        Creates a clean 3D cylindrical pipe/conduit/cable connecting 3D points p0 and p1.
+        """
+        dx = p1[0] - p0[0]
+        dy = p1[1] - p0[1]
+        dz = p1[2] - p0[2]
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length < 1e-6:
+            return
+        w = (dx / length, dy / length, dz / length)
+        if abs(w[0]) < 0.85:
+            up = (1.0, 0.0, 0.0)
+        else:
+            up = (0.0, 1.0, 0.0)
+        ux = up[1] * w[2] - up[2] * w[1]
+        uy = up[2] * w[0] - up[0] * w[2]
+        uz = up[0] * w[1] - up[1] * w[0]
+        lu = math.sqrt(ux * ux + uy * uy + uz * uz)
+        ux, uy, uz = ux / lu, uy / lu, uz / lu
+        vx = w[1] * uz - w[2] * uy
+        vy = w[2] * ux - w[0] * uz
+        vz = w[0] * uy - w[1] * ux
+
+        ring0 = []
+        ring1 = []
+        for i in range(segments):
+            angle = 2 * math.pi * i / segments
+            ca = math.cos(angle) * radius
+            sa = math.sin(angle) * radius
+            ox = ca * ux + sa * vx
+            oy = ca * uy + sa * vy
+            oz = ca * uz + sa * vz
+            ring0.append((p0[0] + ox, p0[1] + oy, p0[2] + oz))
+            ring1.append((p1[0] + ox, p1[1] + oy, p1[2] + oz))
+
+        for i in range(segments):
+            i_next = (i + 1) % segments
+            self.add_quad(ring0[i], ring0[i_next], ring1[i_next], ring1[i])
+
+    def add_cylinder_y(self, x, y0, y1, z, radius, segments=12):
+        for i in range(segments):
+            a0 = 2 * math.pi * i / segments
+            a1 = 2 * math.pi * (i + 1) / segments
+            x0 = x + radius * math.cos(a0)
+            z0 = z + radius * math.sin(a0)
+            x1 = x + radius * math.cos(a1)
+            z1 = z + radius * math.sin(a1)
+            amid = 0.5 * (a0 + a1)
+            n = (math.cos(amid), 0.0, math.sin(amid))
+            self.add_quad((x0, y0, z0), (x0, y1, z0), (x1, y1, z1), (x1, y0, z1), normal=n)
+        # End caps
+        n_front = (0.0, -1.0, 0.0)
+        n_rear = (0.0, 1.0, 0.0)
+        for i in range(segments):
+            a0 = 2 * math.pi * i / segments
+            a1 = 2 * math.pi * (i + 1) / segments
+            x0 = x + radius * math.cos(a0)
+            z0 = z + radius * math.sin(a0)
+            x1 = x + radius * math.cos(a1)
+            z1 = z + radius * math.sin(a1)
+            self.add_triangle((x, y0, z), (x0, y0, z0), (x1, y0, z1), normal=n_front)
+            self.add_triangle((x, y1, z), (x1, y1, z1), (x0, y1, z0), normal=n_rear)
+
+    def add_sphere(self, cx, cy, cz, radius, rings=8, sectors=12):
+        """Creates a smooth UV sphere centered at (cx, cy, cz)."""
+        grid = []
+        for r in range(rings + 1):
+            theta = math.pi * r / rings
+            sin_t = math.sin(theta)
+            cos_t = math.cos(theta)
+            row = []
+            for s in range(sectors):
+                phi = 2 * math.pi * s / sectors
+                vx = cx + radius * sin_t * math.cos(phi)
+                vy = cy + radius * sin_t * math.sin(phi)
+                vz = cz + radius * cos_t
+                row.append((vx, vy, vz))
+            grid.append(row)
+
+        for r in range(rings):
+            for s in range(sectors):
+                s_next = (s + 1) % sectors
+                p0 = grid[r][s]
+                p1 = grid[r + 1][s]
+                p2 = grid[r + 1][s_next]
+                p3 = grid[r][s_next]
+                if r == 0:
+                    self.add_triangle(p0, p1, p2)
+                elif r == rings - 1:
+                    self.add_triangle(p0, p1, p3)
+                else:
+                    self.add_quad(p0, p1, p2, p3)
+
+
+
 
 FONT_3D = {
     'A': ['0110', '1001', '1111', '1001', '1001'],
@@ -580,8 +676,8 @@ class ModelBuilder:
         # 7. ROOF STRUCTURE & 5 SOLAR PANELS ON REAR ROOF
         # -------------------------------------------------------------
         roof = self.create_group("Roof_Main", "M_Roof_Tiles")
-        overhang_x_left = 0.35
-        overhang_y = 0.35
+        overhang_x_left = 0.05  # Snugly aligned with external gable wall at X = 0.0m
+        overhang_y = 0.22       # Standard 220mm UK eaves overhang for fascia & soffit box
 
         # Front Pitch (from Y = -overhang_y to y_ridge, sloping up Z = 5.00 to 7.20)
         p_f_bl = (-overhang_x_left, -overhang_y, h_eaves - 0.05)
@@ -602,34 +698,64 @@ class ModelBuilder:
         ridge = self.create_group("Roof_Ridge_Tiles", "M_Ridge_Tiles")
         ridge_w = 0.22
         ridge_h = 0.12
-        ridge.add_box(-overhang_x_left - 0.05, y_ridge - ridge_w/2, h_ridge,
+        ridge.add_box(-overhang_x_left - 0.02, y_ridge - ridge_w/2, h_ridge,
                       W, y_ridge + ridge_w/2, h_ridge + ridge_h)
 
         # Fascia Boards, Soffits & Verge Bargeboards
         fascia = self.create_group("Fascia_and_Soffits", "M_PVC_White")
         # 1. Horizontal eaves fascia boards along front and rear:
-        fascia.add_box(-overhang_x_left - 0.03, -overhang_y - 0.025, h_eaves - 0.18, W, -overhang_y, h_eaves + 0.04)
-        fascia.add_box(-overhang_x_left - 0.03, D + overhang_y, h_eaves - 0.18, W, D + overhang_y + 0.025, h_eaves + 0.04)
+        fascia.add_box(-overhang_x_left - 0.02, -overhang_y - 0.025, h_eaves - 0.18, W, -overhang_y, h_eaves + 0.04)
+        fascia.add_box(-overhang_x_left - 0.02, D + overhang_y, h_eaves - 0.18, W, D + overhang_y + 0.025, h_eaves + 0.04)
 
-        # 2. Sloping pitched verge bargeboards along left gable (FOLLOWS ROOF PITCH! NO FLAT RECTANGLES):
-        p_bb_front = (-overhang_x_left - 0.015, -overhang_y, h_eaves - 0.05)
-        p_bb_ridge = (-overhang_x_left - 0.015, y_ridge, h_ridge + 0.05)
-        p_bb_rear  = (-overhang_x_left - 0.015, D + overhang_y, h_eaves - 0.05)
+        # 2. Sloping pitched verge bargeboards along left gable (aligned to external gable wall):
+        p_bb_front = (-overhang_x_left - 0.01, -overhang_y, h_eaves - 0.05)
+        p_bb_ridge = (-overhang_x_left - 0.01, y_ridge, h_ridge + 0.05)
+        p_bb_rear  = (-overhang_x_left - 0.01, D + overhang_y, h_eaves - 0.05)
         fascia.add_angled_beam(p_bb_front, p_bb_ridge, width=0.03, thickness=0.18)
         fascia.add_angled_beam(p_bb_ridge, p_bb_rear, width=0.03, thickness=0.18)
 
-        # 3. Horizontal soffits under eaves overhangs:
+        # 3. Horizontal soffits closing eaves flush against front and rear external walls:
         fascia.add_box(-overhang_x_left, -overhang_y, h_eaves - 0.18, W, 0.00, h_eaves - 0.16)
         fascia.add_box(-overhang_x_left, D, h_eaves - 0.18, W, D + overhang_y, h_eaves - 0.16)
 
-        # Gutters & Downpipes
+        # 4. Rainwater Gutters & Downpipes Connected to House Corners:
         gutters = self.create_group("Rainwater_Gutters", "M_Gutters")
-        gutters.add_box(-overhang_x_left - 0.05, -overhang_y - 0.12, h_eaves - 0.06,
+        # Continuous horizontal eaves gutters:
+        gutters.add_box(-overhang_x_left - 0.04, -overhang_y - 0.12, h_eaves - 0.06,
                         W + 0.02, -overhang_y - 0.02, h_eaves + 0.04)
-        gutters.add_box(-overhang_x_left - 0.05, D + overhang_y + 0.02, h_eaves - 0.06,
+        gutters.add_box(-overhang_x_left - 0.04, D + overhang_y + 0.02, h_eaves - 0.06,
                         W + 0.02, D + overhang_y + 0.12, h_eaves + 0.04)
-        gutters.add_cylinder(-overhang_x_left + 0.10, -overhang_y + 0.05, 0.0, h_eaves - 0.05, 0.045)
-        gutters.add_cylinder(-overhang_x_left + 0.10, D + overhang_y - 0.05, 0.0, h_eaves - 0.05, 0.045)
+
+        # Helper to construct downpipes with swan-neck offset bends connected directly to corners:
+        def add_corner_downpipe(corner_x, corner_y, gutter_y, is_rear=False):
+            # A. Gutter Outlet Drop:
+            gutters.add_cylinder(corner_x, gutter_y, h_eaves - 0.12, h_eaves - 0.05, 0.040, segments=10)
+            # B. Swan-Neck Offset Bend (connecting gutter outlet back to corner of external wall):
+            p_gutter = (corner_x, gutter_y, h_eaves - 0.12)
+            p_wall_top = (corner_x, corner_y, h_eaves - 0.32)
+            gutters.add_pipe(p_gutter, p_wall_top, radius=0.036, segments=10)
+            # C. Main Vertical Downpipe Running Straight Down House Corner:
+            gutters.add_pipe(p_wall_top, (corner_x, corner_y, 0.14), radius=0.036, segments=10)
+            # D. Pipe Mounting Brackets / Clips to Pebble Dash Wall every 1.2m:
+            y_clip_dir = 1.0 if not is_rear else -1.0
+            for bz in [1.0, 2.2, 3.4, 4.4]:
+                gutters.add_box(corner_x - 0.050, corner_y - 0.015, bz - 0.015,
+                                corner_x + 0.050, corner_y + y_clip_dir * 0.040, bz + 0.015)
+            # E. Bottom Drain Shoe discharging into ground drainage gully:
+            p_shoe_end = (corner_x, corner_y - y_clip_dir * 0.07, 0.04)
+            gutters.add_pipe((corner_x, corner_y, 0.14), p_shoe_end, radius=0.036, segments=10)
+            # Ground drainage gully grating:
+            gutters.add_box(corner_x - 0.09, p_shoe_end[1] - 0.08, 0.00,
+                            corner_x + 0.09, p_shoe_end[1] + 0.08, 0.025)
+
+        # Corner 1: Front-Left Corner (Downpipe on front wall at left corner):
+        add_corner_downpipe(corner_x=0.08, corner_y=-0.04, gutter_y=-overhang_y - 0.07, is_rear=False)
+        # Corner 2: Front-Right Corner (Downpipe on front wall at right corner):
+        add_corner_downpipe(corner_x=W - 0.08, corner_y=-0.04, gutter_y=-overhang_y - 0.07, is_rear=False)
+        # Corner 3: Rear-Left Corner (Downpipe on rear wall at left corner):
+        add_corner_downpipe(corner_x=0.08, corner_y=D + 0.04, gutter_y=D + overhang_y + 0.07, is_rear=True)
+        # Corner 4: Rear-Right Corner (Downpipe on rear wall at right corner):
+        add_corner_downpipe(corner_x=W - 0.08, corner_y=D + 0.04, gutter_y=D + overhang_y + 0.07, is_rear=True)
 
         # 5 SOLAR PANELS ON THE REAR ROOF PITCH:
         # User specification: Grid of 4, then on the top row an extra to make 5:
@@ -674,6 +800,47 @@ class ModelBuilder:
             solar.add_quad((px1, y_r1, z_r1-0.04), (px0, y_r1, z_r1-0.04), (px0, y_r1, z_r1), (px1, y_r1, z_r1))
             solar.add_quad((px0, y_r1, z_r1-0.04), (px0, y_r0, z_r0-0.04), (px0, y_r0, z_r0), (px0, y_r1, z_r1))
             solar.add_quad((px1, y_r0, z_r0-0.04), (px1, y_r1, z_r1-0.04), (px1, y_r1, z_r1), (px1, y_r0, z_r0))
+
+        # -------------------------------------------------------------
+        # 7B. SOLAR PV CABLING & SERVICE RUN (Roof into Meter Box)
+        # -------------------------------------------------------------
+        solar_cables = self.create_group("Solar_PV_Cabling", "M_EV_Cable")
+        # 1. Weatherproof IP66 DC Isolator Switch Box mounted under solar array:
+        z_iso = get_rear_roof_z(6.20) + 0.04
+        solar_cables.add_box(4.00, 6.12, z_iso, 4.20, 6.28, z_iso + 0.12)
+        # Rotary red/yellow switch knob:
+        solar_cables.add_cylinder(4.10, 6.20, z_iso + 0.12, z_iso + 0.15, 0.025)
+
+        # 2. String cables running from underside of panels into isolator switch:
+        solar_cables.add_pipe((2.50, 5.80, get_rear_roof_z(5.80) + 0.02), (4.00, 6.20, z_iso + 0.06), radius=0.010)
+        solar_cables.add_pipe((2.50, 7.50, get_rear_roof_z(7.50) + 0.02), (4.00, 6.20, z_iso + 0.06), radius=0.010)
+
+        # 3. Weatherproof roof penetration cowl passing into loft:
+        z_cowl = get_rear_roof_z(5.80) + 0.04
+        solar_cables.add_box(4.08, 5.72, z_cowl, 4.22, 5.88, z_cowl + 0.10)
+        solar_cables.add_pipe((4.10, 6.12, z_iso + 0.06), (4.15, 5.80, z_cowl + 0.05), radius=0.012)
+
+        # 4. Conduit penetrating into loft space down to truss tie level (Z = 5.25m):
+        solar_cables.add_pipe((4.15, 5.80, z_cowl), (4.15, 5.80, 5.25), radius=0.014)
+
+        # 5. Heavy-duty loft conduit run along roof trusses forward to party wall service zone:
+        solar_cables.add_pipe((4.15, 5.80, 5.25), (5.26, 1.10, 5.25), radius=0.014)
+
+        # 6. Vertical conduit drop inside party wall chase from loft (Z = 5.25m) to entrance cupboard (Z = 2.45m):
+        solar_cables.add_pipe((5.26, 1.10, 5.25), (5.26, 1.10, 2.45), radius=0.014)
+
+        # 7. Inside Entrance Cupboard: Solar AC Inverter / Generation Unit & AC Isolator:
+        # Solar generation box mounted on party wall above consumer unit:
+        solar_cables.add_box(5.24, 0.65, 1.72, 5.33, 0.95, 2.02)
+        # Solar AC rotary isolator switch box:
+        solar_cables.add_box(5.24, 1.00, 1.72, 5.33, 1.15, 1.88)
+
+        # DC cables dropping from cupboard ceiling into top of solar inverter:
+        solar_cables.add_pipe((5.26, 1.10, 2.45), (5.28, 0.85, 2.02), radius=0.010)
+        # AC interconnecting cable from solar inverter into AC isolator:
+        solar_cables.add_pipe((5.28, 0.95, 1.80), (5.28, 1.00, 1.80), radius=0.009)
+        # AC supply cable from solar isolator down into main consumer unit:
+        solar_cables.add_pipe((5.28, 1.05, 1.72), (5.28, 0.95, 1.65), radius=0.009)
 
         # -------------------------------------------------------------
         # 8. EV CHARGER (Mounted on Front Wall to the RIGHT of Front Door)
@@ -785,42 +952,137 @@ class ModelBuilder:
         door_chrome.add_box(mid_x+0.02, D-0.24, 1.00, mid_x+0.04, D-0.18, 1.08)
 
         # -------------------------------------------------------------
-        # 11. INTERIOR DOORS & ARCHITRAVES
+        # 11. INTERIOR DOORS & FRAMES (Snug 3.5mm Clearances to Walls)
         # -------------------------------------------------------------
         int_doors = self.create_group("Interior_Doors", "M_Interior_Doors")
 
-        def add_interior_door(x, y, z, width, thick=0.04, height=2.00, axis="X"):
+        def add_interior_door(x_span, y_span, z_floor, h_open=2.10, axis="X"):
+            """
+            Builds a realistic UK internal door set:
+            - Full timber lining/casing (22mm thick) filling the structural opening
+            - Architrave surrounds (45mm wide x 12mm thick) on both sides of the wall
+            - Door leaf (35mm thick) fitted with realistic 3.5mm perimeter clearance gap:
+              * 3.5mm gap to left jamb
+              * 3.5mm gap to right jamb
+              * 3.5mm gap to head casing
+              * 6.0mm threshold clearance to floor
+            - Dual chrome lever handles with rose escutcheons
+            """
+            t_c = 0.022      # 22mm timber casing / lining thickness
+            gap_s = 0.0035   # 3.5mm side clearance gap
+            gap_t = 0.0035   # 3.5mm top head clearance gap
+            gap_b = 0.0060   # 6.0mm floor clearance gap
+            door_th = 0.035  # 35mm interior door leaf thickness
+            w_arch = 0.045   # 45mm architrave width
+            t_arch = 0.012   # 12mm architrave projection
+
             if axis == "X":
-                int_doors.add_box(x, y-thick/2, z, x+width, y+thick/2, z+height)
-                door_chrome.add_box(x+width-0.10, y-0.06, z+0.95, x+width-0.04, y+0.06, z+1.00)
-            else:
-                int_doors.add_box(x-thick/2, y, z, x+thick/2, y+width, z+height)
-                door_chrome.add_box(x-0.06, y+width-0.10, z+0.95, x+0.06, y+width-0.04, z+1.00)
+                x0, x1 = x_span
+                y0, y1 = y_span
+                ymid = 0.5 * (y0 + y1)
+                z_top = z_floor + h_open
+
+                # 1. Door Lining / Casing (fills structural wall opening):
+                # Left jamb:
+                int_doors.add_box(x0, y0, z_floor, x0 + t_c, y1, z_top)
+                # Right jamb:
+                int_doors.add_box(x1 - t_c, y0, z_floor, x1, y1, z_top)
+                # Head casing:
+                int_doors.add_box(x0 + t_c, y0, z_top - t_c, x1 - t_c, y1, z_top)
+
+                # 2. Architrave Trims (both wall faces):
+                for y_face, y_sign in [(y0, -1), (y1, 1)]:
+                    ya0 = y_face if y_sign > 0 else y_face - t_arch
+                    ya1 = y_face + t_arch if y_sign > 0 else y_face
+                    # Left vertical trim:
+                    int_doors.add_box(x0 - w_arch, ya0, z_floor, x0, ya1, z_top + w_arch)
+                    # Right vertical trim:
+                    int_doors.add_box(x1, ya0, z_floor, x1 + w_arch, ya1, z_top + w_arch)
+                    # Top horizontal trim:
+                    int_doors.add_box(x0 - w_arch, ya0, z_top, x1 + w_arch, ya1, z_top + w_arch)
+
+                # 3. Door Leaf with slight 3.5mm gaps:
+                dx0 = x0 + t_c + gap_s
+                dx1 = x1 - t_c - gap_s
+                dz0 = z_floor + gap_b
+                dz1 = z_top - t_c - gap_t
+                dy0 = ymid - door_th / 2.0
+                dy1 = ymid + door_th / 2.0
+                int_doors.add_box(dx0, dy0, dz0, dx1, dy1, dz1)
+
+                # 4. Chrome Lever Handles & Escutcheons (both sides):
+                hx = dx1 - 0.08
+                hz = z_floor + 1.00
+                door_chrome.add_cylinder(hx, dy0 - 0.005, hz - 0.025, hz + 0.025, 0.025)
+                door_chrome.add_cylinder(hx, dy1 + 0.005, hz - 0.025, hz + 0.025, 0.025)
+                door_chrome.add_box(hx - 0.015, dy0 - 0.06, hz - 0.010, hx + 0.09, dy0, hz + 0.010)
+                door_chrome.add_box(hx - 0.015, dy1, hz - 0.010, hx + 0.09, dy1 + 0.06, hz + 0.010)
+
+            else:  # axis == "Y"
+                x0, x1 = x_span
+                y0, y1 = y_span
+                xmid = 0.5 * (x0 + x1)
+                z_top = z_floor + h_open
+
+                # 1. Door Lining / Casing:
+                # Front jamb:
+                int_doors.add_box(x0, y0, z_floor, x1, y0 + t_c, z_top)
+                # Rear jamb:
+                int_doors.add_box(x0, y1 - t_c, z_floor, x1, y1, z_top)
+                # Head casing:
+                int_doors.add_box(x0, y0 + t_c, z_top - t_c, x1, y1 - t_c, z_top)
+
+                # 2. Architrave Trims (both wall faces):
+                for x_face, x_sign in [(x0, -1), (x1, 1)]:
+                    xa0 = x_face if x_sign > 0 else x_face - t_arch
+                    xa1 = x_face + t_arch if x_sign > 0 else x_face
+                    # Front vertical trim:
+                    int_doors.add_box(xa0, y0 - w_arch, z_floor, xa1, y0, z_top + w_arch)
+                    # Rear vertical trim:
+                    int_doors.add_box(xa0, y1, z_floor, xa1, y1 + w_arch, z_top + w_arch)
+                    # Top horizontal trim:
+                    int_doors.add_box(xa0, y0 - w_arch, z_top, xa1, y1 + w_arch, z_top + w_arch)
+
+                # 3. Door Leaf with slight 3.5mm gaps:
+                dy0 = y0 + t_c + gap_s
+                dy1 = y1 - t_c - gap_s
+                dz0 = z_floor + gap_b
+                dz1 = z_top - t_c - gap_t
+                dx0 = xmid - door_th / 2.0
+                dx1 = xmid + door_th / 2.0
+                int_doors.add_box(dx0, dy0, dz0, dx1, dy1, dz1)
+
+                # 4. Chrome Lever Handles & Escutcheons:
+                hy = dy1 - 0.08
+                hz = z_floor + 1.00
+                door_chrome.add_cylinder(dx0 - 0.005, hy, hz - 0.025, hz + 0.025, 0.025)
+                door_chrome.add_cylinder(dx1 + 0.005, hy, hz - 0.025, hz + 0.025, 0.025)
+                door_chrome.add_box(dx0 - 0.06, hy - 0.015, hz - 0.010, dx0, hy + 0.09, hz + 0.010)
+                door_chrome.add_box(dx1, hy - 0.015, hz - 0.010, dx1 + 0.06, hy + 0.09, hz + 0.010)
 
         # Ground Floor:
-        # D2: Hall to Lounge (X = 3.45, Y = 1.42 to 2.22)
-        add_interior_door(3.45, 1.42, 0.0, 0.80, axis="Y")
-        # D3: Hall Lobby to Downstairs WC (X = 1.50, Y = 4.62 to 5.42)
-        add_interior_door(1.50, 4.62, 0.0, 0.80, axis="Y")
-        # D4: Hall Lobby to Kitchen/Dining (Y = 6.25, X = 3.45 to 4.25)
-        add_interior_door(3.45, 6.25, 0.0, 0.80, axis="X")
-        # D_ST: FULL SIZE DOOR IN KITCHEN OPENING TO CUPBOARD UNDER STAIRS (Y = 6.25, X = 4.35 to 5.15)
-        # Note: No door in hallway! Door is in the kitchen!
-        add_interior_door(4.35, 6.25, 0.0, 0.80, axis="X")
-        # D_METER: Entrance Hall Cupboard Door (facing living room door D2):
-        add_interior_door(4.90, 0.48, 0.0, 0.80, axis="Y")
+        # D2: Hall to Lounge (Opening Y in [1.40, 2.24], X in [3.40, 3.50])
+        add_interior_door(x_span=(3.40, 3.50), y_span=(1.40, 2.24), z_floor=0.0, h_open=2.10, axis="Y")
+        # D3: Hall Lobby to Downstairs WC (Opening Y in [4.60, 5.44], X in [1.45, 1.55])
+        add_interior_door(x_span=(1.45, 1.55), y_span=(4.60, 5.44), z_floor=0.0, h_open=2.10, axis="Y")
+        # D4: Hall Lobby to Kitchen/Dining (Opening X in [3.40, 4.25], Y in [6.20, 6.30])
+        add_interior_door(x_span=(3.40, 4.25), y_span=(6.20, 6.30), z_floor=0.0, h_open=2.10, axis="X")
+        # D_ST: Full Size Door in Kitchen to Cupboard Under Stairs (Opening X in [4.35, 5.19], Y in [6.20, 6.30])
+        add_interior_door(x_span=(4.35, 5.19), y_span=(6.20, 6.30), z_floor=0.0, h_open=2.05, axis="X")
+        # D_METER: Entrance Hall Cupboard Door (Opening Y in [0.48, 1.28], X in [4.90, 5.00])
+        add_interior_door(x_span=(4.90, 5.00), y_span=(0.48, 1.28), z_floor=0.0, h_open=2.10, axis="Y")
 
         # First Floor:
-        # D8: Landing to Master Bed 1 (Y = 3.90, X = 2.32 to 3.12)
-        add_interior_door(2.32, 3.90, h_f1, 0.80, axis="X")
-        # D12: Master Bed 1 to En-Suite (X = 3.50, Y = 1.27 to 2.03)
-        add_interior_door(3.50, 1.27, h_f1, 0.76, axis="Y")
-        # D9: LANDING HALLWAY TO FAMILY BATHROOM (X = 2.14, Y = 4.82 to 5.62)
-        add_interior_door(2.14, 4.82, h_f1, 0.80, axis="Y")
-        # D10: Landing to Bed 2 (Y = 6.05, X = 2.32 to 3.12)
-        add_interior_door(2.32, 6.05, h_f1, 0.80, axis="X")
-        # D11: Landing to Bed 3 (Y = 6.05, X = 3.42 to 4.22)
-        add_interior_door(3.42, 6.05, h_f1, 0.80, axis="X")
+        # D8: Landing to Master Bed 1 (Opening X in [2.30, 3.14], Y in [3.85, 3.95])
+        add_interior_door(x_span=(2.30, 3.14), y_span=(3.85, 3.95), z_floor=h_f1, h_open=2.10, axis="X")
+        # D12: Master Bed 1 to En-Suite (Opening Y in [1.25, 2.05], X in [3.45, 3.55])
+        add_interior_door(x_span=(3.45, 3.55), y_span=(1.25, 2.05), z_floor=h_f1, h_open=2.10, axis="Y")
+        # D9: Landing Hallway to Family Bathroom (Opening Y in [4.80, 5.64], X in [2.09, 2.19])
+        add_interior_door(x_span=(2.09, 2.19), y_span=(4.80, 5.64), z_floor=h_f1, h_open=2.10, axis="Y")
+        # D10: Landing to Bed 2 Guestroom (Opening X in [2.30, 3.14], Y in [6.00, 6.10])
+        add_interior_door(x_span=(2.30, 3.14), y_span=(6.00, 6.10), z_floor=h_f1, h_open=2.10, axis="X")
+        # D11: Landing to Bed 3 Nursery (Opening X in [3.40, 4.24], Y in [6.00, 6.10])
+        add_interior_door(x_span=(3.40, 4.24), y_span=(6.00, 6.10), z_floor=h_f1, h_open=2.10, axis="X")
 
         # -------------------------------------------------------------
         # 12. FITTED KITCHEN (Clean Continuous L-Shape Counter)
@@ -1072,6 +1334,48 @@ class ModelBuilder:
         car_glass.add_box(car_x - 0.74, -2.75, 0.96, car_x - 0.72, -2.15, 1.44) # rear right
         car_glass.add_box(car_x - 0.73, -2.10, 1.02, car_x - 0.70, -1.60, 1.40) # quarter right
 
+        # 5B. Triangular Front Cowl & Windscreen Trim Panels (Peugeot signature styling):
+        # Left side triangular cheater panel and A-pillar base:
+        car_trim.add_triangle(
+            (car_x - 0.70, -3.65, 1.25),
+            (car_x - 0.88, -3.98, 0.90),
+            (car_x - 0.68, -4.12, 0.93)
+        )
+        car_trim.add_triangle(
+            (car_x - 0.78, -4.26, 0.88),
+            (car_x - 0.88, -3.98, 0.90),
+            (car_x - 0.68, -4.12, 0.93)
+        )
+        car_trim.add_triangle(
+            (car_x - 0.88, -3.98, 0.90),
+            (car_x - 0.88, -3.42, 0.98),
+            (car_x - 0.74, -3.42, 1.12)
+        )
+
+        # Right side triangular cheater panel and A-pillar base:
+        car_trim.add_triangle(
+            (car_x + 0.68, -4.12, 0.93),
+            (car_x + 0.88, -3.98, 0.90),
+            (car_x + 0.70, -3.65, 1.25)
+        )
+        car_trim.add_triangle(
+            (car_x + 0.68, -4.12, 0.93),
+            (car_x + 0.88, -3.98, 0.90),
+            (car_x + 0.78, -4.26, 0.88)
+        )
+        car_trim.add_triangle(
+            (car_x + 0.74, -3.42, 1.12),
+            (car_x + 0.88, -3.42, 0.98),
+            (car_x + 0.88, -3.98, 0.90)
+        )
+        # Windscreen lower wiper cowl black trim bar:
+        car_trim.add_quad(
+            (car_x - 0.68, -4.22, 0.90),
+            (car_x + 0.68, -4.22, 0.90),
+            (car_x + 0.68, -4.10, 0.93),
+            (car_x - 0.68, -4.10, 0.93)
+        )
+
         # 6. Peugeot Signature Lighting:
         car_lights.add_box(car_x + 0.45, -5.30, 0.65, car_x + 0.78, -5.10, 0.76)
         car_lights.add_box(car_x - 0.78, -5.30, 0.65, car_x - 0.45, -5.10, 0.76)
@@ -1112,6 +1416,242 @@ class ModelBuilder:
             ev_cable.add_angled_beam(prev_p, curr_p, width=0.03, thickness=0.03)
             prev_p = curr_p
 
+        # -------------------------------------------------------------
+        # 16. OUTSIDE UTILITY PYLON & GRID SERVICE DROP TO METER BOX
+        # -------------------------------------------------------------
+        pylon = self.create_group("Utility_Pylon_Grid", "M_Utility_Pole")
+        pylon_fittings = self.create_group("Utility_Pole_Fittings", "M_Chrome")
+        pylon_insulators = self.create_group("Utility_Insulators", "M_Porcelain_White")
+        pylon_warning = self.create_group("Utility_Warning_Plate", "M_Warning_Yellow")
+
+        # 1. Roadside Distribution Pole / Pylon (X = 6.40m, Y = -7.20m, Z = 0.00m to 7.60m):
+        px, py = 6.40, -7.20
+        pylon.add_cylinder(px, py, 0.00, 7.60, 0.12, segments=16)
+        # Galvanized weather cap on top:
+        pylon_fittings.add_cylinder(px, py, 7.60, 7.68, 0.135, segments=16)
+
+        # 2. Alternating Steel Climbing Rungs (Steps):
+        for idx, rz in enumerate([2.2, 2.7, 3.2, 3.7, 4.2, 4.7, 5.2, 5.7, 6.2, 6.7]):
+            sign = 1 if (idx % 2 == 0) else -1
+            pylon_fittings.add_box(px + sign * 0.11, py - 0.02, rz, px + sign * 0.28, py + 0.02, rz + 0.03)
+
+        # 3. Steel Distribution Cross-Arm at Z = 7.20m:
+        pylon_fittings.add_box(px - 0.70, py - 0.05, 7.18, px + 0.70, py + 0.05, 7.25)
+        # Steel diagonal support braces:
+        pylon_fittings.add_pipe((px - 0.50, py, 7.18), (px, py, 6.60), radius=0.018)
+        pylon_fittings.add_pipe((px + 0.50, py, 7.18), (px, py, 6.60), radius=0.018)
+
+        # 4. Porcelain Bell Insulators on Cross-Arm:
+        for ix in [px - 0.55, px, px + 0.55]:
+            pylon_insulators.add_cylinder(ix, py, 7.25, 7.42, 0.065, segments=12)
+            pylon_fittings.add_cylinder(ix, py, 7.42, 7.48, 0.015, segments=8)
+
+        # 5. High-Voltage Overhead Distribution Lines (along street):
+        ev_cable.add_pipe((px - 0.55, -11.0, 7.46), (px - 0.55, -7.20, 7.46), radius=0.012)
+        ev_cable.add_pipe((px - 0.55, -7.20, 7.46), (px - 0.55, -3.5, 7.46), radius=0.012)
+        ev_cable.add_pipe((px + 0.55, -11.0, 7.46), (px + 0.55, -7.20, 7.46), radius=0.012)
+        ev_cable.add_pipe((px + 0.55, -7.20, 7.46), (px + 0.55, -3.5, 7.46), radius=0.012)
+
+        # 6. Yellow 230/400V Hazard Warning Plate on Pole:
+        pylon_warning.add_box(px - 0.12, py - 0.13, 2.20, px + 0.12, py - 0.12, 2.52)
+
+        # 7. Pole-Mounted Distribution Cutout / Junction Box:
+        pylon.add_box(px - 0.12, py + 0.11, 6.80, px + 0.12, py + 0.25, 7.10)
+
+        # 8. Overhead Service Drop (Aerial Bundled Cable - ABC) with Catenary Sag:
+        # Runs from pylon distribution box (6.40, -6.95, 6.95) to front house corner (5.32, 0.02, 5.00):
+        p_pole = (px, py + 0.25, 6.95)
+        p_house = (5.32, 0.02, 5.00)
+        n_spans = 18
+        prev_pt = p_pole
+        for s in range(1, n_spans + 1):
+            t = s / float(n_spans)
+            cx = p_pole[0] + t * (p_house[0] - p_pole[0])
+            cy = p_pole[1] + t * (p_house[1] - p_pole[1])
+            cz_lin = p_pole[2] + t * (p_house[2] - p_pole[2])
+            sag = 0.45 * 4.0 * t * (1.0 - t)
+            cz = cz_lin - sag
+            curr_pt = (cx, cy, cz)
+            pylon.add_pipe(prev_pt, curr_pt, radius=0.016)
+            prev_pt = curr_pt
+
+        # 9. Galvanized Heavy-Duty House Wall Anchor Bracket:
+        pylon_fittings.add_box(5.26, -0.02, 4.90, 5.38, 0.03, 5.08)
+
+        # 10. External Heavy-Duty PVC Service Conduit running down Front Corner of House:
+        pylon.add_pipe((5.32, -0.04, 5.00), (5.32, -0.04, 1.10), radius=0.022)
+        # Wall saddles securing conduit to brickwork:
+        for sz in [1.5, 2.3, 3.1, 3.9, 4.7]:
+            pylon_fittings.add_box(5.28, -0.05, sz - 0.02, 5.36, -0.01, sz + 0.02)
+
+        # 11. 90-Degree Through-Wall Inspection Elbow into Entrance Meter Cupboard:
+        pylon.add_pipe((5.32, -0.04, 1.10), (5.26, 0.55, 1.10), radius=0.022)
+
+        # 12. Inside Entrance Meter Cupboard: Main 100A Service Cutout Head:
+        pylon.add_box(5.24, 0.52, 0.72, 5.33, 0.68, 0.95)
+        # Sealed 100A fuse carrier:
+        pylon_fittings.add_cylinder(5.26, 0.60, 0.76, 0.90, 0.025)
+
+        # 13. Heavy-Duty 25mm² Double-Insulated Meter Tails from Cutout into Digital Smart Meter:
+        pylon.add_pipe((5.27, 0.58, 0.95), (5.27, 0.74, 0.95), radius=0.012)
+        pylon.add_pipe((5.29, 0.62, 0.95), (5.29, 0.78, 0.95), radius=0.012)
+        # Main Earth Terminal (MET) with 16mm² earthing cable:
+        pylon_fittings.add_box(5.24, 0.44, 0.85, 5.33, 0.50, 0.92)
+        pylon.add_pipe((5.27, 0.50, 0.88), (5.27, 0.54, 0.88), radius=0.008)
+
+        # -------------------------------------------------------------
+        # 17. EXTERNAL BULK LPG GAS TANK & PIPES TO COMBI BOILER
+        # -------------------------------------------------------------
+        gas_tank = self.create_group("Gas_Storage_Tank", "M_Gas_Tank")
+        gas_fittings = self.create_group("Gas_Tank_Fittings", "M_Chrome")
+        gas_pipes = self.create_group("Gas_Supply_Pipes", "M_Gas_Pipe_Yellow")
+        gas_warning = self.create_group("Gas_Warning_Sign", "M_Warning_Yellow")
+
+        # 1. Reinforced Concrete Plinth Pad on Left Side Garden:
+        gas_tank.add_box(-1.95, 7.15, 0.00, -0.65, 8.65, 0.10)
+
+        # 2. Bulk LPG Horizontal Cylindrical Vessel (centered at X = -1.30m, Z = 0.58m):
+        gt_x = -1.30
+        gt_z = 0.58
+        gt_r = 0.40
+        gas_tank.add_cylinder_y(gt_x, 7.40, 8.40, gt_z, gt_r, segments=16)
+        # Hemispherical dished end caps:
+        gas_tank.add_sphere(gt_x, 7.40, gt_z, gt_r, rings=8, sectors=16)
+        gas_tank.add_sphere(gt_x, 8.40, gt_z, gt_r, rings=8, sectors=16)
+
+        # 3. Heavy-Duty Steel Saddle Cradle Legs:
+        for cy in [7.60, 8.20]:
+            gas_fittings.add_box(gt_x - 0.35, cy - 0.05, 0.10, gt_x + 0.35, cy + 0.05, 0.28)
+            gas_fittings.add_box(gt_x - 0.38, cy - 0.06, 0.10, gt_x + 0.38, cy + 0.06, 0.13)
+
+        # 4. Top Inspection Shroud / Dome Shroud:
+        gas_tank.add_cylinder(gt_x, 7.90, gt_z + gt_r, gt_z + gt_r + 0.08, 0.15, segments=12)
+        gas_tank.add_sphere(gt_x, 7.90, gt_z + gt_r + 0.08, 0.15, rings=6, sectors=12)
+
+        # 5. Pressure Regulator & Contents Level Gauge:
+        gas_fittings.add_cylinder(gt_x, 7.82, 1.00, 1.06, 0.035)
+        gas_fittings.add_cylinder(gt_x, 8.00, 0.98, 1.05, 0.065)
+        gas_pipes.add_box(gt_x - 0.08, 8.02, 1.05, gt_x + 0.08, 8.08, 1.09)
+
+        # 6. High Visibility LPG Hazard Warning Sign:
+        gas_warning.add_box(gt_x + gt_r - 0.01, 7.75, gt_z - 0.08, gt_x + gt_r + 0.005, 8.05, gt_z + 0.12)
+
+        # 7. High-Visibility Yellow External Gas Supply Pipe Run to Boiler:
+        # Drops from tank regulator down to plinth support level:
+        gas_pipes.add_pipe((gt_x, 8.00, 0.98), (gt_x, 8.00, 0.22), radius=0.014)
+        # Runs across garden towards the left gable wall:
+        gas_pipes.add_pipe((gt_x, 8.00, 0.22), (-0.08, 8.32, 0.22), radius=0.014)
+        # Rises up the external white pebble dash gable wall:
+        gas_pipes.add_pipe((-0.08, 8.32, 0.22), (-0.08, 8.32, 1.05), radius=0.014)
+        # Wall mounting pipe saddles:
+        for pz in [0.45, 0.80]:
+            gas_fittings.add_box(-0.11, 8.29, pz - 0.015, -0.05, 8.35, pz + 0.015)
+        # External emergency gas isolation cock with yellow handle:
+        gas_fittings.add_cylinder(-0.08, 8.32, 1.02, 1.08, 0.022)
+        gas_pipes.add_box(-0.09, 8.32, 1.04, -0.03, 8.42, 1.07)
+        # Passes through the 301mm external gable wall into the kitchen:
+        gas_pipes.add_pipe((-0.08, 8.32, 1.05), (t_left, 8.32, 1.05), radius=0.014)
+        # Inside the kitchen: connects up directly into the combi boiler copper gas manifold:
+        boiler_pipes.add_pipe((t_left, 8.32, 1.05), (b_x0 + 0.15, 8.32, 1.05), radius=0.012)
+        boiler_pipes.add_pipe((b_x0 + 0.15, 8.32, 1.05), (b_x0 + 0.15, 8.32, b_z0), radius=0.012)
+
+        # -------------------------------------------------------------
+        # 18. LANDSCAPE: GREEN LAWN, PATHS, FENCING, BUSHES & TREES
+        # -------------------------------------------------------------
+        grass = self.create_group("Landscape_Grass", "M_Grass_Green")
+        paving = self.create_group("Landscape_Paving", "M_Paving_Stone")
+        fence = self.create_group("Landscape_Fencing", "M_Wood_Structure")
+        bushes = self.create_group("Landscape_Bushes", "M_Foliage_Green")
+        bushes_dark = self.create_group("Landscape_Bushes_Dark", "M_Foliage_Dark")
+        tree_trunk = self.create_group("Landscape_Trees_Trunk", "M_Tree_Bark")
+        tree_foliage = self.create_group("Landscape_Trees_Foliage", "M_Tree_Leaves")
+
+        # 1. Lush Green Lawn Terrain (Ground Plane with clean cutouts around driveway and house):
+        # Front garden lawn (left of driveway):
+        grass.add_box(-6.00, -7.50, -0.02, 3.20, -0.10, 0.01)
+        # Side garden lawn (along left gable wall):
+        grass.add_box(-6.00, -0.10, -0.02, -0.10, D + 0.10, 0.01)
+        # Rear garden lawn (spacious private backyard):
+        grass.add_box(-6.00, D + 0.10, -0.02, W + 0.10, 15.20, 0.01)
+        # Front street roadside verge (right of driveway around utility pole):
+        grass.add_box(5.80, -8.50, -0.02, 7.50, -0.20, 0.01)
+
+        # 2. Paved Pathways & Dining Terrace:
+        # Front Entrance Walkway:
+        paving.add_box(3.20, -2.20, 0.01, 5.00, 0.05, 0.025)
+        # Rear Patio Terrace (outside French patio doors):
+        paving.add_box(2.80, D - 0.05, 0.01, 5.30, D + 2.40, 0.035)
+        # Side stepping flagstones:
+        for sy in [1.2, 2.3, 3.4, 4.5, 5.6, 6.7]:
+            paving.add_box(-0.75, sy - 0.22, 0.01, -0.30, sy + 0.22, 0.025)
+
+        # 3. Timber Perimeter Privacy Fencing (1.8m height):
+        # Left boundary fence (X = -6.00m, Y in [0.0m, 15.20m]):
+        fence.add_box(-6.04, 0.00, 0.05, -5.96, 15.20, 1.80)
+        # Rear boundary fence (Y = 15.20m, X in [-6.00m, W]):
+        fence.add_box(-6.00, 15.16, 0.05, W, 15.24, 1.80)
+        # Party line rear divider fence (X = W = 5.62m, Y in [D, 15.20m]):
+        fence.add_box(W - 0.04, D, 0.05, W + 0.04, 15.20, 1.80)
+        # Fence posts every 1.8m:
+        for py in [0.0, 1.8, 3.6, 5.4, 7.2, 9.0, 10.8, 12.6, 14.4, 15.2]:
+            fence.add_box(-6.06, py - 0.05, 0.0, -5.94, py + 0.05, 1.88)
+        for px in [-4.2, -2.4, -0.6, 1.2, 3.0, 4.8, W]:
+            fence.add_box(px - 0.05, 15.14, 0.0, px + 0.05, 15.26, 1.88)
+
+        # 4. Landscaped Shrubs & Bushes:
+        # A. Front Boundary Hedge / Shrubs (neat row along front lawn border at Y = -7.20m):
+        for bx in [-5.4, -4.6, -3.8, -3.0, -2.2, -1.4, -0.6, 0.2, 1.0, 1.8, 2.6]:
+            bushes.add_sphere(bx, -7.20, 0.35, radius=0.38, rings=6, sectors=10)
+            bushes_dark.add_sphere(bx + 0.12, -7.05, 0.28, radius=0.28, rings=5, sectors=8)
+
+        # B. Front Lounge Foundation Shrubs (under window W1):
+        for bx in [0.60, 1.30, 2.00, 2.70]:
+            bushes.add_sphere(bx, -0.50, 0.28, radius=0.32, rings=6, sectors=10)
+            bushes_dark.add_sphere(bx - 0.10, -0.42, 0.22, radius=0.24, rings=5, sectors=8)
+
+        # C. Driveway Lawn Divider Hedge (along X = 3.10m):
+        for by in [-6.4, -5.6, -4.8, -4.0, -3.2, -2.4]:
+            bushes.add_sphere(3.10, by, 0.32, radius=0.34, rings=6, sectors=10)
+
+        # D. Rear Garden Landscaped Shrub Beds (along patio and corner fences):
+        for bx, by, br in [
+            (-5.2, 2.0, 0.45), (-5.2, 4.0, 0.50), (-5.2, 6.0, 0.42),
+            (-5.2, 10.5, 0.55), (-5.2, 12.0, 0.48),
+            (2.2, D + 1.2, 0.42), (2.4, D + 2.0, 0.38),
+            (5.4, D + 3.2, 0.46), (5.4, D + 4.5, 0.50),
+            (-1.0, 14.4, 0.52), (0.5, 14.5, 0.48), (2.0, 14.4, 0.50)
+        ]:
+            bushes.add_sphere(bx, by, br * 0.90, radius=br, rings=6, sectors=10)
+            bushes_dark.add_sphere(bx + 0.15, by - 0.12, br * 0.75, radius=br * 0.80, rings=5, sectors=8)
+
+        # 5. Landscaped Trees:
+        def add_garden_tree(tx, ty, trunk_h, crown_r, foliage_grp):
+            # Tapered vertical trunk:
+            tree_trunk.add_cylinder(tx, ty, 0.0, trunk_h, radius=0.10, segments=10)
+            # 3 Natural spreading main limbs:
+            for angle, l_len, l_z in [(0.3, 0.70, trunk_h + 0.6), (2.4, 0.75, trunk_h + 0.7), (4.5, 0.65, trunk_h + 0.55)]:
+                lx = tx + l_len * math.cos(angle)
+                ly = ty + l_len * math.sin(angle)
+                tree_trunk.add_pipe((tx, ty, trunk_h * 0.85), (lx, ly, l_z), radius=0.045)
+                # Foliage cluster at limb tip:
+                foliage_grp.add_sphere(lx, ly, l_z + 0.20, radius=crown_r * 0.55, rings=6, sectors=10)
+            # Central full foliage canopy:
+            foliage_grp.add_sphere(tx, ty, trunk_h + crown_r * 0.50, radius=crown_r, rings=8, sectors=12)
+            foliage_grp.add_sphere(tx + 0.20, ty - 0.15, trunk_h + crown_r * 0.75, radius=crown_r * 0.75, rings=7, sectors=10)
+            foliage_grp.add_sphere(tx - 0.25, ty + 0.20, trunk_h + crown_r * 0.40, radius=crown_r * 0.80, rings=7, sectors=10)
+
+        # Tree 1: Front Garden Ornamental Tree (Flowering / Silver Birch):
+        add_garden_tree(tx=-3.20, ty=-4.50, trunk_h=2.40, crown_r=1.25, foliage_grp=tree_foliage)
+
+        # Tree 2: Left Side Screening Tree:
+        add_garden_tree(tx=-4.50, ty=3.50, trunk_h=2.60, crown_r=1.35, foliage_grp=tree_foliage)
+
+        # Tree 3: Rear Garden Mature Feature Tree (Back Left):
+        add_garden_tree(tx=-3.80, ty=13.00, trunk_h=3.20, crown_r=1.65, foliage_grp=tree_foliage)
+
+        # Tree 4: Rear Garden Mature Feature Tree (Back Right):
+        add_garden_tree(tx=3.60, ty=13.20, trunk_h=3.00, crown_r=1.55, foliage_grp=tree_foliage)
+
         print(f"Blair 4 TK Model built successfully with {len(self.groups)} distinct object groups.")
 
     def export_obj_mtl(self, obj_filename, mtl_filename):
@@ -1123,8 +1663,8 @@ class ModelBuilder:
 
             materials = {
                 "M_Concrete": {"Kd": (0.60, 0.60, 0.60), "Ks": (0.1, 0.1, 0.1), "Ns": 10},
-                "M_Exterior_BrickRender": {"Kd": (0.75, 0.48, 0.38), "Ks": (0.15, 0.12, 0.10), "Ns": 15},
-                "M_Party_Wall": {"Kd": (0.75, 0.48, 0.38), "Ks": (0.15, 0.12, 0.10), "Ns": 15},
+                "M_Exterior_BrickRender": {"Kd": (0.92, 0.92, 0.90), "Ks": (0.04, 0.04, 0.04), "Ns": 5},
+                "M_Party_Wall": {"Kd": (0.92, 0.92, 0.90), "Ks": (0.04, 0.04, 0.04), "Ns": 5},
                 "M_Roof_Tiles": {"Kd": (0.22, 0.23, 0.25), "Ks": (0.2, 0.2, 0.2), "Ns": 30},
                 "M_Ridge_Tiles": {"Kd": (0.18, 0.19, 0.20), "Ks": (0.2, 0.2, 0.2), "Ns": 35},
                 "M_Solar_Panels": {"Kd": (0.08, 0.10, 0.15), "Ks": (0.9, 0.9, 0.95), "Ns": 100},
@@ -1156,8 +1696,18 @@ class ModelBuilder:
                 "M_Car_Lights_Front": {"Kd": (0.95, 0.98, 1.00), "Ks": (0.95, 0.95, 0.95), "Ns": 100},
                 "M_Car_Lights_Rear": {"Kd": (0.85, 0.05, 0.05), "Ks": (0.80, 0.20, 0.20), "Ns": 70},
                 "M_EV_Cable": {"Kd": (0.08, 0.08, 0.08), "Ks": (0.20, 0.20, 0.20), "Ns": 25},
+                "M_Utility_Pole": {"Kd": (0.28, 0.22, 0.16), "Ks": (0.05, 0.05, 0.05), "Ns": 10},
+                "M_Warning_Yellow": {"Kd": (0.95, 0.80, 0.05), "Ks": (0.20, 0.20, 0.20), "Ns": 30},
                 "M_Plaque": {"Kd": (0.18, 0.20, 0.22), "Ks": (0.30, 0.30, 0.30), "Ns": 30},
-                "M_Plaque_Text": {"Kd": (0.95, 0.95, 0.95), "Ks": (0.50, 0.50, 0.50), "Ns": 50}
+                "M_Plaque_Text": {"Kd": (0.95, 0.95, 0.95), "Ks": (0.50, 0.50, 0.50), "Ns": 50},
+                "M_Gas_Tank": {"Kd": (0.88, 0.90, 0.88), "Ks": (0.50, 0.50, 0.50), "Ns": 40},
+                "M_Gas_Pipe_Yellow": {"Kd": (0.92, 0.75, 0.08), "Ks": (0.25, 0.25, 0.25), "Ns": 25},
+                "M_Grass_Green": {"Kd": (0.24, 0.52, 0.18), "Ks": (0.05, 0.05, 0.05), "Ns": 5},
+                "M_Paving_Stone": {"Kd": (0.68, 0.67, 0.64), "Ks": (0.15, 0.15, 0.15), "Ns": 15},
+                "M_Foliage_Green": {"Kd": (0.18, 0.44, 0.15), "Ks": (0.08, 0.08, 0.08), "Ns": 10},
+                "M_Foliage_Dark": {"Kd": (0.12, 0.32, 0.10), "Ks": (0.08, 0.08, 0.08), "Ns": 10},
+                "M_Tree_Bark": {"Kd": (0.35, 0.25, 0.18), "Ks": (0.05, 0.05, 0.05), "Ns": 5},
+                "M_Tree_Leaves": {"Kd": (0.20, 0.48, 0.16), "Ks": (0.10, 0.10, 0.10), "Ns": 15}
             }
 
             for mat_name, props in materials.items():
@@ -1210,8 +1760,8 @@ class ModelBuilder:
     def export_glb(self, glb_filename):
         materials_pbr = {
             "M_Concrete": {"baseColor": [0.60, 0.60, 0.60, 1.0], "roughness": 0.8, "metallic": 0.0},
-            "M_Exterior_BrickRender": {"baseColor": [0.75, 0.48, 0.38, 1.0], "roughness": 0.85, "metallic": 0.0},
-            "M_Party_Wall": {"baseColor": [0.75, 0.48, 0.38, 1.0], "roughness": 0.85, "metallic": 0.0},
+            "M_Exterior_BrickRender": {"baseColor": [0.92, 0.92, 0.90, 1.0], "roughness": 0.92, "metallic": 0.0},
+            "M_Party_Wall": {"baseColor": [0.92, 0.92, 0.90, 1.0], "roughness": 0.92, "metallic": 0.0},
             "M_Roof_Tiles": {"baseColor": [0.22, 0.23, 0.25, 1.0], "roughness": 0.75, "metallic": 0.0},
             "M_Ridge_Tiles": {"baseColor": [0.18, 0.19, 0.20, 1.0], "roughness": 0.70, "metallic": 0.0},
             "M_Solar_Panels": {"baseColor": [0.08, 0.10, 0.15, 1.0], "roughness": 0.15, "metallic": 0.85},
@@ -1243,8 +1793,18 @@ class ModelBuilder:
             "M_Car_Lights_Front": {"baseColor": [0.95, 0.98, 1.00, 1.0], "roughness": 0.10, "metallic": 0.10},
             "M_Car_Lights_Rear": {"baseColor": [0.85, 0.05, 0.05, 1.0], "roughness": 0.20, "metallic": 0.10},
             "M_EV_Cable": {"baseColor": [0.08, 0.08, 0.08, 1.0], "roughness": 0.50, "metallic": 0.05},
+            "M_Utility_Pole": {"baseColor": [0.28, 0.22, 0.16, 1.0], "roughness": 0.85, "metallic": 0.0},
+            "M_Warning_Yellow": {"baseColor": [0.95, 0.80, 0.05, 1.0], "roughness": 0.50, "metallic": 0.10},
             "M_Plaque": {"baseColor": [0.18, 0.20, 0.22, 1.0], "roughness": 0.60, "metallic": 0.10},
-            "M_Plaque_Text": {"baseColor": [0.95, 0.95, 0.95, 1.0], "roughness": 0.30, "metallic": 0.10}
+            "M_Plaque_Text": {"baseColor": [0.95, 0.95, 0.95, 1.0], "roughness": 0.30, "metallic": 0.10},
+            "M_Gas_Tank": {"baseColor": [0.88, 0.90, 0.88, 1.0], "roughness": 0.30, "metallic": 0.15},
+            "M_Gas_Pipe_Yellow": {"baseColor": [0.92, 0.75, 0.08, 1.0], "roughness": 0.40, "metallic": 0.05},
+            "M_Grass_Green": {"baseColor": [0.24, 0.52, 0.18, 1.0], "roughness": 0.90, "metallic": 0.0},
+            "M_Paving_Stone": {"baseColor": [0.68, 0.67, 0.64, 1.0], "roughness": 0.80, "metallic": 0.0},
+            "M_Foliage_Green": {"baseColor": [0.18, 0.44, 0.15, 1.0], "roughness": 0.85, "metallic": 0.0},
+            "M_Foliage_Dark": {"baseColor": [0.12, 0.32, 0.10, 1.0], "roughness": 0.85, "metallic": 0.0},
+            "M_Tree_Bark": {"baseColor": [0.35, 0.25, 0.18, 1.0], "roughness": 0.90, "metallic": 0.0},
+            "M_Tree_Leaves": {"baseColor": [0.20, 0.48, 0.16, 1.0], "roughness": 0.80, "metallic": 0.0}
         }
 
         mat_list = []

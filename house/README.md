@@ -52,6 +52,54 @@ Built directly from the official **Taylor Wimpey West Scotland `BLAIR 4 TK` (Sco
     - The end of the kitchen base cabinet and post-formed worktop facing the dining area features a smooth 280mm curved radius end unit with a matching rounded bullnose worktop overhang.
 13. **Pitched Verge Bargeboards Fitting the Roof (No Flat Rectangle):**
     - The verge fascia boards on the left gable now follow the exact triangular pitch of the roof from front eave to ridge and down to rear eave, completely eliminating the old flat rectangular box.
+14. **Solar PV Cabling from Roof to Meter Box:**
+    - Weatherproof IP66 DC isolator switch mounted under the rear roof solar array (`Z = 6.36m`) with rotary switch knob.
+    - Interconnecting DC string cables from solar panel junction boxes into isolator switch.
+    - Weatherproof roof penetration cowl boot passing into the loft space.
+    - Internal heavy-duty conduit running forward along the roof truss bottom chord to the party wall service zone.
+    - Vertical conduit drop inside the party wall chase from loft (`Z = 5.25m`) into the ground floor entrance meter cupboard ceiling (`Z = 2.45m`).
+    - Inside the meter cupboard: Solar AC Inverter / Generation Unit (`Z = 1.72m to 2.02m`) and Solar AC rotary isolator switch box (`Z = 1.72m to 1.88m`) mounted directly above the consumer unit, with twin DC cables entering the unit and AC supply connecting directly into a dedicated breaker in the consumer unit.
+15. **Outside Utility Pylon & Grid Service Drop to Meter Box:**
+    - Roadside wooden distribution pole / pylon (`X = 6.40m, Y = -7.20m, Z = 0.0m to 7.60m`) with galvanized weather cap.
+    - Alternating steel climbing rungs up the side of the pole.
+    - Steel distribution cross-arm at `Z = 7.20m` with diagonal steel support braces.
+    - Three porcelain bell insulators on the cross-arm with overhead mains grid lines spanning along the road.
+    - High-voltage yellow 230/400V hazard warning plate mounted at eye level.
+    - Pole-mounted service fuse / junction box at `Z = 6.95m`.
+    - Aerial Bundled Cable (ABC) service drop running in a realistic catenary sag curve across the driveway to a galvanized heavy-duty wall bracket at the front corner of the house (`Z = 5.00m`).
+    - External heavy-duty black PVC service conduit running down the front house corner from `Z = 5.00m` to `Z = 1.10m` with pipe saddle clips.
+    - 90-degree through-wall inspection elbow penetrating through the front wall into the entrance meter cupboard.
+    - Inside the meter cupboard: 100A sealed main service cutout fuse head, 25mm² double-insulated meter tails (brown live and blue neutral) connecting into the smart digital meter, and Main Earth Terminal (MET) bonding.
+16. **Snug Door Frames with 3.5mm Clearances to Walls:**
+    - All interior door structural openings are fully framed with 22mm timber casing/linings and 45mm x 12mm architrave surround mouldings on both faces of the wall.
+    - Door leaves are fitted inside the frame with realistic **3.5mm perimeter clearance gaps** (3.5mm gap to left jamb, 3.5mm gap to right jamb, 3.5mm gap to head casing, and 6.0mm threshold clearance to floor).
+    - Fitted with dual chrome lever handles with circular rose escutcheons on both sides.
+17. **Peugeot e-2008 Triangular Windscreen Trim Styling:**
+    - Aerodynamic gloss black triangular trim panels (A-pillar base sails / quarter cheater panels) seamlessly linking the front windscreen lower corners to the bonnet crease and door mirror mounts on both sides.
+    - Black ceramic wiper cowl lower windscreen accent trim.
+18. **White Pebble Dash Finish on External Walls & Party Wall:**
+    - The entire exterior facade of the house (`Exterior_Walls`) and the full separating party wall (`Separating_Party_Wall`) are rendered in authentic **White Pebble Dash** (Scottish wet dash / roughcast aggregate).
+    - Formatted with a high-roughness mineral aggregate finish (`roughness: 0.92`, `Kd: [0.92, 0.92, 0.90]`) representing crisp off-white / light cream stone chippings.
+19. **External Bulk LPG Gas Storage Tank & Service Pipework into Boiler:**
+    - Positioned on the left side garden adjacent to the kitchen combi boiler (`X = -1.30m, Y = 7.15m to 8.65m`).
+    - Mounted on a reinforced concrete plinth pad (`0.10m` thick).
+    - Heavy-duty cylindrical LPG bulk vessel with hemispherical dished end caps, finished in weatherproof off-white protective enamel (`M_Gas_Tank`).
+    - Dual steel saddle cradle legs securing the vessel to the plinth.
+    - Top inspection bonnet dome shroud, pressure regulator, magnetic contents level dial, safety relief valve, and yellow hazard plaque: `"LPG - HIGHLY FLAMMABLE"`.
+    - Continuous high-visibility yellow external gas supply pipe (`M_Gas_Pipe_Yellow`) running from the tank regulator across the plinth, rising up the gable wall with pipe saddles and an external emergency 1/4-turn isolation tap, passing through the 301mm gable wall sleeve directly into the kitchen combi boiler copper gas manifold.
+20. **Complete Landscaped Garden, Green Grass, Bushes & Trees:**
+    - **Lush Green Lawn (`Landscape_Grass`):** Expansive ground terrain covering the front garden, side passage, rear back garden, and roadside grass verge with crisp cutouts around the driveway and house footprint.
+    - **Stone Paving & Patio (`Landscape_Paving`):** Front entrance flagstone walkway, side garden stepping stones to the gas tank, and a spacious rear dining patio terrace outside the French patio doors.
+    - **Perimeter Fencing (`Landscape_Fencing`):** 1.8m timber featherboard privacy fencing enclosing the rear and side gardens with sturdy fence posts every 1.8m.
+    - **Landscaped Shrubs & Bushes (`Landscape_Bushes`):** Neatly trimmed front garden boundary hedge rows, foundation flowering shrubs under the lounge front window, driveway border shrubs, and rear garden shrub beds.
+    - **Mature Garden Trees (`Landscape_Trees`):** 4 realistic landscaped trees with natural branching trunks (`M_Tree_Bark`) and layered foliage canopies (`M_Tree_Leaves`):
+      1. Front garden ornamental tree (flowering / silver birch at `X = -3.20m, Y = -4.50m`).
+      2. Left side screening tree (`X = -4.50m, Y = 3.50m`).
+      3. Rear back-left mature feature tree (`X = -3.80m, Y = 13.00m`).
+      4. Rear back-right mature feature tree (`X = 3.60m, Y = 13.20m`).
+21. **Roof Aligned to External Walls & Corner Downpipes:**
+    - **Roof Aligned to External Walls:** Left gable roof verge overhang reduced to a snug 50mm dry-verge trim, perfectly aligning the roof and bargeboards with the external gable wall (`X = 0.0m`). Front and rear eaves soffit boxes close flush against the front and rear external walls (`Y = 0.0m` and `Y = D`), eliminating any detached gaps.
+    - **Drain Pipes Connected to House Corners:** Rainwater downpipes are connected directly to all four corners of the house via swan-neck offset bends from the eaves gutters. Each downpipe runs vertically down the corner of the white pebble dash wall, clamped with mounting pipe saddles every 1.2m, and terminates in an angled drain shoe discharging into a ground drainage gully.
 
 ---
 
@@ -59,10 +107,10 @@ Built directly from the official **Taylor Wimpey West Scotland `BLAIR 4 TK` (Sco
 
 | File | Format | Description |
 | :--- | :--- | :--- |
-| `Taylor_Wimpey_Blair.glb` | **glTF 2.0 Binary** *(Recommended)* | Complete PBR materials, transparent tinted glass, and 47 distinct named object groups. |
-| `Taylor_Wimpey_Blair.obj` | **Wavefront OBJ** | Universal mesh format with 47 individual named objects. |
-| `Taylor_Wimpey_Blair.mtl` | **Material Library** | PBR materials including Vertigo Blue metallic paint, rubber tires, LED lighting, slate plaques, and copper piping. |
-| `setup_blender_scene.py` | **Blender Python Script** | Automates loading the model into Blender, sorting objects into 5 Outliner collections, setting up daylight and 4 preset cameras (including front perspective, rear solar, Peugeot driveway charging, and overhead bedroom cutaway). |
+| `Taylor_Wimpey_Blair.glb` | **glTF 2.0 Binary** *(Recommended)* | Complete PBR materials, transparent tinted glass, and 63 distinct named object groups. |
+| `Taylor_Wimpey_Blair.obj` | **Wavefront OBJ** | Universal mesh format with 63 individual named objects. |
+| `Taylor_Wimpey_Blair.mtl` | **Material Library** | PBR materials including White Pebble Dash, Vertigo Blue metallic paint, lush grass, foliage, tree bark, LPG tank enamel, and warning signs. |
+| `setup_blender_scene.py` | **Blender Python Script** | Automates loading the model into Blender, sorting objects into 6 Outliner collections, setting up daylight and 7 preset cameras (including front perspective, rear solar, Peugeot driveway charging, utility pylon & service drop, gas tank & boiler, landscape garden overview, and overhead bedroom cutaway). |
 
 ---
 
