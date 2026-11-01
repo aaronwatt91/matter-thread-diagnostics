@@ -30,10 +30,26 @@
     </header>
 
     <!-- PROMINENT NETWORK SELECTOR & SCANNER BAR -->
-    <section class="card" style="padding: 16px 20px; margin-bottom: 20px; border: 1px solid rgba(3, 169, 244, 0.45); background: linear-gradient(180deg, rgba(3, 169, 244, 0.08), rgba(31, 41, 55, 0.95));">
+    <section id="scanner-bar-card" class="card" style="padding: 16px 20px; margin-bottom: 20px; border: 1px solid rgba(3, 169, 244, 0.45); background: linear-gradient(180deg, rgba(3, 169, 244, 0.08), rgba(31, 41, 55, 0.95));">
       <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
+        
+        <!-- Network Protocol Mode Toggle (Thread vs Zigbee) -->
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8;">
+            <i class="fa-solid fa-layer-group"></i> Network Protocol:
+          </label>
+          <div class="protocol-toggle-group" style="display: inline-flex; background: #0f172a; padding: 3px; border-radius: 8px; border: 1px solid #334155;">
+            <button type="button" class="btn btn-protocol active" id="btn-protocol-thread" data-protocol="thread" style="padding: 6px 14px; font-size: 12px; font-weight: 700; border-radius: 6px; cursor: pointer;">
+              <i class="fa-solid fa-circle-nodes"></i> Thread Network
+            </button>
+            <button type="button" class="btn btn-protocol" id="btn-protocol-zigbee" data-protocol="zigbee" style="padding: 6px 14px; font-size: 12px; font-weight: 700; border-radius: 6px; cursor: pointer;">
+              <i class="fa-solid fa-cube"></i> Zigbee Network
+            </button>
+          </div>
+        </div>
+
         <div style="flex: 1; min-width: 260px;">
-          <label for="top-thread-network" style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 6px;">
+          <label id="top-network-label" for="top-thread-network" style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 6px;">
             <i class="fa-solid fa-tower-cell"></i> 1. Select Thread Network to Inspect
           </label>
           <select id="top-thread-network" class="form-control" style="font-weight: 600;">
@@ -41,10 +57,10 @@
           </select>
         </div>
         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-          <button type="button" id="btn-top-refresh-nets" class="btn btn-secondary" title="Discover Thread networks via HA, mDNS & OTBR">
+          <button type="button" id="btn-top-refresh-nets" class="btn btn-secondary" title="Discover networks via HA, mDNS, ZHA & OTBR">
             <i class="fa-solid fa-magnifying-glass-chart"></i> Discover Networks
           </button>
-          <button type="button" id="btn-top-scan" class="btn btn-primary" title="Scan selected Thread network across mDNS, Matter Cluster 0x0035, OTBR, and IPv6">
+          <button type="button" id="btn-top-scan" class="btn btn-primary" title="Scan selected network">
             <i class="fa-solid fa-satellite-dish"></i> 2. Scan Selected Network
           </button>
           <button type="button" id="btn-top-ai" class="btn btn-outline" style="border-color: #10b981; color: #34d399;" title="Send live scan telemetry to AI for root-cause troubleshooting">
@@ -103,22 +119,22 @@
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-      <button class="tab-btn active" data-tab="tab-rules"><i class="fa-solid fa-microscope"></i> Live Scan & Nodes (Cluster 0x0035)</button>
-      <button class="tab-btn" data-tab="tab-topology"><i class="fa-solid fa-diagram-project"></i> Live Mesh Topology</button>
-      <button class="tab-btn" data-tab="tab-channel"><i class="fa-solid fa-tower-broadcast"></i> ZBT-1 / Thread Channel</button>
-      <button class="tab-btn" data-tab="tab-ai"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio</button>
-      <button class="tab-btn" data-tab="tab-manual"><i class="fa-solid fa-file-code"></i> Log & Raw JSON Analyzer</button>
-      <button class="tab-btn" data-tab="tab-settings"><i class="fa-solid fa-sliders"></i> Settings & API Keys</button>
+      <button class="tab-btn active" id="tab-nav-rules" data-tab="tab-rules"><i class="fa-solid fa-microscope"></i> Live Scan & Nodes (Cluster 0x0035)</button>
+      <button class="tab-btn" id="tab-nav-topology" data-tab="tab-topology"><i class="fa-solid fa-diagram-project"></i> Live Mesh Topology</button>
+      <button class="tab-btn" id="tab-nav-channel" data-tab="tab-channel"><i class="fa-solid fa-tower-broadcast"></i> ZBT-1 / Channel & Coexistence</button>
+      <button class="tab-btn" id="tab-nav-ai" data-tab="tab-ai"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio</button>
+      <button class="tab-btn" id="tab-nav-manual" data-tab="tab-manual"><i class="fa-solid fa-file-code"></i> Log & Raw JSON Analyzer</button>
+      <button class="tab-btn" id="tab-nav-settings" data-tab="tab-settings"><i class="fa-solid fa-sliders"></i> Settings & API Keys</button>
     </nav>
 
-    <!-- TAB 1: Live Scan, Border Routers, Matter Cluster 0x0035 Nodes & Rules -->
+    <!-- TAB 1: Live Scan, Border Routers / Coordinators, Commissioned Nodes & Rules -->
     <section id="tab-rules" class="tab-content active">
-      <!-- Discovered Border Routers Table -->
+      <!-- Discovered Border Routers / Zigbee Coordinators Table -->
       <div class="card">
         <div class="card-header-flex">
           <div>
-            <h3><i class="fa-solid fa-tower-broadcast"></i> Discovered Thread Border Routers (mDNS <code>_meshcop._udp</code>, HA &amp; OTBR)</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Live Border Routers detected on your network with their Extended PAN ID, Channel, Mesh-Local Prefix, and ICMPv6 reachability.</p>
+            <h3 id="heading-br-table"><i class="fa-solid fa-tower-broadcast"></i> Discovered Thread Border Routers (mDNS <code>_meshcop._udp</code>, HA &amp; OTBR)</h3>
+            <p id="desc-br-table" class="section-desc" style="margin-bottom: 0;">Live Border Routers detected on your network with their Extended PAN ID, Channel, Mesh-Local Prefix, and ICMPv6 reachability.</p>
           </div>
           <span id="br-table-count" class="badge badge-info">0 Routers</span>
         </div>
@@ -126,28 +142,28 @@
           <table id="table-border-routers" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
             <thead>
               <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted);">
-                <th style="padding: 10px 8px;">Border Router</th>
-                <th style="padding: 10px 8px;">Thread Network</th>
-                <th style="padding: 10px 8px;">Extended PAN ID</th>
-                <th style="padding: 10px 8px;">Channel / PAN</th>
-                <th style="padding: 10px 8px;">IPv6 / IPv4 Address</th>
-                <th style="padding: 10px 8px;">Discovery Source</th>
-                <th style="padding: 10px 8px;">Ping RTT</th>
+                <th id="th-br-1" style="padding: 10px 8px;">Border Router</th>
+                <th id="th-br-2" style="padding: 10px 8px;">Thread Network</th>
+                <th id="th-br-3" style="padding: 10px 8px;">Extended PAN ID</th>
+                <th id="th-br-4" style="padding: 10px 8px;">Channel / PAN</th>
+                <th id="th-br-5" style="padding: 10px 8px;">IPv6 / IPv4 Address</th>
+                <th id="th-br-6" style="padding: 10px 8px;">Discovery Source</th>
+                <th id="th-br-7" style="padding: 10px 8px;">Ping RTT</th>
               </tr>
             </thead>
             <tbody id="tbody-border-routers">
-              <tr><td colspan="7" style="padding: 16px; color: var(--text-muted); text-align: center;">Scanning for Thread Border Routers...</td></tr>
+              <tr><td colspan="7" style="padding: 16px; color: var(--text-muted); text-align: center;">Scanning for Border Routers...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- Commissioned Matter Nodes (Cluster 0x0035) Table -->
+      <!-- Commissioned Matter / Zigbee Nodes Table -->
       <div class="card">
         <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3><i class="fa-solid fa-microchip"></i> Commissioned Matter Nodes &amp; Thread Cluster <code>0x0035</code> Telemetry</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Real-time attributes queried from <code>python-matter-server</code>: Routing Role, RLOC16, Extended PAN ID, Neighbor Table RSSI/LQI, Parent RLOC16, and live Ping test.</p>
+            <h3 id="heading-matter-table"><i class="fa-solid fa-microchip"></i> Commissioned Matter Nodes &amp; Thread Cluster <code>0x0035</code> Telemetry</h3>
+            <p id="desc-matter-table" class="section-desc" style="margin-bottom: 0;">Real-time attributes queried from <code>python-matter-server</code>: Routing Role, RLOC16, Extended PAN ID, Neighbor Table RSSI/LQI, Parent RLOC16, and live Ping test.</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <div style="position: relative; display: flex; align-items: center;">
@@ -170,10 +186,10 @@
               <option value="all">All Roles &amp; States</option>
               <option value="online">Online Only</option>
               <option value="issues">Offline / Weak RF (&lt; -82 dBm)</option>
-              <option value="router">Thread Routers / Leader</option>
-              <option value="end_device">End Devices / Sleepy (SED)</option>
+              <option value="router">Routers</option>
+              <option value="end_device">End Devices / Battery</option>
             </select>
-            <button id="btn-purge-offline-nodes" type="button" class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; border-color: #ef444488; color: #f87171; display: none;" title="Decommission and purge all offline/ghost Matter nodes from the network">
+            <button id="btn-purge-offline-nodes" type="button" class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; border-color: #ef444488; color: #f87171; display: none;" title="Decommission and purge all offline/ghost nodes from the network">
               <i class="fa-solid fa-trash-can"></i> Purge Offline (0)
             </button>
             <span id="matter-table-count" class="badge badge-info">0 Nodes</span>
@@ -183,21 +199,22 @@
           <table id="table-matter-nodes" style="width: 100%; border-collapse: collapse; font-size: 13px; text-align: left;">
             <thead>
               <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted);">
-                <th style="padding: 10px 8px;">ID</th>
-                <th style="padding: 10px 8px;">Device / Vendor</th>
-                <th style="padding: 10px 8px;">Role &amp; RLOC16</th>
-                <th style="padding: 10px 8px;">Extended PAN ID</th>
-                <th style="padding: 10px 8px;">RF Signal (RSSI / LQI)</th>
-                <th style="padding: 10px 8px;">Neighbors / Counters</th>
-                <th style="padding: 10px 8px;">Thread IPv6 ULA</th>
-                <th style="padding: 10px 8px;">Actions</th>
+                <th id="th-node-1" style="padding: 10px 8px;">ID</th>
+                <th id="th-node-2" style="padding: 10px 8px;">Device / Vendor</th>
+                <th id="th-node-3" style="padding: 10px 8px;">Role &amp; RLOC16</th>
+                <th id="th-node-4" style="padding: 10px 8px;">Extended PAN ID</th>
+                <th id="th-node-5" style="padding: 10px 8px;">RF Signal (RSSI / LQI)</th>
+                <th id="th-node-6" style="padding: 10px 8px;">Neighbors / Counters</th>
+                <th id="th-node-7" style="padding: 10px 8px;">Thread IPv6 ULA</th>
+                <th id="th-node-8" style="padding: 10px 8px;">Actions</th>
               </tr>
             </thead>
             <tbody id="tbody-matter-nodes">
-              <tr><td colspan="8" style="padding: 16px; color: var(--text-muted); text-align: center;">Querying Matter Server WebSocket...</td></tr>
+              <tr><td colspan="8" style="padding: 16px; color: var(--text-muted); text-align: center;">Querying network nodes...</td></tr>
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       <!-- 4 Deterministic Diagnostic Rule Cards -->

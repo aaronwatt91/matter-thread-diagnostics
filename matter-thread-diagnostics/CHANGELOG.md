@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.6.0] - 2026-11-01
+
+### Added: Zigbee & Thread Dual-Protocol Network Scanner & Unified Diagnostics
+- **Dual-Protocol Mode Toggle**:
+  - Prominent top-level scan toggle selector: `[ 🧵 Thread Network ]` vs `[ 🐝 Zigbee Network ]`.
+  - State persisted across browser refreshes via `localStorage` (`mta_network_protocol`).
+  - Seamless instant switching across all pages, KPI summary cards, topology visualizers, spectrum analysis, and AI diagnostics.
+- **Full Zigbee Discovery & Telemetry Pipeline**:
+  - Backend integration (`ha_client.py` & `zigbee_analyzer.py`) querying Home Assistant ZHA WebSocket APIs (`zha/devices`, `zha/network/settings`), Zigbee2MQTT MQTT/device registries, and entity states.
+  - Generates comprehensive Zigbee network telemetry: Coordinator status, Channel, PAN ID, Extended PAN ID, LQI/RSSI metrics, battery levels, power source (Mains vs Battery), and area assignments.
+  - Realistic demo fallback mesh dataset generated if no active Zigbee dongle is installed.
+- **Dynamic Multi-Protocol UI Transformations**:
+  - **KPI Header & Summary Cards**: Dynamically updates to Zigbee metrics — Mesh Health Index, Coordinator & Router density ("Online • X Routers"), 2.4 GHz Coexistence clearance, and Link Quality (Average LQI e.g. 215/255, weak link counter).
+  - **Live Scan Tables (Tab 1)**:
+    - *Coordinator Table*: Discovered Zigbee Coordinators & Adapters (ZHA / Zigbee2MQTT) with IEEE MAC, PAN ID, Channel, and integration source.
+    - *Device Mesh Table*: Commissioned Zigbee Nodes with NWK short addresses, friendly names, roles (Router vs End Device), power sources, battery %, and LQI / RSSI signals.
+    - *Filter & Search*: Dynamic filtering for Routers, End Devices (Battery), and Weak LQI nodes.
+  - **Mesh Topology (Tab 2)**:
+    - Interactive topology rendering for Zigbee networks across all 5 visual perspectives: **Force / RF Mesh**, **Tree / Hierarchy**, **Transit Map**, **Routing Flow (Sankey)**, and **Signal Matrix**.
+    - Color coding: Zigbee Coordinator in gold (`#eab308`), Mains Routers in green (`#10b981`), and Battery End Devices in purple (`#8b5cf6`).
+    - Dedicated Node Inspector displaying Zigbee IEEE address, NWK address, LQI, RSSI, battery %, and area.
+  - **AI Diagnostics (Tab 4)**:
+    - Contextual Zigbee troubleshooting prompts ("Diagnose weak Zigbee links and LQI drops", "Verify coordinator placement and router density", etc.).
+    - Sends live Zigbee network telemetry bundle to AI diagnostic engine for specialized Zigbee mesh recommendations.
+  - **Log & Raw JSON (Tab 5)**:
+    - Displays raw Zigbee telemetry payload with one-click copy and inspect.
+- **Backend API Endpoints**:
+  - `GET /api/zigbee/scan`: Full scan of Zigbee coordinators, devices, LQI metrics, health evaluation, and coexistence analysis.
+  - `GET /api/zigbee/topology`: Graph dataset (`nodes` and `edges`) for Zigbee mesh visualization.
+  - Multi-protocol parameter support in `GET /api/diagnostics/collect?protocol=zigbee`, `GET /api/topology?protocol=zigbee`, and `POST /api/diagnostics/analyze`.
+- **Unit Testing**:
+  - Added `test_zigbee_analyzer_topology_and_health()` and `test_ha_client_zigbee_telemetry_fallback()` validating health score calculations, graph topology generation, and fallback handling.
+
 ## [2.5.1] - 2026-11-01
 
 ### Changed & Improved: Topology Visuals & Canvas Navigation

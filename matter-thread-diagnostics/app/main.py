@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.5.1")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.6.0")
 
 
 @app.middleware("http")
@@ -139,6 +139,7 @@ class RunDiagnosisRequest(BaseModel):
     use_cached_scan: bool = True
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
+    protocol: Optional[str] = "thread"
 
 
 class ManualLogAnalysisRequest(BaseModel):
@@ -435,9 +436,24 @@ async def test_ai_connection():
     return await engine.test_connection()
 
 
+@app.get("/api/zigbee/scan")
+async def get_zigbee_scan():
+    """Gather live Zigbee telemetry, device registry records, LQI link qualities, and topology."""
+    return await ha_client.get_zigbee_telemetry(otbr_url=config.otbr_url)
+
+
+@app.get("/api/zigbee/topology")
+async def get_zigbee_topology():
+    """Return dynamic graph data (nodes & edges) for interactive Zigbee mesh visualization."""
+    data = await ha_client.get_zigbee_telemetry(otbr_url=config.otbr_url)
+    return data.get("topology", {"nodes": [], "edges": []})
+
+
 @app.get("/api/diagnostics/collect")
-async def collect_diagnostics():
-    """Gather complete live telemetry across Matter Server, HA Thread, mDNS, OTBR, and IPv6 routing."""
+async def collect_diagnostics(protocol: Optional[str] = "thread"):
+    """Gather complete live telemetry across Thread (Matter) or Zigbee networks."""
+    if protocol and protocol.lower() == "zigbee":
+        return await ha_client.get_zigbee_telemetry(otbr_url=config.otbr_url)
     return await gather_full_telemetry(run_active_pings=True)
 
 
@@ -672,6 +688,8 @@ async def analyze_diagnostics(req: RunDiagnosisRequest):
 
     if req.custom_data:
         telemetry_data = req.custom_data
+    elif req.protocol and req.protocol.lower() == "zigbee":
+        telemetry_data = await ha_client.get_zigbee_telemetry(otbr_url=config.otbr_url)
     elif req.use_cached_scan and _last_telemetry_cache is not None:
         telemetry_data = _last_telemetry_cache
     else:
@@ -799,8 +817,11 @@ async def download_diagnostic_logs():
 
 
 @app.get("/api/topology")
-async def get_topology():
+async def get_topology(protocol: Optional[str] = "thread"):
     """Return dynamic graph data (nodes & edges) for the interactive mesh visualization."""
+    if protocol and protocol.lower() == "zigbee":
+        zb = await ha_client.get_zigbee_telemetry(otbr_url=config.otbr_url)
+        return zb.get("topology", {"nodes": [], "edges": [], "target_network": None})
     telemetry = await gather_full_telemetry(run_active_pings=True)
     return telemetry.get("topology", {"nodes": [], "edges": [], "target_network": None})
 

@@ -12,6 +12,7 @@ from matter_client import MatterClient
 from ha_client import HAClient, parse_thread_dataset_tlv
 from ai_engine import AIDiagnosticEngine
 from network_checker import NetworkChecker
+from zigbee_analyzer import ZigbeeAnalyzer
 
 
 def test_parse_thread_dataset_tlv():
@@ -619,6 +620,70 @@ def test_coexistence_spectrum_scan():
         assert coll_scan["coexistence_analysis"]["thread_zigbee_status"] == "critical"
     finally:
         loop.close()
+
+
+def test_zigbee_analyzer_topology_and_health():
+    # 1. Test sample network generation
+    sample_data = ZigbeeAnalyzer.get_sample_zigbee_network()
+    assert sample_data["protocol"] == "zigbee"
+    assert len(sample_data["devices"]) >= 8
+    assert sample_data["coordinator"]["ieee"] is not None
+
+    # 2. Test health evaluation
+    health = ZigbeeAnalyzer.evaluate_zigbee_health(sample_data["devices"], channel=20)
+    assert health["total_devices"] == len(sample_data["devices"])
+    assert health["routers_count"] >= 3
+    assert health["end_devices_count"] >= 4
+    assert health["health_score"] > 50
+    assert "Healthy" in health["status"] or "Fair" in health["status"] or "Action" in health["status"]
+
+    # 3. Test topology graph construction
+    topo = ZigbeeAnalyzer.build_zigbee_topology(
+        sample_data["devices"],
+        coordinator=sample_data["coordinator"],
+        channel=20,
+        pan_id="0x1a2b",
+        extended_pan_id="00124b0014d9beef",
+    )
+    assert len(topo["nodes"]) == len(sample_data["devices"]) + 1  # devices + coordinator
+    assert len(topo["edges"]) >= len(sample_data["devices"])
+
+    coord_node = next((n for n in topo["nodes"] if n["type"] == "border_router"), None)
+    assert coord_node is not None
+    assert coord_node["name"] == sample_data["coordinator"]["name"]
+    assert coord_node["protocol"] == "zigbee"
+
+    router_node = next((n for n in topo["nodes"] if n["type"] == "router"), None)
+    assert router_node is not None
+    assert router_node["protocol"] == "zigbee"
+
+
+def test_ha_client_zigbee_telemetry_fallback():
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        ha = HAClient()
+
+        # Mock query_ha_websocket returning no ZHA devices to trigger fallback/sample
+        async def mock_ws_empty(msg_type, **kwargs):
+            return {"type": "result", "success": False, "error": {"message": "ZHA not active"}}
+
+        async def mock_states():
+            return []
+
+        ha.query_ha_websocket = mock_ws_empty
+        ha._get_all_ha_states = mock_states
+
+        result = loop.run_until_complete(ha.get_zigbee_telemetry())
+        assert result["success"] is True
+        assert result["protocol"] == "zigbee"
+        assert len(result["devices"]) > 0
+        assert result["coordinator"] is not None
+        assert "mesh_health" in result
+        assert "topology" in result
+    finally:
+        loop.close()
+
 
 
 

@@ -634,6 +634,27 @@ body {
   font-weight: 600;
 }
 
+/* Network Protocol Mode Toggle (Thread vs Zigbee) */
+.btn-protocol {
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  transition: all 0.2s ease;
+}
+.btn-protocol:hover {
+  color: #ffffff;
+}
+.btn-protocol.active[data-protocol="thread"] {
+  background: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.btn-protocol.active[data-protocol="zigbee"] {
+  background: #eab308 !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 /* Signal Matrix 2D Table */
 .matrix-table {
   width: 100%;
