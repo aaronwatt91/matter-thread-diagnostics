@@ -634,6 +634,30 @@ body {
   font-weight: 600;
 }
 
+/* 3D Digital Twin House Cutaway Buttons */
+.btn-3d-floor {
+  background: #1e293b;
+  color: #94a3b8;
+  border: none;
+  border-right: 1px solid #334155;
+  transition: all 0.2s ease;
+  font-size: 11px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+.btn-3d-floor:last-child {
+  border-right: none;
+}
+.btn-3d-floor:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+.btn-3d-floor.active {
+  background: #0284c7;
+  color: #ffffff;
+  font-weight: 600;
+}
+
 /* Network Protocol Mode Toggle (Thread vs Zigbee) */
 .btn-protocol {
   background: transparent;

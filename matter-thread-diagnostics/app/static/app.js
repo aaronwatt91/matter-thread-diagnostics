@@ -64,6 +64,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initPasswordToggles();
   initTopScannerBar();
   initDeviceSearchAndTopologyControls();
+  initRoomSetterModal();
 
   fetchStatus();
   if (currentNetworkProtocol === "zigbee") {
@@ -427,6 +428,9 @@ function activateTab(tabId) {
   if (targetContent) targetContent.classList.add("active");
 
   if (tabId === "tab-topology") {
+    if (topologyPhysicsState.layoutMode === "house3d") {
+      setTimeout(() => onHouse3DResize(), 60);
+    }
     if (currentNetworkProtocol === "zigbee") {
       if (currentZigbeeTelemetry && currentZigbeeTelemetry.topology) {
         renderTopologyData(currentZigbeeTelemetry.topology);
@@ -2700,12 +2704,26 @@ function dispatchTopologyRender() {
 
   const svg = document.getElementById("mesh-svg");
   const matrixContainer = document.getElementById("topology-matrix-container");
+  const house3dContainer = document.getElementById("topology-3d-container");
   if (!svg || !matrixContainer) return;
 
   if (topologyPhysicsState.animFrameId) {
     cancelAnimationFrame(topologyPhysicsState.animFrameId);
     topologyPhysicsState.animFrameId = null;
   }
+
+  if (mode === "house3d") {
+    svg.style.display = "none";
+    matrixContainer.classList.add("hidden");
+    if (house3dContainer) {
+      house3dContainer.classList.remove("hidden");
+      onHouse3DResize();
+    }
+    renderHouse3DTopology(nodes, edges);
+    return;
+  }
+
+  if (house3dContainer) house3dContainer.classList.add("hidden");
 
   if (mode === "matrix") {
     svg.style.display = "none";
@@ -2739,6 +2757,8 @@ function showNodeInspector(n) {
   const isZigbee = currentNetworkProtocol === "zigbee" || (n.routing_role && n.routing_role.toLowerCase().includes("zigbee")) || String(n.id).startsWith("zb_");
   const hasMatterNodeId = !isZigbee && n.node_id !== undefined && n.node_id !== null && n.node_id !== 0;
 
+  const roomAssigned = resolveDeviceRoom(n);
+
   panel.classList.remove("hidden");
   title.innerText = `${n.label || 'Device'} (${n.routing_role || (n.type ? n.type.replace('_', ' ').toUpperCase() : 'DEVICE')})${n.preferred ? ' ★ Root/Preferred' : ''}`;
   content.innerHTML = `
@@ -2751,6 +2771,25 @@ function showNodeInspector(n) {
       ${n.rssi !== null && n.rssi !== undefined ? `<div><strong>Signal Strength (RSSI):</strong> <code>${escapeHtml(String(n.rssi))} dBm</code></div>` : ''}
       ${n.battery !== undefined && n.battery !== null ? `<div><strong>Battery:</strong> <span class="badge" style="background:#1e1b4b; color:#a78bfa;">🔋 ${n.battery}%</span></div>` : ''}
       <div><strong>Telemetry:</strong> ${escapeHtml(n.details || 'Active network link')}</div>
+
+      <!-- 3D Digital Twin Room Assignment -->
+      <div style="margin-top: 12px; padding: 10px 12px; background: #0f172a; border-radius: 6px; border: 1px solid #334155;">
+        <div style="font-size: 11px; font-weight: 700; color: #38bdf8; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+          <span><i class="fa-solid fa-house-laptop"></i> 3D House Twin Room Assignment:</span>
+          <span id="inspector-room-badge" class="badge" style="font-size: 10px; background: ${roomAssigned.isCustom ? '#0284c7' : '#334155'}; color: #f8fafc;">
+            ${roomAssigned.isCustom ? 'Custom Override' : 'Auto-Detected'}
+          </span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <select id="inspector-room-select" class="form-control" style="font-size: 12px; padding: 5px 8px; background: #1e293b; color: #f8fafc; border: 1px solid #475569; border-radius: 4px; flex: 1;">
+            ${generateRoomOptionsHtml(roomAssigned.roomId)}
+          </select>
+          <button type="button" id="btn-inspector-save-room" class="btn btn-primary" style="padding: 5px 12px; font-size: 11px; white-space: nowrap;">
+            <i class="fa-solid fa-check"></i> Set Room
+          </button>
+        </div>
+      </div>
+
       ${hasMatterNodeId ? `
         <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
           <button type="button" id="btn-inspector-purge" class="btn btn-outline" style="font-size: 11px; padding: 4px 12px; border-color: #ef444488; color: #f87171;">
@@ -2760,6 +2799,30 @@ function showNodeInspector(n) {
       ` : ''}
     </div>
   `;
+
+  const btnInspSaveRoom = document.getElementById("btn-inspector-save-room");
+  const selInspRoom = document.getElementById("inspector-room-select");
+  if (btnInspSaveRoom && selInspRoom) {
+    btnInspSaveRoom.addEventListener("click", () => {
+      const chosenRoom = selInspRoom.value;
+      setStoredRoomAssignment(n.id || n.ext_address || n.label, chosenRoom);
+      const badge = document.getElementById("inspector-room-badge");
+      if (badge) {
+        badge.innerText = "Custom Override";
+        badge.style.background = "#0284c7";
+      }
+      btnInspSaveRoom.innerHTML = `<i class="fa-solid fa-check-double"></i> Saved!`;
+      setTimeout(() => {
+        btnInspSaveRoom.innerHTML = `<i class="fa-solid fa-check"></i> Set Room`;
+      }, 1500);
+
+      if (topologyPhysicsState.layoutMode === "house3d" && lastTopologyData) {
+        renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+        focus3DDevice(n.id || n.label);
+      }
+    });
+  }
+
   if (hasMatterNodeId) {
     const btnInspPurge = document.getElementById("btn-inspector-purge");
     if (btnInspPurge) {
@@ -4282,6 +4345,1121 @@ function renderSankeyFlow(nodes, edges) {
   updateTopologyLegend();
 }
 
+/* ==========================================================================
+   VISUAL PERSPECTIVE 4: Interactive 3D Digital Twin House Model
+   Taylor Wimpey 'The Blair 4 TK' Left-Hand Semi-Detached House
+   ========================================================================== */
+
+const BLAIR_ROOMS = {
+  living_room: {
+    id: "living_room",
+    name: "Living Room / Lounge",
+    floor: "ground",
+    coords: { x: 1.88, y: 1.25, z: -2.35 },
+    aliases: ["living room", "lounge", "sitting room", "living_room", "living", "tv lamp", "tv", "living room light", "living room tv plug", "living room lamp"]
+  },
+  kitchen: {
+    id: "kitchen",
+    name: "Kitchen & Dining Room",
+    floor: "ground",
+    coords: { x: 2.80, y: 1.25, z: -7.40 },
+    aliases: ["kitchen", "dining", "cooker", "fridge", "boiler", "dishwasher", "kitchen light", "french doors", "combi boiler"]
+  },
+  entrance_hall: {
+    id: "entrance_hall",
+    name: "Entrance Hall",
+    floor: "ground",
+    coords: { x: 4.40, y: 1.25, z: -1.60 },
+    aliases: ["entrance", "front door", "entry", "vestibule", "porch", "front hall", "hallway", "front"]
+  },
+  meter_cupboard: {
+    id: "meter_cupboard",
+    name: "Entrance Meter Cupboard (Fusebox & OTBR)",
+    floor: "ground",
+    coords: { x: 4.50, y: 1.40, z: -3.20 },
+    aliases: ["meter", "cupboard", "fusebox", "consumer unit", "electric meter", "ha otbr", "zbt-1", "connect zbt-1", "borderrouter #be73", "otbr", "openthread", "coordinator"]
+  },
+  downstairs_wc: {
+    id: "downstairs_wc",
+    name: "Downstairs WC",
+    floor: "ground",
+    coords: { x: 0.92, y: 1.25, z: -5.30 },
+    aliases: ["downstairs wc", "toilet", "cloakroom", "powder room", "wc", "ground floor wc"]
+  },
+  downstairs_hallway: {
+    id: "downstairs_hallway",
+    name: "Downstairs Hallway / Lobby",
+    floor: "ground",
+    coords: { x: 2.50, y: 1.25, z: -5.30 },
+    aliases: ["downstairs hallway", "downstairs hall", "lobby", "ground hallway", "stair lobby", "tado x downstairs"]
+  },
+  driveway: {
+    id: "driveway",
+    name: "Driveway & EV Wallbox (Peugeot e-2008)",
+    floor: "ground",
+    coords: { x: 4.30, y: 0.90, z: 3.20 },
+    aliases: ["driveway", "drive", "car", "ev", "peugeot", "charger", "wallbox", "outside", "garden", "front garden"]
+  },
+  master_bedroom: {
+    id: "master_bedroom",
+    name: "Master Bedroom (Largest)",
+    floor: "first",
+    coords: { x: 1.95, y: 3.75, z: -2.10 },
+    aliases: ["master bedroom", "bedroom 1", "bed 1", "master", "main bedroom", "bedroom light", "bedroom"]
+  },
+  master_ensuite: {
+    id: "master_ensuite",
+    name: "Master En-Suite",
+    floor: "first",
+    coords: { x: 4.50, y: 3.75, z: -1.22 },
+    aliases: ["en-suite", "ensuite", "master bath", "shower", "en suite", "en-suite light", "ensuite light"]
+  },
+  guest_room: {
+    id: "guest_room",
+    name: "Guest Room (Bed 2 - Second Smallest)",
+    floor: "first",
+    coords: { x: 1.75, y: 3.75, z: -7.28 },
+    aliases: ["guest room", "guest", "bedroom 2", "bed 2", "spare room", "office", "study", "guest room light", "guestroom"]
+  },
+  nursery: {
+    id: "nursery",
+    name: "Nursery (Bed 3 - Smallest)",
+    floor: "first",
+    coords: { x: 4.27, y: 3.75, z: -7.28 },
+    aliases: ["nursery", "bed 3", "bedroom 3", "kids room", "child", "small bedroom", "box room"]
+  },
+  family_bathroom: {
+    id: "family_bathroom",
+    name: "Family Bathroom",
+    floor: "first",
+    coords: { x: 1.22, y: 3.75, z: -4.95 },
+    aliases: ["family bathroom", "bathroom", "bath", "upstairs bathroom", "main bath", "bathroom light"]
+  },
+  upstairs_hallway: {
+    id: "upstairs_hallway",
+    name: "Upstairs Landing / Hallway",
+    floor: "first",
+    coords: { x: 3.30, y: 3.75, z: -4.07 },
+    aliases: ["upstairs hallway", "upstairs hall", "landing", "first floor hall", "upstairs", "tado x upstairs"]
+  },
+  roof_solar: {
+    id: "roof_solar",
+    name: "Roof / Solar Array",
+    floor: "roof",
+    coords: { x: 2.80, y: 6.20, z: -6.50 },
+    aliases: ["roof", "solar", "inverter", "attic", "loft"]
+  }
+};
+
+const BLAIR_CAMERA_PRESETS = {
+  overview: { pos: [11.5, 10.5, 8.5], target: [2.81, 2.5, -4.44] },
+  rear_solar: { pos: [2.81, 9.0, -17.0], target: [2.81, 3.8, -5.5] },
+  living_room: { pos: [1.88, 3.2, 2.5], target: [1.88, 1.25, -2.35] },
+  kitchen: { pos: [2.80, 3.8, -13.0], target: [2.80, 1.25, -7.40] },
+  entrance_hall: { pos: [7.2, 2.8, -1.6], target: [4.45, 1.35, -2.4] },
+  master_bedroom: { pos: [1.95, 5.5, 2.5], target: [1.95, 3.75, -2.10] },
+  guest_room: { pos: [1.75, 5.5, -12.5], target: [1.75, 3.75, -7.28] },
+  nursery: { pos: [4.27, 5.5, -12.5], target: [4.27, 3.75, -7.28] },
+  family_bathroom: { pos: [-3.5, 5.2, -4.95], target: [1.22, 3.75, -4.95] },
+  driveway: { pos: [4.30, 3.2, 8.5], target: [4.30, 0.90, 3.20] }
+};
+
+const house3DState = {
+  isInitialized: false,
+  isLoading: false,
+  scene: null,
+  camera: null,
+  renderer: null,
+  controls: null,
+  modelRoot: null,
+  meshesByCategory: {
+    ground_floor: [],
+    first_floor: [],
+    roof: [],
+    exterior: [],
+    driveway: []
+  },
+  originalMaterials: new Map(),
+  nodeObjects: new Map(),
+  edgeObjects: [],
+  pulseObjects: [],
+  floorCutawayMode: "all",
+  wallOpacity: 0.35,
+  raycaster: null,
+  mouse: null,
+  hoveredNode: null,
+  selectedNode: null,
+  cameraAnimation: null,
+  animFrameId: null,
+  resizeObserver: null
+};
+
+function getStoredRoomAssignments() {
+  try {
+    const raw = localStorage.getItem("ha_matter_room_assignments");
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function setStoredRoomAssignment(devKey, roomId) {
+  try {
+    const assignments = getStoredRoomAssignments();
+    assignments[String(devKey)] = roomId;
+    localStorage.setItem("ha_matter_room_assignments", JSON.stringify(assignments));
+  } catch (err) {
+    console.warn("Failed to persist room assignment:", err);
+  }
+}
+
+function autoDetectDeviceRoom(node) {
+  if (!node) return "living_room";
+  const nameStr = (node.label || "").toLowerCase();
+  const areaStr = (node.ha_area || "").toLowerCase();
+  const typeStr = (node.type || node.routing_role || "").toLowerCase();
+
+  // 1. Direct check against HA Area if available
+  if (areaStr) {
+    for (const [rId, room] of Object.entries(BLAIR_ROOMS)) {
+      if (areaStr.includes(rId) || areaStr.includes(room.name.toLowerCase())) {
+        return rId;
+      }
+      for (const alias of room.aliases) {
+        if (areaStr.includes(alias)) return rId;
+      }
+    }
+  }
+
+  // 2. Check node label against aliases
+  for (const [rId, room] of Object.entries(BLAIR_ROOMS)) {
+    for (const alias of room.aliases) {
+      if (nameStr.includes(alias)) {
+        return rId;
+      }
+    }
+  }
+
+  // 3. Role/type heuristics
+  if (typeStr.includes("coordinator") || typeStr.includes("otbr") || nameStr.includes("be73") || nameStr.includes("connect zbt")) {
+    return "meter_cupboard";
+  }
+  if (nameStr.includes("nest wifi")) {
+    if (nameStr.includes("9166")) return "living_room";
+    if (nameStr.includes("9074")) return "kitchen";
+    if (nameStr.includes("guest")) return "guest_room";
+    return "entrance_hall";
+  }
+  if (nameStr.includes("tado")) {
+    return nameStr.includes("upstairs") ? "upstairs_hallway" : "downstairs_hallway";
+  }
+
+  return "living_room";
+}
+
+function resolveDeviceRoom(node) {
+  if (!node) return { roomId: "living_room", isCustom: false };
+  const assignments = getStoredRoomAssignments();
+  const candidates = [
+    node.id !== undefined && node.id !== null ? String(node.id) : "",
+    node.ext_address || "",
+    node.label || ""
+  ].filter(Boolean);
+
+  for (const k of candidates) {
+    if (assignments[k] && BLAIR_ROOMS[assignments[k]]) {
+      return { roomId: assignments[k], isCustom: true };
+    }
+  }
+
+  const detected = autoDetectDeviceRoom(node);
+  return { roomId: detected, isCustom: false };
+}
+
+function generateRoomOptionsHtml(selectedId) {
+  let html = `<optgroup label="Ground Floor">`;
+  for (const [rId, room] of Object.entries(BLAIR_ROOMS)) {
+    if (room.floor === "ground") {
+      const isSel = rId === selectedId ? "selected" : "";
+      html += `<option value="${rId}" ${isSel}>${escapeHtml(room.name)}</option>`;
+    }
+  }
+  html += `</optgroup><optgroup label="First Floor">`;
+  for (const [rId, room] of Object.entries(BLAIR_ROOMS)) {
+    if (room.floor === "first") {
+      const isSel = rId === selectedId ? "selected" : "";
+      html += `<option value="${rId}" ${isSel}>${escapeHtml(room.name)}</option>`;
+    }
+  }
+  html += `</optgroup><optgroup label="Roof &amp; External">`;
+  for (const [rId, room] of Object.entries(BLAIR_ROOMS)) {
+    if (room.floor === "roof") {
+      const isSel = rId === selectedId ? "selected" : "";
+      html += `<option value="${rId}" ${isSel}>${escapeHtml(room.name)}</option>`;
+    }
+  }
+  html += `</optgroup>`;
+  return html;
+}
+
+function classifyMeshCategory(meshName) {
+  const nm = (meshName || "").toLowerCase();
+  if (
+    nm.includes("ground_floor") ||
+    nm.includes("interior_walls_ground") ||
+    nm.includes("entrance_meter") ||
+    nm.includes("kitchen_") ||
+    nm.includes("staircase")
+  ) {
+    return "ground_floor";
+  }
+  if (
+    nm.includes("first_floor_structure") ||
+    nm.includes("landing_carpet") ||
+    nm.includes("carpet_") ||
+    nm.includes("interior_walls_first") ||
+    nm.includes("sanitaryware") ||
+    nm.includes("room_labels") ||
+    nm.includes("first_floor_tiles")
+  ) {
+    return "first_floor";
+  }
+  if (
+    nm.includes("roof_") ||
+    nm.includes("fascia_") ||
+    nm.includes("rainwater_") ||
+    nm.includes("first_floor_ceiling")
+  ) {
+    return "roof";
+  }
+  if (
+    nm.includes("driveway") ||
+    nm.includes("car_peugeot") ||
+    nm.includes("ev_charger") ||
+    nm.includes("ev_charging")
+  ) {
+    return "driveway";
+  }
+  return "exterior";
+}
+
+function apply3DCutawayAndTransparency() {
+  const mode = house3DState.floorCutawayMode;
+  const op = house3DState.wallOpacity;
+
+  const { ground_floor, first_floor, roof, exterior, driveway } = house3DState.meshesByCategory;
+
+  if (mode === "solid") {
+    [...ground_floor, ...first_floor, ...roof, ...exterior, ...driveway].forEach(m => {
+      m.visible = true;
+      if (m.material) {
+        m.material.transparent = false;
+        m.material.opacity = 1.0;
+        m.material.depthWrite = true;
+      }
+    });
+    return;
+  }
+
+  if (mode === "ground") {
+    // Hide Roof & First Floor
+    roof.forEach(m => (m.visible = false));
+    first_floor.forEach(m => (m.visible = false));
+    // Ground floor visible and opaque
+    ground_floor.forEach(m => {
+      m.visible = true;
+      if (m.material) {
+        m.material.transparent = false;
+        m.material.opacity = 1.0;
+        m.material.depthWrite = true;
+      }
+    });
+    exterior.forEach(m => {
+      m.visible = true;
+      if (m.material) {
+        m.material.transparent = true;
+        m.material.opacity = Math.min(op, 0.45);
+        m.material.depthWrite = false;
+      }
+    });
+    driveway.forEach(m => (m.visible = true));
+    return;
+  }
+
+  if (mode === "first") {
+    // Hide Roof & Ceiling
+    roof.forEach(m => (m.visible = false));
+    // First Floor visible & clear
+    first_floor.forEach(m => {
+      m.visible = true;
+      if (m.material) {
+        m.material.transparent = false;
+        m.material.opacity = 1.0;
+        m.material.depthWrite = true;
+      }
+    });
+    ground_floor.forEach(m => (m.visible = true));
+    exterior.forEach(m => {
+      m.visible = true;
+      if (m.material) {
+        m.material.transparent = true;
+        m.material.opacity = Math.min(op, 0.45);
+        m.material.depthWrite = false;
+      }
+    });
+    driveway.forEach(m => (m.visible = true));
+    return;
+  }
+
+  // Default: 'all' floors visible with ghost/x-ray exterior walls
+  ground_floor.forEach(m => {
+    m.visible = true;
+    if (m.material) {
+      m.material.transparent = false;
+      m.material.opacity = 1.0;
+      m.material.depthWrite = true;
+    }
+  });
+  first_floor.forEach(m => {
+    m.visible = true;
+    if (m.material) {
+      m.material.transparent = false;
+      m.material.opacity = 1.0;
+      m.material.depthWrite = true;
+    }
+  });
+  roof.forEach(m => {
+    m.visible = true;
+    if (m.material) {
+      m.material.transparent = true;
+      m.material.opacity = op;
+      m.material.depthWrite = false;
+    }
+  });
+  exterior.forEach(m => {
+    m.visible = true;
+    if (m.material) {
+      m.material.transparent = true;
+      m.material.opacity = op;
+      m.material.depthWrite = false;
+    }
+  });
+  driveway.forEach(m => {
+    m.visible = true;
+    if (m.material) {
+      m.material.transparent = false;
+      m.material.opacity = 1.0;
+      m.material.depthWrite = true;
+    }
+  });
+}
+
+function flyCameraTo(posArray, targetArray, duration = 800) {
+  if (!house3DState.camera || !house3DState.controls) return;
+  const startPos = house3DState.camera.position.clone();
+  const startTarget = house3DState.controls.target.clone();
+  const endPos = new THREE.Vector3(...posArray);
+  const endTarget = new THREE.Vector3(...targetArray);
+
+  house3DState.cameraAnimation = {
+    startPos,
+    endPos,
+    startTarget,
+    endTarget,
+    startTime: performance.now(),
+    duration
+  };
+}
+
+function focus3DDevice(devIdOrLabel) {
+  if (!devIdOrLabel || !house3DState.nodeObjects) return;
+  for (const [id, grp] of house3DState.nodeObjects.entries()) {
+    if (String(id) === String(devIdOrLabel) || (grp.userData && grp.userData.nodeData && grp.userData.nodeData.label === devIdOrLabel)) {
+      const p = grp.position;
+      flyCameraTo([p.x + 1.2, p.y + 1.2, p.z + 2.4], [p.x, p.y, p.z], 700);
+      break;
+    }
+  }
+}
+
+function createCanvasTextSprite(text, accentColor = "#38bdf8") {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+
+  // Rounded pill background
+  ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(4, 4, 248, 56, 12) : ctx.rect(4, 4, 248, 56);
+  ctx.fill();
+
+  // Border outline
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Text label
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 20px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const cleanText = text.length > 20 ? text.slice(0, 19) + "…" : text;
+  ctx.fillText(cleanText, 128, 32);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(0.9, 0.22, 1.0);
+  return sprite;
+}
+
+function onHouse3DResize() {
+  const container = document.getElementById("topology-3d-container");
+  const canvas = document.getElementById("canvas-3d-house");
+  if (!container || !canvas || !house3DState.renderer || !house3DState.camera) return;
+
+  const width = container.clientWidth || 800;
+  const height = container.clientHeight || 640;
+  if (width === 0 || height === 0) return;
+
+  house3DState.camera.aspect = width / height;
+  house3DState.camera.updateProjectionMatrix();
+  house3DState.renderer.setSize(width, height, false);
+}
+
+function initHouse3DViewer() {
+  if (house3DState.isInitialized) return;
+  if (typeof THREE === "undefined" || !THREE.GLTFLoader || !THREE.OrbitControls) {
+    console.warn("Three.js or GLTFLoader / OrbitControls not yet available.");
+    return;
+  }
+
+  const container = document.getElementById("topology-3d-container");
+  const canvas = document.getElementById("canvas-3d-house");
+  if (!container || !canvas) return;
+
+  house3DState.isInitialized = true;
+  house3DState.isLoading = true;
+
+  // 1. Scene
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x060913);
+  house3DState.scene = scene;
+
+  // 2. Camera
+  const width = container.clientWidth || 800;
+  const height = container.clientHeight || 640;
+  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+  camera.position.set(...BLAIR_CAMERA_PRESETS.overview.pos);
+  house3DState.camera = camera;
+
+  // 3. Renderer
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    alpha: true,
+    powerPreference: "high-performance"
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(width, height, false);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  house3DState.renderer = renderer;
+
+  // 4. OrbitControls
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.maxPolarAngle = Math.PI / 2 + 0.05;
+  controls.minDistance = 2.0;
+  controls.maxDistance = 60.0;
+  controls.target.set(...BLAIR_CAMERA_PRESETS.overview.target);
+  controls.update();
+  house3DState.controls = controls;
+
+  // 5. Lighting
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+  scene.add(ambientLight);
+
+  const sunLight = new THREE.DirectionalLight(0xfff5e6, 0.95);
+  sunLight.position.set(15, 25, 20);
+  scene.add(sunLight);
+
+  const fillLight = new THREE.DirectionalLight(0x93c5fd, 0.45);
+  fillLight.position.set(-15, 15, -15);
+  scene.add(fillLight);
+
+  const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 0.35);
+  scene.add(hemiLight);
+
+  // 6. Ground Grid floor helper for visual depth
+  const gridHelper = new THREE.GridHelper(40, 40, 0x1e293b, 0x0f172a);
+  gridHelper.position.y = -0.22;
+  scene.add(gridHelper);
+
+  // 7. Raycaster & Pointer interactions
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  house3DState.raycaster = raycaster;
+  house3DState.mouse = mouse;
+
+  let isPointerDragging = false;
+  let downX = 0;
+  let downY = 0;
+
+  canvas.addEventListener("pointerdown", (e) => {
+    isPointerDragging = false;
+    downX = e.clientX;
+    downY = e.clientY;
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) {
+      isPointerDragging = true;
+    }
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    // Hover tooltip detection
+    raycaster.setFromCamera(mouse, camera);
+    const candidateSpheres = [];
+    for (const grp of house3DState.nodeObjects.values()) {
+      const sp = grp.getObjectByName("deviceSphere");
+      if (sp) candidateSpheres.push(sp);
+    }
+    const intersects = raycaster.intersectObjects(candidateSpheres, false);
+    const tooltip = document.getElementById("topology-3d-tooltip");
+
+    if (intersects.length > 0) {
+      const hit = intersects[0].object;
+      const nData = hit.userData.nodeData;
+      canvas.style.cursor = "pointer";
+      if (tooltip && nData) {
+        const isZb = currentNetworkProtocol === "zigbee";
+        const roomName = (BLAIR_ROOMS[hit.userData.roomId] || {}).name || hit.userData.roomId;
+        tooltip.innerHTML = `
+          <div style="font-weight: 700; color: #38bdf8; margin-bottom: 2px;">${escapeHtml(nData.label || 'Device')}</div>
+          <div style="font-size: 11px; color: #94a3b8;">${escapeHtml(nData.routing_role || nData.type || 'Node')}</div>
+          <div style="font-size: 11px; margin-top: 4px;">📍 Room: <strong style="color: #f8fafc;">${escapeHtml(roomName)}</strong></div>
+          ${nData.rssi !== null && nData.rssi !== undefined ? `<div style="font-size: 11px;">📶 RSSI: <strong>${escapeHtml(String(nData.rssi))} dBm</strong></div>` : ''}
+          ${nData.lqi !== null && nData.lqi !== undefined ? `<div style="font-size: 11px;">📊 LQI: <strong>${escapeHtml(String(nData.lqi))} / 255</strong></div>` : ''}
+          <div style="font-size: 10px; color: #38bdf8; margin-top: 6px;"><i class="fa-solid fa-hand-pointer"></i> Click to inspect</div>
+        `;
+        tooltip.style.left = `${Math.min(e.clientX - rect.left + 14, rect.width - 240)}px`;
+        tooltip.style.top = `${Math.max(10, e.clientY - rect.top - 20)}px`;
+        tooltip.style.display = "block";
+      }
+    } else {
+      canvas.style.cursor = "grab";
+      if (tooltip) tooltip.style.display = "none";
+    }
+  });
+
+  canvas.addEventListener("pointerup", (e) => {
+    if (isPointerDragging) return;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const candidateSpheres = [];
+    for (const grp of house3DState.nodeObjects.values()) {
+      const sp = grp.getObjectByName("deviceSphere");
+      if (sp) candidateSpheres.push(sp);
+    }
+    const intersects = raycaster.intersectObjects(candidateSpheres, false);
+    if (intersects.length > 0) {
+      const hit = intersects[0].object;
+      if (hit.userData && hit.userData.nodeData) {
+        showNodeInspector(hit.userData.nodeData);
+        focus3DDevice(hit.userData.nodeData.id || hit.userData.nodeData.label);
+      }
+    }
+  });
+
+  // 8. GLB Model Loading
+  const modelUrl = "/static/models/Taylor_Wimpey_Blair.glb";
+  const loader = new THREE.GLTFLoader();
+
+  const handleGlbLoaded = (gltf) => {
+    house3DState.isLoading = false;
+    const model = gltf.scene;
+    house3DState.modelRoot = model;
+    scene.add(model);
+
+    // Classify meshes and clone materials
+    model.traverse((child) => {
+      if (child.isMesh) {
+        const cat = classifyMeshCategory(child.name);
+        house3DState.meshesByCategory[cat].push(child);
+
+        if (child.material) {
+          child.material = child.material.clone();
+          house3DState.originalMaterials.set(child.uuid, child.material.clone());
+        }
+      }
+    });
+
+    apply3DCutawayAndTransparency();
+
+    // Re-render nodes if data already available
+    if (lastTopologyData && lastTopologyData.nodes) {
+      renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+    }
+  };
+
+  loader.load(
+    modelUrl,
+    handleGlbLoaded,
+    undefined,
+    (err) => {
+      console.warn("Failed to load /static/models/... trying fallback models/Taylor_Wimpey_Blair.glb", err);
+      loader.load("models/Taylor_Wimpey_Blair.glb", handleGlbLoaded, undefined, (fallbackErr) => {
+        console.error("3D Blair model failed to load:", fallbackErr);
+        house3DState.isLoading = false;
+      });
+    }
+  );
+
+  // 9. Resize Observer
+  if (window.ResizeObserver) {
+    house3DState.resizeObserver = new ResizeObserver(() => {
+      onHouse3DResize();
+    });
+    house3DState.resizeObserver.observe(container);
+  }
+
+  // 10. Toolbar Controls Event Listeners
+  document.querySelectorAll(".btn-3d-floor").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".btn-3d-floor").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const floor = btn.getAttribute("data-floor") || "all";
+      house3DState.floorCutawayMode = floor;
+      apply3DCutawayAndTransparency();
+    });
+  });
+
+  const sliderOpacity = document.getElementById("slider-3d-opacity");
+  const labelOpacity = document.getElementById("label-3d-opacity");
+  if (sliderOpacity) {
+    sliderOpacity.addEventListener("input", (e) => {
+      const val = parseInt(e.target.value, 10) / 100;
+      house3DState.wallOpacity = val;
+      if (labelOpacity) labelOpacity.innerText = `${Math.round(val * 100)}%`;
+      apply3DCutawayAndTransparency();
+    });
+  }
+
+  const selectCam = document.getElementById("select-3d-camera");
+  if (selectCam) {
+    selectCam.addEventListener("change", (e) => {
+      const key = e.target.value;
+      if (BLAIR_CAMERA_PRESETS[key]) {
+        flyCameraTo(BLAIR_CAMERA_PRESETS[key].pos, BLAIR_CAMERA_PRESETS[key].target);
+      }
+    });
+  }
+
+  const btnResetCam = document.getElementById("btn-3d-reset-cam");
+  if (btnResetCam) {
+    btnResetCam.addEventListener("click", () => {
+      flyCameraTo(BLAIR_CAMERA_PRESETS.overview.pos, BLAIR_CAMERA_PRESETS.overview.target);
+      if (selectCam) selectCam.value = "overview";
+    });
+  }
+
+  const btnOpenRoomModal = document.getElementById("btn-open-room-setter");
+  if (btnOpenRoomModal) {
+    btnOpenRoomModal.addEventListener("click", () => {
+      openRoomSetterModal();
+    });
+  }
+
+  // 11. Render Animation Loop
+  function animateHouse3D() {
+    house3DState.animFrameId = requestAnimationFrame(animateHouse3D);
+
+    // Camera animation interpolation
+    if (house3DState.cameraAnimation) {
+      const anim = house3DState.cameraAnimation;
+      const now = performance.now();
+      const elapsed = now - anim.startTime;
+      const progress = Math.min(1.0, elapsed / anim.duration);
+      // Smooth easing (ease-out cubic)
+      const ease = 1 - Math.pow(1 - progress, 3);
+
+      camera.position.lerpVectors(anim.startPos, anim.endPos, ease);
+      controls.target.lerpVectors(anim.startTarget, anim.endTarget, ease);
+      controls.update();
+
+      if (progress >= 1.0) {
+        house3DState.cameraAnimation = null;
+      }
+    } else {
+      controls.update();
+    }
+
+    // Outer beacon disks pulsing
+    const pulseFactor = 1.0 + Math.sin(performance.now() * 0.004) * 0.12;
+    const pulseAlpha = 0.55 + Math.sin(performance.now() * 0.004) * 0.25;
+
+    for (const grp of house3DState.nodeObjects.values()) {
+      const ring = grp.getObjectByName("pulseHalo");
+      if (ring) {
+        ring.scale.set(pulseFactor, pulseFactor, 1.0);
+        if (ring.material) ring.material.opacity = pulseAlpha;
+      }
+    }
+
+    // Wireless RF signal packets pulsing along link curves
+    for (const p of house3DState.pulseObjects) {
+      p.t = (p.t + p.speed) % 1.0;
+      if (p.curve && p.mesh) {
+        const pt = p.curve.getPoint(p.t);
+        p.mesh.position.copy(pt);
+      }
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  animateHouse3D();
+}
+
+function renderHouse3DTopology(nodes, edges) {
+  if (!house3DState.isInitialized) {
+    initHouse3DViewer();
+  }
+  if (!house3DState.scene) return;
+
+  const scene = house3DState.scene;
+
+  // 1. Remove old nodes and edges
+  for (const grp of house3DState.nodeObjects.values()) {
+    scene.remove(grp);
+  }
+  house3DState.nodeObjects.clear();
+
+  for (const edgeObj of house3DState.edgeObjects) {
+    scene.remove(edgeObj);
+  }
+  house3DState.edgeObjects = [];
+
+  for (const pulse of house3DState.pulseObjects) {
+    scene.remove(pulse.mesh);
+  }
+  house3DState.pulseObjects = [];
+
+  const rawNodes = nodes || [];
+  const rawEdges = edges || [];
+
+  // Filter nodes if needed
+  const filterMode = topologyPhysicsState.filterMode || "all";
+  const filteredNodes = rawNodes.filter((n) => {
+    if (filterMode === "routers_only") {
+      const isR = n.is_router || (n.routing_role && (n.routing_role.includes("Router") || n.routing_role.includes("Coordinator") || n.routing_role.includes("TBR")));
+      return isR;
+    }
+    if (filterMode === "end_only") {
+      const isEnd = n.is_end_device || (n.routing_role && n.routing_role.includes("End Device"));
+      return isEnd;
+    }
+    if (filterMode === "online_only") {
+      return n.status !== "offline";
+    }
+    return true;
+  });
+
+  // Group nodes by assigned room to space them radially
+  const roomGroups = {};
+  filteredNodes.forEach((node) => {
+    const res = resolveDeviceRoom(node);
+    const rId = res.roomId;
+    if (!roomGroups[rId]) roomGroups[rId] = [];
+    roomGroups[rId].push({ node, isCustom: res.isCustom });
+  });
+
+  // Build 3D Device Nodes
+  for (const [roomId, list] of Object.entries(roomGroups)) {
+    const room = BLAIR_ROOMS[roomId] || BLAIR_ROOMS.living_room;
+    const count = list.length;
+
+    list.forEach((item, idx) => {
+      const n = item.node;
+      const angle = (idx / count) * 2 * Math.PI;
+      const radius = count > 1 ? Math.min(0.25 + count * 0.08, 0.75) : 0;
+      const x = room.coords.x + (radius ? Math.cos(angle) * radius : 0);
+      const z = room.coords.z + (radius ? Math.sin(angle) * radius : 0);
+      const y = room.coords.y + (count > 2 && idx % 2 === 1 ? 0.22 : 0);
+
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+
+      // Determine color
+      let colorHex = "#10b981"; // default green
+      const isTbrOrCoord = n.preferred || (n.routing_role && (n.routing_role.includes("Border Router") || n.routing_role.includes("Coordinator")));
+      const isEnd = n.is_end_device || (n.routing_role && n.routing_role.includes("End Device"));
+      const isOffline = n.status === "offline";
+      const isWeak = n.status === "weak";
+
+      if (isOffline) {
+        colorHex = "#ef4444";
+      } else if (isWeak) {
+        colorHex = "#f59e0b";
+      } else if (isTbrOrCoord) {
+        colorHex = "#38bdf8";
+      } else if (isEnd) {
+        colorHex = "#a855f7";
+      }
+
+      const threeColor = new THREE.Color(colorHex);
+
+      // 1. Core Sphere
+      const sphereGeo = new THREE.SphereGeometry(0.18, 24, 24);
+      const sphereMat = new THREE.MeshStandardMaterial({
+        color: threeColor,
+        emissive: threeColor,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.4
+      });
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      sphere.name = "deviceSphere";
+      sphere.userData = { isNode: true, nodeData: n, roomId };
+      group.add(sphere);
+
+      // 2. Pulsing Halo Ring
+      const ringGeo = new THREE.RingGeometry(0.24, 0.32, 32);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: threeColor,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.name = "pulseHalo";
+      ring.rotation.x = Math.PI / 2;
+      group.add(ring);
+
+      // 3. Floating Text Sprite Billboard
+      const sprite = createCanvasTextSprite(n.label || "Device", colorHex);
+      sprite.position.set(0, 0.36, 0);
+      group.add(sprite);
+
+      scene.add(group);
+      house3DState.nodeObjects.set(n.id || n.label, group);
+    });
+  }
+
+  // Build 3D Wireless RF Link Beams
+  rawEdges.forEach((e) => {
+    const srcId = e.source !== undefined && e.source !== null ? (e.source.id !== undefined ? e.source.id : e.source) : "";
+    const tgtId = e.target !== undefined && e.target !== null ? (e.target.id !== undefined ? e.target.id : e.target) : "";
+
+    const srcGroup = house3DState.nodeObjects.get(srcId);
+    const tgtGroup = house3DState.nodeObjects.get(tgtId);
+
+    if (srcGroup && tgtGroup) {
+      const p1 = srcGroup.position.clone();
+      const p2 = tgtGroup.position.clone();
+      const dist = p1.distanceTo(p2);
+
+      // Arched midpoint
+      const mid = p1.clone().add(p2).multiplyScalar(0.5);
+      mid.y += Math.min(0.35 + dist * 0.08, 1.2);
+
+      const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
+      const points = curve.getPoints(24);
+
+      // Color code by signal strength
+      let edgeColor = "#10b981"; // green
+      const rssi = e.rssi !== null && e.rssi !== undefined ? Number(e.rssi) : -65;
+      if (rssi < -82) {
+        edgeColor = "#ef4444";
+      } else if (rssi < -70) {
+        edgeColor = "#f59e0b";
+      } else if (rssi < -60) {
+        edgeColor = "#38bdf8";
+      }
+
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+      const lineMat = new THREE.LineBasicMaterial({
+        color: new THREE.Color(edgeColor),
+        transparent: true,
+        opacity: 0.85,
+        linewidth: 2
+      });
+      const line = new THREE.Line(lineGeo, lineMat);
+      scene.add(line);
+      house3DState.edgeObjects.push(line);
+
+      // Signal Pulse Packet Particle
+      const pulseGeo = new THREE.SphereGeometry(0.045, 12, 12);
+      const pulseMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(edgeColor) });
+      const pulseMesh = new THREE.Mesh(pulseGeo, pulseMat);
+      scene.add(pulseMesh);
+
+      house3DState.pulseObjects.push({
+        mesh: pulseMesh,
+        curve,
+        t: Math.random(),
+        speed: 0.007 + Math.random() * 0.005
+      });
+    }
+  });
+
+  // Update Status Bar
+  const lastScanElem = document.getElementById("topology-last-scan");
+  const countElem = document.getElementById("topology-router-count");
+  if (lastScanElem) {
+    lastScanElem.innerText = `3D Twin Active: ${filteredNodes.length} devices mapped in Blair 4 TK house`;
+  }
+  if (countElem) {
+    const isZb = currentNetworkProtocol === "zigbee";
+    countElem.innerText = isZb ? "Zigbee 3D Twin Mode" : "Thread & Matter 3D Twin Mode";
+  }
+}
+
+/* ==========================================================================
+   Room Setter Modal Implementation
+   ========================================================================== */
+
+function initRoomSetterModal() {
+  const modal = document.getElementById("modal-room-setter");
+  const btnClose = document.getElementById("btn-close-room-modal");
+  const btnCancel = document.getElementById("btn-room-modal-cancel");
+  const btnSave = document.getElementById("btn-room-modal-save");
+  const btnAuto = document.getElementById("btn-room-auto-detect-all");
+
+  if (btnClose) btnClose.addEventListener("click", closeRoomSetterModal);
+  if (btnCancel) btnCancel.addEventListener("click", closeRoomSetterModal);
+  if (btnSave) btnSave.addEventListener("click", saveRoomSetterModal);
+  if (btnAuto) btnAuto.addEventListener("click", autoDetectAllRoomsModal);
+}
+
+function openRoomSetterModal() {
+  const modal = document.getElementById("modal-room-setter");
+  const listContainer = document.getElementById("room-setter-device-list");
+  const statusElem = document.getElementById("room-setter-status");
+  if (!modal || !listContainer) return;
+
+  if (statusElem) statusElem.innerText = "";
+  modal.classList.remove("hidden");
+
+  let currentNodes = [];
+  if (currentNetworkProtocol === "zigbee") {
+    currentNodes = (currentZigbeeTelemetry && currentZigbeeTelemetry.topology && currentZigbeeTelemetry.topology.nodes) || [];
+  } else {
+    currentNodes = (currentTelemetry && currentTelemetry.topology && currentTelemetry.topology.nodes) || [];
+  }
+
+  if (currentNodes.length === 0) {
+    listContainer.innerHTML = `
+      <div style="text-align: center; color: #94a3b8; padding: 24px;">
+        <i class="fa-solid fa-satellite-dish" style="font-size: 28px; margin-bottom: 8px; display: block; color: #64748b;"></i>
+        No active devices discovered yet. Run a network scan first to populate your mesh devices!
+      </div>
+    `;
+    return;
+  }
+
+  let html = "";
+  currentNodes.forEach((n) => {
+    const assigned = resolveDeviceRoom(n);
+    const devKey = n.id !== undefined && n.id !== null ? String(n.id) : (n.ext_address || n.label || "");
+    const role = n.routing_role || n.type || "Device";
+    const area = n.ha_area ? `📍 HA Area: <strong>${escapeHtml(n.ha_area)}</strong>` : "No HA Area assigned";
+
+    html += `
+      <div class="room-setter-item" style="background: #1e293b; padding: 12px 14px; border-radius: 8px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div style="min-width: 220px;">
+          <div style="font-size: 13px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid ${n.status === 'offline' ? 'fa-triangle-exclamation' : 'fa-circle-dot'}" style="color: ${n.status === 'offline' ? '#ef4444' : '#10b981'}; font-size: 10px;"></i>
+            ${escapeHtml(n.label || 'Device')}
+          </div>
+          <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+            ${escapeHtml(role)} • ${area}
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span class="badge" style="font-size: 10px; background: ${assigned.isCustom ? '#0284c7' : '#334155'}; color: #f8fafc;">
+            ${assigned.isCustom ? 'Custom' : 'Auto'}
+          </span>
+          <select class="form-control room-select-input" data-devkey="${escapeHtml(devKey)}" style="background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 5px 10px; border-radius: 6px; font-size: 12px; min-width: 200px;">
+            ${generateRoomOptionsHtml(assigned.roomId)}
+          </select>
+        </div>
+      </div>
+    `;
+  });
+
+  listContainer.innerHTML = html;
+}
+
+function closeRoomSetterModal() {
+  const modal = document.getElementById("modal-room-setter");
+  if (modal) modal.classList.add("hidden");
+}
+
+function saveRoomSetterModal() {
+  const selects = document.querySelectorAll(".room-select-input");
+  const assignments = getStoredRoomAssignments();
+
+  selects.forEach((sel) => {
+    const k = sel.getAttribute("data-devkey");
+    const v = sel.value;
+    if (k && v) {
+      assignments[k] = v;
+    }
+  });
+
+  localStorage.setItem("ha_matter_room_assignments", JSON.stringify(assignments));
+
+  const statusElem = document.getElementById("room-setter-status");
+  if (statusElem) {
+    statusElem.innerText = "✓ Room placements applied!";
+  }
+
+  // Refresh 3D Twin if open
+  if (lastTopologyData && lastTopologyData.nodes) {
+    renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+  }
+
+  setTimeout(() => {
+    closeRoomSetterModal();
+  }, 600);
+}
+
+function autoDetectAllRoomsModal() {
+  let currentNodes = [];
+  if (currentNetworkProtocol === "zigbee") {
+    currentNodes = (currentZigbeeTelemetry && currentZigbeeTelemetry.topology && currentZigbeeTelemetry.topology.nodes) || [];
+  } else {
+    currentNodes = (currentTelemetry && currentTelemetry.topology && currentTelemetry.topology.nodes) || [];
+  }
+
+  const selects = document.querySelectorAll(".room-select-input");
+  selects.forEach((sel) => {
+    const k = sel.getAttribute("data-devkey");
+    const node = currentNodes.find((n) => String(n.id) === k || n.ext_address === k || n.label === k);
+    if (node) {
+      const autoRoom = autoDetectDeviceRoom(node);
+      sel.value = autoRoom;
+    }
+  });
+
+  const statusElem = document.getElementById("room-setter-status");
+  if (statusElem) {
+    statusElem.innerText = "Auto-detected all device rooms based on HA Area & names";
+  }
+}
+
 function updateTopologySearchHighlight() {
   const q = (currentNodeSearchQuery || "").toLowerCase();
   (topologyPhysicsState.nodes || []).forEach((n) => {
@@ -4309,6 +5487,32 @@ function updateTopologySearchHighlight() {
     n.haloElem.setAttribute("stroke-dasharray", "none");
     n.haloElem.setAttribute("opacity", matched ? "1" : "0");
   });
+
+  // Also highlight 3D nodes if 3D viewer is active
+  if (house3dState.nodeObjects) {
+    for (const [id, grp] of house3dState.nodeObjects.entries()) {
+      const sp = grp.getObjectByName("deviceSphere");
+      const halo = grp.getObjectByName("pulseHalo");
+      const nData = (sp && sp.userData && sp.userData.nodeData) || {};
+      if (!q) {
+        if (sp && sp.material) sp.material.emissiveIntensity = 0.65;
+      } else {
+        const hay = [
+          nData.label || "",
+          nData.node_id ? `#${nData.node_id}` : "",
+          nData.brand || "",
+          nData.model || "",
+          nData.rloc16 || "",
+          nData.ext_address || "",
+          nData.ha_area || ""
+        ].join(" ").toLowerCase();
+        const matched = hay.includes(q);
+        if (sp && sp.material) {
+          sp.material.emissiveIntensity = matched ? 1.6 : 0.15;
+        }
+      }
+    }
+  }
 }
 
 async function downloadDiagnosticLogs(btnElem) {

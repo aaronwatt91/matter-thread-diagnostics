@@ -1,0 +1,291 @@
+# Material Library for Taylor Wimpey 'The Blair 4 TK' House
+# Units: Metric (Meters), Scale: 1 unit = 1 meter
+
+newmtl M_Concrete
+Ka 1.000 1.000 1.000
+Kd 0.6000 0.6000 0.6000
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.00
+illum 2
+
+newmtl M_Exterior_BrickRender
+Ka 1.000 1.000 1.000
+Kd 0.7500 0.4800 0.3800
+Ks 0.1500 0.1200 0.1000
+Ns 15.0
+d 1.00
+illum 2
+
+newmtl M_Party_Wall
+Ka 1.000 1.000 1.000
+Kd 0.7800 0.7700 0.7500
+Ks 0.0500 0.0500 0.0500
+Ns 5.0
+d 1.00
+illum 2
+
+newmtl M_Roof_Tiles
+Ka 1.000 1.000 1.000
+Kd 0.2200 0.2300 0.2500
+Ks 0.2000 0.2000 0.2000
+Ns 30.0
+d 1.00
+illum 2
+
+newmtl M_Ridge_Tiles
+Ka 1.000 1.000 1.000
+Kd 0.1800 0.1900 0.2000
+Ks 0.2000 0.2000 0.2000
+Ns 35.0
+d 1.00
+illum 2
+
+newmtl M_Solar_Panels
+Ka 1.000 1.000 1.000
+Kd 0.0800 0.1000 0.1500
+Ks 0.9000 0.9000 0.9500
+Ns 100.0
+d 1.00
+illum 2
+
+newmtl M_EV_Charger
+Ka 1.000 1.000 1.000
+Kd 0.1800 0.1900 0.2000
+Ks 0.4000 0.4000 0.4000
+Ns 50.0
+d 1.00
+illum 2
+
+newmtl M_PVC_White
+Ka 1.000 1.000 1.000
+Kd 0.9400 0.9400 0.9400
+Ks 0.4000 0.4000 0.4000
+Ns 60.0
+d 1.00
+illum 2
+
+newmtl M_Glass
+Ka 1.000 1.000 1.000
+Kd 0.8000 0.9000 0.9500
+Ks 0.9000 0.9000 0.9000
+Ns 120.0
+d 0.28
+illum 4
+
+newmtl M_Front_Door
+Ka 1.000 1.000 1.000
+Kd 0.1400 0.1700 0.2000
+Ks 0.3000 0.3000 0.3000
+Ns 40.0
+d 1.00
+illum 2
+
+newmtl M_Gutters
+Ka 1.000 1.000 1.000
+Kd 0.1000 0.1000 0.1100
+Ks 0.3000 0.3000 0.3000
+Ns 50.0
+d 1.00
+illum 2
+
+newmtl M_Interior_Walls
+Ka 1.000 1.000 1.000
+Kd 0.9200 0.9100 0.8800
+Ks 0.0500 0.0500 0.0500
+Ns 5.0
+d 1.00
+illum 2
+
+newmtl M_Interior_Ceiling
+Ka 1.000 1.000 1.000
+Kd 0.9600 0.9600 0.9600
+Ks 0.0200 0.0200 0.0200
+Ns 5.0
+d 1.00
+illum 2
+
+newmtl M_Wood_Structure
+Ka 1.000 1.000 1.000
+Kd 0.6500 0.5200 0.3800
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.00
+illum 2
+
+newmtl M_Flooring_Wood
+Ka 1.000 1.000 1.000
+Kd 0.6800 0.5000 0.3400
+Ks 0.3000 0.2500 0.2000
+Ns 40.0
+d 1.00
+illum 2
+
+newmtl M_Flooring_Tiles
+Ka 1.000 1.000 1.000
+Kd 0.7600 0.7500 0.7300
+Ks 0.3000 0.3000 0.3000
+Ns 50.0
+d 1.00
+illum 2
+
+newmtl M_Flooring_Carpet
+Ka 1.000 1.000 1.000
+Kd 0.7200 0.6900 0.6400
+Ks 0.0500 0.0500 0.0500
+Ns 5.0
+d 1.00
+illum 2
+
+newmtl M_Interior_Doors
+Ka 1.000 1.000 1.000
+Kd 0.9100 0.9100 0.9000
+Ks 0.2000 0.2000 0.2000
+Ns 30.0
+d 1.00
+illum 2
+
+newmtl M_Staircase_Timber
+Ka 1.000 1.000 1.000
+Kd 0.6200 0.4600 0.3000
+Ks 0.2500 0.2000 0.1500
+Ns 35.0
+d 1.00
+illum 2
+
+newmtl M_Kitchen_Cabinets
+Ka 1.000 1.000 1.000
+Kd 0.8300 0.8300 0.8200
+Ks 0.2000 0.2000 0.2000
+Ns 30.0
+d 1.00
+illum 2
+
+newmtl M_Kitchen_Worktop
+Ka 1.000 1.000 1.000
+Kd 0.8800 0.8800 0.8700
+Ks 0.4000 0.4000 0.4000
+Ns 70.0
+d 1.00
+illum 2
+
+newmtl M_Kitchen_Sink_Hob
+Ka 1.000 1.000 1.000
+Kd 0.8000 0.8000 0.8000
+Ks 0.9000 0.9000 0.9000
+Ns 90.0
+d 1.00
+illum 2
+
+newmtl M_Chrome
+Ka 1.000 1.000 1.000
+Kd 0.8500 0.8500 0.8500
+Ks 0.9500 0.9500 0.9500
+Ns 100.0
+d 1.00
+illum 2
+
+newmtl M_Porcelain_White
+Ka 1.000 1.000 1.000
+Kd 0.9800 0.9800 0.9800
+Ks 0.8000 0.8000 0.8000
+Ns 95.0
+d 1.00
+illum 2
+
+newmtl M_Copper_Pipes
+Ka 1.000 1.000 1.000
+Kd 0.8500 0.4500 0.2500
+Ks 0.9000 0.7000 0.5000
+Ns 90.0
+d 1.00
+illum 2
+
+newmtl M_Driveway
+Ka 1.000 1.000 1.000
+Kd 0.2600 0.2600 0.2800
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.00
+illum 2
+
+newmtl M_Car_Paint
+Ka 1.000 1.000 1.000
+Kd 0.0500 0.3500 0.8800
+Ks 0.9000 0.9000 0.9500
+Ns 120.0
+d 1.00
+illum 2
+
+newmtl M_Car_Trim_Black
+Ka 1.000 1.000 1.000
+Kd 0.0800 0.0800 0.0800
+Ks 0.5000 0.5000 0.5000
+Ns 40.0
+d 1.00
+illum 2
+
+newmtl M_Car_Glass
+Ka 1.000 1.000 1.000
+Kd 0.1000 0.1200 0.1400
+Ks 0.9500 0.9500 0.9500
+Ns 120.0
+d 0.40
+illum 4
+
+newmtl M_Car_Wheels
+Ka 1.000 1.000 1.000
+Kd 0.8000 0.8000 0.8200
+Ks 0.8500 0.8500 0.8500
+Ns 85.0
+d 1.00
+illum 2
+
+newmtl M_Car_Tires
+Ka 1.000 1.000 1.000
+Kd 0.1200 0.1200 0.1200
+Ks 0.1000 0.1000 0.1000
+Ns 15.0
+d 1.00
+illum 2
+
+newmtl M_Car_Lights_Front
+Ka 1.000 1.000 1.000
+Kd 0.9500 0.9800 1.0000
+Ks 0.9500 0.9500 0.9500
+Ns 100.0
+d 1.00
+illum 2
+
+newmtl M_Car_Lights_Rear
+Ka 1.000 1.000 1.000
+Kd 0.8500 0.0500 0.0500
+Ks 0.8000 0.2000 0.2000
+Ns 70.0
+d 1.00
+illum 2
+
+newmtl M_EV_Cable
+Ka 1.000 1.000 1.000
+Kd 0.0800 0.0800 0.0800
+Ks 0.2000 0.2000 0.2000
+Ns 25.0
+d 1.00
+illum 2
+
+newmtl M_Plaque
+Ka 1.000 1.000 1.000
+Kd 0.1800 0.2000 0.2200
+Ks 0.3000 0.3000 0.3000
+Ns 30.0
+d 1.00
+illum 2
+
+newmtl M_Plaque_Text
+Ka 1.000 1.000 1.000
+Kd 0.9500 0.9500 0.9500
+Ks 0.5000 0.5000 0.5000
+Ns 50.0
+d 1.00
+illum 2
+

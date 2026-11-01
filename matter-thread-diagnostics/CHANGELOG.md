@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.8.0] - 2026-11-01
+
+### Added: Interactive 3D Digital Twin House Model & Spatial Wireless Mesh Viewer
+- **Taylor Wimpey 'The Blair 4 TK' 3D House Twin**:
+  - Integrated directly into **Live Mesh Topology** (Tab 2) as a 6th layout perspective: **3D House Twin** (`data-layout="house3d"`).
+  - Built using Three.js, OrbitControls, and GLTFLoader to render `Taylor_Wimpey_Blair.glb` (932 KB PBR architectural model with 47 named mesh objects).
+  - Features complete blueprint-accurate geometry: ground floor living room, kitchen/dining with combi boiler and French doors, entrance hall with consumer unit meter cupboard, downstairs WC, staircase, first-floor master bedroom with en-suite, guest room, nursery, family bathroom, upstairs landing, 5 rear roof solar panels, and front driveway with Peugeot e-2008 plugged into the EV wallbox charger.
+- **Full 3D Camera Controls & Room Presets**:
+  - Smooth orbit rotation (left drag), panning (right drag), and zoom (scroll/pinch).
+  - 10 Instant Camera Quick-Jumps: Overview / Isometric Front, Rear Garden & Solar Panels, Living Room, Kitchen & Dining, Entrance & Meter Cupboard, Master Bedroom, Guest Room, Nursery, Family Bathroom, and Driveway & EV.
+  - Smooth easing interpolation (`flyCameraTo`) between camera viewpoints.
+- **Floor Cutaway Dollhouse Perspectives & X-Ray Mode**:
+  - 4 Floor Views: **All Floors** (translucent building shell), **Ground Floor** (dollhouse cutaway showing ground floor rooms from above), **First Floor** (cutaway revealing bedrooms and bathroom), and **Solid Shell** (opaque exterior).
+  - Real-time **X-Ray Opacity Slider** (5% to 100%) to look straight through walls into the glowing mesh nodes.
+- **3D Spatial Wireless Nodes & Dynamic RF Link Beams**:
+  - Devices mapped into their respective rooms as glowing 3D spheres with pulsing beacon rings and billboard text labels.
+  - Color-coded roles: Border Routers / Coordinators (Gold/Cyan), Mains Routers (Green), Battery Sensors (Purple), Offline Nodes (Red), Weak Signal (Orange).
+  - Arched 3D wireless RF link beams connecting each device to its parent router/border router, color-coded by RSSI/LQI signal strength.
+  - Animated glowing signal pulse packets travelling along the link curves.
+- **Room Placement Manager & Auto-Detection**:
+  - **Auto-Detection**: Automatically parses Home Assistant `ha_area` and device names to match blueprint rooms (Living Room, Kitchen, Meter Cupboard, Master Bedroom, En-Suite, Guest Room, Family Bathroom, Upstairs Hallway, etc.).
+  - **Room Placement Modal**: Click **Room Placements** to view all discovered devices, change assigned rooms, or trigger **Auto-Detect All**.
+  - **Device Inspector Integration**: Change any device's assigned room directly inside the **Device Inspector**, with changes persisting to `localStorage` and updating the 3D twin in real-time.
+- **Raycasting & Node Focus**:
+  - Hovering over any 3D device displays a floating HUD tooltip with device name, role, assigned room, RSSI, and LQI.
+  - Clicking any 3D node smoothly flies the camera to focus on it and opens the full Cluster 0x0035 Device Inspector.
+- **Dual Protocol Support**:
+  - Seamlessly renders both Thread & Matter devices as well as Zigbee devices when the Zigbee protocol toggle is selected.
+
 ## [2.7.1] - 2026-11-01
 
 ### Fixed: Strict Protocol Isolation & Zigbee Channel / View Desynchronization
