@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.8.5] - 2026-11-01
+
+### Fixed: 2D Force Mesh and Hierarchical Tree Topology Stability
+- **Physics Numerical Stability & Corner Pinning Fix**:
+  - Fixed Coulomb repulsion force calculation that previously lacked clamping on small distances (`distSq`), eliminating explosive accelerations that slammed nodes into the top-left boundary corner.
+  - Implemented speed limiting (`maxSpeed = 14.0 px/frame`) and safely clamped Hooke's law spring displacements and Coulomb repulsion forces.
+  - Replaced hard boundary wall clamping with smooth inward boundary repulsion.
+- **Hierarchical Tree Layout Optimization**:
+  - When switching to **Tree / Hierarchy** layout, nodes are now placed directly at their computed tier target coordinates (Border Routers / Coordinators $\rightarrow$ Routers $\rightarrow$ End Devices / Sensors).
+  - Disabled vertical RF spring forces during Tree mode so inter-device link lines no longer pull nodes across hierarchy tiers.
+  - Constrained Coulomb repulsion to horizontal axis in Tree layout, keeping tiered rows crisp, level, and well-spaced.
+  - Added full Zigbee Coordinator & Zigbee Router support in Tree tier classification.
+- **Layout Switching & Viewport Normalization**:
+  - Automatically resets pan (`panX = 0, panY = 0`) and zoom (`zoom = 1.0`) when switching between layout modes.
+  - Prevents inheriting stale or out-of-bounds coordinates from previous perspectives.
+  - Attached pan event listeners directly to the SVG element to eliminate duplicate window listeners.
+
 ## [2.8.4] - 2026-11-01
 
 ### Added: Upgraded Blair House Model (63 PBR Mesh Objects & Landscaped Grounds)

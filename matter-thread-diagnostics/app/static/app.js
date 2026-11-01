@@ -379,6 +379,9 @@ function initDeviceSearchAndTopologyControls() {
       btn.classList.add("active");
       const mode = btn.getAttribute("data-layout") || "house3d";
       topologyPhysicsState.layoutMode = mode;
+      topologyPhysicsState.panX = 0;
+      topologyPhysicsState.panY = 0;
+      topologyPhysicsState.zoom = 1.0;
       try {
         localStorage.setItem("ha_matter_topology_layout", mode);
       } catch (_) {}
@@ -2927,31 +2930,39 @@ function renderSvgTopology(nodes, edges) {
   const affinityData = resolveBorderRouterAffinity(nodes, edges);
   topologyPhysicsState.affinityData = affinityData;
 
-  // Preserve previous positions when possible so re-scans transition smoothly
+  // Only preserve previous positions if staying in the same layout mode during live re-scans
+  const isLayoutSwitch = topologyPhysicsState.lastRenderedMode !== topologyPhysicsState.layoutMode;
+  topologyPhysicsState.lastRenderedMode = topologyPhysicsState.layoutMode;
+
   const prevPosById = {};
-  (topologyPhysicsState.nodes || []).forEach(pn => {
-    prevPosById[pn.id] = { x: pn.x, y: pn.y };
-  });
+  if (!isLayoutSwitch) {
+    (topologyPhysicsState.nodes || []).forEach(pn => {
+      if (typeof pn.x === "number" && !isNaN(pn.x) && pn.x > 50 && pn.x < width - 50 &&
+          typeof pn.y === "number" && !isNaN(pn.y) && pn.y > 50 && pn.y < height - 50) {
+        prevPosById[pn.id] = { x: pn.x, y: pn.y };
+      }
+    });
+  }
 
   const simNodes = [];
   const nodeById = {};
 
   nodes.forEach((n, idx) => {
     const angle = (2 * Math.PI * idx) / Math.max(nodes.length, 1);
-    let initRadius = 150;
-    if (n.type === "border_router") initRadius = nodes.length > 4 ? 85 : 70;
-    else if (n.type === "router") initRadius = 155;
-    else initRadius = 215;
+    let initRadius = 140;
+    if (n.type === "border_router") initRadius = nodes.length > 4 ? 80 : 65;
+    else if (n.type === "router") initRadius = 150;
+    else initRadius = 210;
 
     // Scale initial distance by signal strength if available (stronger RSSI starts closer to center)
-    if (n.rssi !== null && n.rssi !== undefined) {
+    if (n.rssi !== null && n.rssi !== undefined && !isNaN(Number(n.rssi))) {
       const rssiNorm = Math.max(0, Math.min(1, (-45 - Number(n.rssi)) / 50));
-      initRadius = 85 + rssiNorm * 165;
+      initRadius = 80 + rssiNorm * 155;
     }
 
     const prev = prevPosById[n.id];
-    const x = prev ? prev.x : cx + Math.cos(angle) * initRadius + (Math.random() - 0.5) * 20;
-    const y = prev ? prev.y : cy + Math.sin(angle) * initRadius + (Math.random() - 0.5) * 20;
+    let x = prev ? prev.x : cx + Math.cos(angle) * initRadius + (Math.random() - 0.5) * 15;
+    let y = prev ? prev.y : cy + Math.sin(angle) * initRadius + (Math.random() - 0.5) * 15;
 
     let radius = 21;
     if (n.type === "border_router") {
@@ -3167,18 +3178,25 @@ function renderSvgTopology(nodes, edges) {
     svg.style.cursor = "grabbing";
   };
 
-  window.addEventListener("pointermove", (ev) => {
+  svg.onpointermove = (ev) => {
     if (!isPanning) return;
     topologyPhysicsState.panX = ev.clientX - panStartX;
     topologyPhysicsState.panY = ev.clientY - panStartY;
-  });
+  };
 
-  window.addEventListener("pointerup", () => {
+  svg.onpointerup = () => {
     if (isPanning) {
       isPanning = false;
       svg.style.cursor = "grab";
     }
-  });
+  };
+
+  svg.onpointerleave = () => {
+    if (isPanning) {
+      isPanning = false;
+      svg.style.cursor = "grab";
+    }
+  };
 
   svg.onwheel = (ev) => {
     ev.preventDefault();
@@ -3197,6 +3215,19 @@ function renderSvgTopology(nodes, edges) {
   topologyPhysicsState.energy = 1.0;
 
   computeLayoutTargetPositions(simNodes, simEdges, width, height, topologyPhysicsState.layoutMode);
+
+  // In tree mode, position directly at target hierarchy tiers so they never scatter or fight springs
+  if (topologyPhysicsState.layoutMode === "tree") {
+    simNodes.forEach(n => {
+      if (n.targetX !== null && n.targetX !== undefined && n.targetY !== null && n.targetY !== undefined) {
+        n.x = n.targetX;
+        n.y = n.targetY;
+        n.vx = 0;
+        n.vy = 0;
+      }
+    });
+  }
+
   updateTopologySearchHighlight();
   applyTopologyVisibilityFilter();
   updateTopologyLegend();
@@ -3209,35 +3240,32 @@ function renderSvgTopology(nodes, edges) {
     const energy = topologyPhysicsState.energy;
 
     // 0. Layout Mode Target Springs (Tree / Radial / Room)
-    if (topologyPhysicsState.layoutMode !== "force") {
+    if (topologyPhysicsState.layoutMode === "tree") {
       for (let i = 0; i < N; i++) {
         const n = simNodes[i];
-        if (!n.dragging && n.targetX !== null && n.targetX !== undefined && n.targetY !== null && n.targetY !== undefined) {
-          const kRestoring = 0.085;
-          n.vx += (n.targetX - n.x) * kRestoring;
-          n.vy += (n.targetY - n.y) * kRestoring;
+        if (!n.dragging && n.targetX !== null && n.targetY !== null) {
+          n.vx += (n.targetX - n.x) * 0.16;
+          n.vy += (n.targetY - n.y) * 0.22;
         }
       }
     }
 
-    // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap
+    // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap (Safely Clamped)
     for (let i = 0; i < N; i++) {
       const a = simNodes[i];
       for (let j = i + 1; j < N; j++) {
         const b = simNodes[j];
         let dx = b.x - a.x;
         let dy = b.y - a.y;
-        let distSq = dx * dx + dy * dy;
-        if (distSq < 4) {
-          dx = (Math.random() - 0.5) * 4;
-          dy = (Math.random() - 0.5) * 4;
-          distSq = dx * dx + dy * dy;
+        if (topologyPhysicsState.layoutMode === "tree") {
+          dy *= 0.1; // In tree mode, keep tiers aligned horizontally
         }
-        const dist = Math.sqrt(distSq);
-        const minSep = a.radius + b.radius + 55;
-        let repulse = 2400 / distSq;
+        let distSq = dx * dx + dy * dy;
+        const dist = Math.sqrt(distSq) || 1.0;
+        const minSep = a.radius + b.radius + (topologyPhysicsState.layoutMode === "tree" ? 30 : 55);
+        let repulse = Math.min(2600.0 / Math.max(distSq, 900.0), 9.0);
         if (dist < minSep) {
-          repulse += (minSep - dist) * 0.18;
+          repulse += Math.min((minSep - dist) * 0.12, 5.0);
         }
         const fx = (dx / dist) * repulse;
         const fy = (dy / dist) * repulse;
@@ -3253,56 +3281,64 @@ function renderSvgTopology(nodes, edges) {
     }
 
     // 2. RF Signal-Proximity Spring Force along edges (Hooke's law toward targetDist)
-    const edgeSpringScale = topologyPhysicsState.layoutMode === "force" ? 1.0 : 0.18;
-    for (let i = 0; i < simEdges.length; i++) {
-      const e = simEdges[i];
-      const a = e.src;
-      const b = e.tgt;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const displacement = dist - e.targetDist;
-      const force = displacement * e.stiffness * edgeSpringScale;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
+    // Only applied in force layout so edges don't pull nodes across tree hierarchy tiers
+    if (topologyPhysicsState.layoutMode === "force") {
+      for (let i = 0; i < simEdges.length; i++) {
+        const e = simEdges[i];
+        const a = e.src;
+        const b = e.tgt;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1.0;
+        const displacement = dist - e.targetDist;
+        const force = Math.max(-10.0, Math.min(10.0, displacement * e.stiffness * 0.5));
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
 
-      if (!a.dragging) {
-        a.vx += fx;
-        a.vy += fy;
-      }
-      if (!b.dragging) {
-        b.vx -= fx;
-        b.vy -= fy;
+        if (!a.dragging) {
+          a.vx += fx;
+          a.vy += fy;
+        }
+        if (!b.dragging) {
+          b.vx -= fx;
+          b.vy -= fy;
+        }
       }
     }
 
-    // 3. Soft center gravity + subtle organic micro-motion so topology stays alive
-    const pad = 48;
+    // 3. Center gravity & velocity clamping
+    const pad = 50;
     for (let i = 0; i < N; i++) {
       const n = simNodes[i];
       if (!n.dragging) {
         if (topologyPhysicsState.layoutMode === "force") {
-          const gravity = n.type === "border_router" ? 0.012 : 0.005;
+          const gravity = n.type === "border_router" ? 0.010 : 0.005;
           n.vx += (cx - n.x) * gravity;
           n.vy += (cy - n.y) * gravity;
-
-          // Continuous subtle harmonic float proportional to signal distance
-          n.vx += Math.sin(t + n.phase) * 0.045;
-          n.vy += Math.cos(t * 0.85 + n.phase) * 0.045;
+          n.vx += Math.sin(t + n.phase) * 0.035;
+          n.vy += Math.cos(t * 0.85 + n.phase) * 0.035;
         }
 
         // Damping
-        n.vx *= 0.82;
-        n.vy *= 0.82;
+        n.vx *= 0.78;
+        n.vy *= 0.78;
+
+        // Speed limit to prevent numerical explosion
+        const speed = Math.hypot(n.vx, n.vy);
+        const maxSpeed = 14.0;
+        if (speed > maxSpeed) {
+          n.vx = (n.vx / speed) * maxSpeed;
+          n.vy = (n.vy / speed) * maxSpeed;
+        }
 
         n.x += n.vx * Math.max(energy, 0.35);
         n.y += n.vy * Math.max(energy, 0.35);
 
-        // Soft viewport boundary bounce
-        if (n.x < pad) { n.x = pad; n.vx *= -0.5; }
-        if (n.x > width - pad) { n.x = width - pad; n.vx *= -0.5; }
-        if (n.y < pad) { n.y = pad; n.vy *= -0.5; }
-        if (n.y > height - pad) { n.y = height - pad; n.vy *= -0.5; }
+        // Soft viewport boundaries: push gently inward
+        if (n.x < pad) { n.x = pad; n.vx = Math.abs(n.vx) * 0.5; }
+        if (n.x > width - pad) { n.x = width - pad; n.vx = -Math.abs(n.vx) * 0.5; }
+        if (n.y < pad) { n.y = pad; n.vy = Math.abs(n.vy) * 0.5; }
+        if (n.y > height - pad) { n.y = height - pad; n.vy = -Math.abs(n.vy) * 0.5; }
       }
 
       n.elem.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
@@ -3459,24 +3495,31 @@ function computeLayoutTargetPositions(simNodes, simEdges, width, height, layoutM
   }
 
   if (layoutMode === "tree") {
-    const tbrs = simNodes.filter(n => n.type === "border_router");
-    const routers = simNodes.filter(n => n.type === "router");
-    const seds = simNodes.filter(n => n.type !== "border_router" && n.type !== "router");
+    const isTbr = (n) =>
+      n.type === "border_router" ||
+      (n.routing_role && (n.routing_role.includes("Coordinator") || n.routing_role.includes("TBR")));
+    const isRouter = (n) =>
+      !isTbr(n) &&
+      (n.type === "router" || n.is_router || (n.routing_role && n.routing_role.includes("Router")));
+
+    const tbrs = simNodes.filter(isTbr);
+    const routers = simNodes.filter(isRouter);
+    const seds = simNodes.filter(n => !isTbr(n) && !isRouter(n));
 
     const assignTier = (tierNodes, yPos) => {
       const count = tierNodes.length;
       if (count === 0) return;
-      const margin = Math.min(width * 0.12, 100);
-      const span = width - margin * 2;
+      const margin = Math.min(width * 0.10, 90);
+      const span = Math.max(width - margin * 2, 200);
       tierNodes.forEach((n, idx) => {
-        n.targetX = count === 1 ? cx : margin + (idx / (count - 1)) * span;
+        n.targetX = count === 1 ? cx : margin + (idx / Math.max(count - 1, 1)) * span;
         n.targetY = yPos;
       });
     };
 
-    assignTier(tbrs, height * 0.16);
-    assignTier(routers, height * 0.50);
-    assignTier(seds, height * 0.82);
+    assignTier(tbrs, Math.round(height * 0.18));
+    assignTier(routers, Math.round(height * 0.50));
+    assignTier(seds, Math.round(height * 0.82));
     return;
   }
 

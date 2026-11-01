@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.8.4")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.8.5")
 
 
 @app.middleware("http")
