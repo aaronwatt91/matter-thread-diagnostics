@@ -26,6 +26,11 @@ let topologyPhysicsState = {
   panX: 0,
   panY: 0,
   energy: 1.0,
+  layoutMode: "force",
+  colorMode: "role",
+  filterMode: "all",
+  showLinkLabels: true,
+  affinityData: null,
 };
 
 const MODEL_OPTIONS_BY_PROVIDER = {
@@ -267,6 +272,46 @@ function initDeviceSearchAndTopologyControls() {
       topologyPhysicsState.panX = 0;
       topologyPhysicsState.panY = 0;
       topologyPhysicsState.energy = Math.max(topologyPhysicsState.energy, 0.5);
+    });
+  }
+
+  // Topology Layout Mode Switcher (Force, Tree, Radial, Room)
+  document.querySelectorAll(".btn-layout-mode").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".btn-layout-mode").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const mode = btn.getAttribute("data-layout") || "force";
+      topologyPhysicsState.layoutMode = mode;
+      computeLayoutTargetPositions();
+      topologyPhysicsState.energy = 1.0;
+    });
+  });
+
+  // Topology Color By Selector
+  const colorSelect = document.getElementById("topology-color-mode");
+  if (colorSelect) {
+    colorSelect.addEventListener("change", (e) => {
+      topologyPhysicsState.colorMode = e.target.value || "role";
+      updateTopologyNodeColors();
+      updateTopologyLegend();
+    });
+  }
+
+  // Topology Filter Selector
+  const filterSelect = document.getElementById("topology-node-filter");
+  if (filterSelect) {
+    filterSelect.addEventListener("change", (e) => {
+      topologyPhysicsState.filterMode = e.target.value || "all";
+      applyTopologyVisibilityFilter();
+    });
+  }
+
+  // Topology Show Link Signal Labels Checkbox
+  const chkLabels = document.getElementById("chk-topo-show-labels");
+  if (chkLabels) {
+    chkLabels.addEventListener("change", (e) => {
+      topologyPhysicsState.showLinkLabels = e.target.checked;
+      applyTopologyVisibilityFilter();
     });
   }
 }
@@ -1658,6 +1703,10 @@ function renderSvgTopology(nodes, edges) {
   viewportG.appendChild(nodesG);
   svg.appendChild(viewportG);
 
+  // Calculate Border Router partition / affinity mapping
+  const affinityData = resolveBorderRouterAffinity(nodes, edges);
+  topologyPhysicsState.affinityData = affinityData;
+
   // Preserve previous positions when possible so re-scans transition smoothly
   const prevPosById = {};
   (topologyPhysicsState.nodes || []).forEach(pn => {
@@ -1685,19 +1734,12 @@ function renderSvgTopology(nodes, edges) {
     const y = prev ? prev.y : cy + Math.sin(angle) * initRadius + (Math.random() - 0.5) * 20;
 
     let radius = 21;
-    let fill = "#10b981";
     if (n.type === "border_router") {
       radius = n.preferred ? 28 : 25;
-      if (n.vendor === "nest") fill = "#4285F4";
-      else if (n.vendor === "apple") fill = "#64748b";
-      else if (n.vendor === "ha") fill = "#03A9F4";
-      else fill = "#3b82f6";
     } else if (n.type === "end_device") {
       radius = 17;
-      fill = "#8b5cf6";
     }
-    if (n.status === "offline") fill = "#ef4444";
-    else if (n.status === "weak" || n.status === "warning") fill = "#f59e0b";
+    const fill = getNodeColor(n, topologyPhysicsState.colorMode, affinityData.brMap, affinityData.nodeAffinity);
 
     const simNode = {
       ...n,
@@ -1951,7 +1993,10 @@ function renderSvgTopology(nodes, edges) {
   topologyPhysicsState.edges = simEdges;
   topologyPhysicsState.energy = 1.0;
 
+  computeLayoutTargetPositions(simNodes, simEdges, width, height, topologyPhysicsState.layoutMode);
   updateTopologySearchHighlight();
+  applyTopologyVisibilityFilter();
+  updateTopologyLegend();
 
   let tickCount = 0;
   const stepPhysics = () => {
@@ -1959,6 +2004,18 @@ function renderSvgTopology(nodes, edges) {
     const t = tickCount * 0.025;
     const N = simNodes.length;
     const energy = topologyPhysicsState.energy;
+
+    // 0. Layout Mode Target Springs (Tree / Radial / Room)
+    if (topologyPhysicsState.layoutMode !== "force") {
+      for (let i = 0; i < N; i++) {
+        const n = simNodes[i];
+        if (!n.dragging && n.targetX !== null && n.targetX !== undefined && n.targetY !== null && n.targetY !== undefined) {
+          const kRestoring = 0.085;
+          n.vx += (n.targetX - n.x) * kRestoring;
+          n.vy += (n.targetY - n.y) * kRestoring;
+        }
+      }
+    }
 
     // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap
     for (let i = 0; i < N; i++) {
@@ -1993,6 +2050,7 @@ function renderSvgTopology(nodes, edges) {
     }
 
     // 2. RF Signal-Proximity Spring Force along edges (Hooke's law toward targetDist)
+    const edgeSpringScale = topologyPhysicsState.layoutMode === "force" ? 1.0 : 0.18;
     for (let i = 0; i < simEdges.length; i++) {
       const e = simEdges[i];
       const a = e.src;
@@ -2001,7 +2059,7 @@ function renderSvgTopology(nodes, edges) {
       const dy = b.y - a.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       const displacement = dist - e.targetDist;
-      const force = displacement * e.stiffness;
+      const force = displacement * e.stiffness * edgeSpringScale;
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
 
@@ -2020,13 +2078,15 @@ function renderSvgTopology(nodes, edges) {
     for (let i = 0; i < N; i++) {
       const n = simNodes[i];
       if (!n.dragging) {
-        const gravity = n.type === "border_router" ? 0.012 : 0.005;
-        n.vx += (cx - n.x) * gravity;
-        n.vy += (cy - n.y) * gravity;
+        if (topologyPhysicsState.layoutMode === "force") {
+          const gravity = n.type === "border_router" ? 0.012 : 0.005;
+          n.vx += (cx - n.x) * gravity;
+          n.vy += (cy - n.y) * gravity;
 
-        // Continuous subtle harmonic float proportional to signal distance
-        n.vx += Math.sin(t + n.phase) * 0.045;
-        n.vy += Math.cos(t * 0.85 + n.phase) * 0.045;
+          // Continuous subtle harmonic float proportional to signal distance
+          n.vx += Math.sin(t + n.phase) * 0.045;
+          n.vy += Math.cos(t * 0.85 + n.phase) * 0.045;
+        }
 
         // Damping
         n.vx *= 0.82;
@@ -2076,6 +2136,317 @@ function renderSvgTopology(nodes, edges) {
   };
 
   topologyPhysicsState.animFrameId = requestAnimationFrame(stepPhysics);
+}
+
+const BR_AFFINITY_PALETTE = [
+  "#3b82f6", // Blue
+  "#10b981", // Emerald
+  "#f59e0b", // Amber
+  "#ec4899", // Pink
+  "#8b5cf6", // Purple
+  "#06b6d4", // Cyan
+  "#f97316", // Orange
+  "#14b8a6", // Teal
+];
+
+function resolveBorderRouterAffinity(nodes, edges) {
+  const brMap = {};
+  const tbrNodes = (nodes || []).filter(n => n.type === "border_router");
+
+  tbrNodes.forEach((tbr, idx) => {
+    const color = BR_AFFINITY_PALETTE[idx % BR_AFFINITY_PALETTE.length];
+    brMap[tbr.id] = {
+      id: tbr.id,
+      label: tbr.label || `TBR ${idx + 1}`,
+      color: color,
+    };
+  });
+
+  const adj = {};
+  (nodes || []).forEach(n => { adj[n.id] = []; });
+  (edges || []).forEach(e => {
+    const s = typeof e.source === "object" ? e.source.id : e.source;
+    const t = typeof e.target === "object" ? e.target.id : e.target;
+    if (adj[s]) adj[s].push(t);
+    if (adj[t]) adj[t].push(s);
+  });
+
+  const nodeAffinity = {};
+  tbrNodes.forEach(tbr => {
+    nodeAffinity[tbr.id] = brMap[tbr.id];
+  });
+
+  const queue = tbrNodes.map(tbr => ({ id: tbr.id, br: brMap[tbr.id] }));
+  const visited = new Set(tbrNodes.map(tbr => tbr.id));
+
+  while (queue.length > 0) {
+    const { id, br } = queue.shift();
+    const neighbors = adj[id] || [];
+    for (const nbrId of neighbors) {
+      if (!visited.has(nbrId)) {
+        visited.add(nbrId);
+        nodeAffinity[nbrId] = br;
+        queue.push({ id: nbrId, br });
+      }
+    }
+  }
+
+  return { brMap, nodeAffinity };
+}
+
+function getNodeColor(n, colorMode, brMap, nodeAffinity) {
+  if (colorMode === "rssi") {
+    if (n.status === "offline") return "#64748b";
+    const rssi = (n.rssi !== null && n.rssi !== undefined) ? Number(n.rssi) : null;
+    if (rssi === null) return "#64748b";
+    if (rssi >= -60) return "#10b981";
+    if (rssi >= -70) return "#84cc16";
+    if (rssi >= -80) return "#f59e0b";
+    return "#ef4444";
+  }
+
+  if (colorMode === "affinity") {
+    const aff = nodeAffinity && nodeAffinity[n.id];
+    if (aff && aff.color) return aff.color;
+    return "#64748b";
+  }
+
+  if (colorMode === "power") {
+    if (n.status === "offline") return "#ef4444";
+    if (n.type === "end_device") return "#a855f7";
+    return "#06b6d4";
+  }
+
+  // Default: "role"
+  if (n.status === "offline") return "#ef4444";
+  if (n.status === "weak" || n.status === "warning") return "#f59e0b";
+  if (n.type === "border_router") {
+    if (n.vendor === "nest") return "#4285F4";
+    if (n.vendor === "apple") return "#94a3b8";
+    if (n.vendor === "ha") return "#03A9F4";
+    return "#3b82f6";
+  }
+  if (n.type === "end_device") {
+    return "#8b5cf6";
+  }
+  return "#10b981";
+}
+
+function computeLayoutTargetPositions(simNodes, simEdges, width, height, layoutMode) {
+  simNodes = simNodes || topologyPhysicsState.nodes || [];
+  if (!simNodes.length) return;
+
+  const svg = document.getElementById("mesh-svg");
+  if (!width || !height) {
+    const rect = svg ? svg.getBoundingClientRect() : null;
+    width = Math.max((rect && rect.width) || (svg && svg.clientWidth) || 880, 600);
+    height = Math.max((rect && rect.height) || 540, 480);
+  }
+  const cx = width / 2;
+  const cy = height / 2;
+  layoutMode = layoutMode || topologyPhysicsState.layoutMode || "force";
+
+  if (layoutMode === "force") {
+    simNodes.forEach(n => {
+      n.targetX = null;
+      n.targetY = null;
+    });
+    return;
+  }
+
+  if (layoutMode === "tree") {
+    const tbrs = simNodes.filter(n => n.type === "border_router");
+    const routers = simNodes.filter(n => n.type === "router");
+    const seds = simNodes.filter(n => n.type !== "border_router" && n.type !== "router");
+
+    const assignTier = (tierNodes, yPos) => {
+      const count = tierNodes.length;
+      if (count === 0) return;
+      const margin = Math.min(width * 0.12, 100);
+      const span = width - margin * 2;
+      tierNodes.forEach((n, idx) => {
+        n.targetX = count === 1 ? cx : margin + (idx / (count - 1)) * span;
+        n.targetY = yPos;
+      });
+    };
+
+    assignTier(tbrs, height * 0.16);
+    assignTier(routers, height * 0.50);
+    assignTier(seds, height * 0.82);
+    return;
+  }
+
+  if (layoutMode === "radial") {
+    const tbrs = simNodes.filter(n => n.type === "border_router");
+    const routers = simNodes.filter(n => n.type === "router");
+    const seds = simNodes.filter(n => n.type !== "border_router" && n.type !== "router");
+
+    let centerNode = tbrs.find(t => t.preferred) || tbrs[0] || simNodes[0];
+    centerNode.targetX = cx;
+    centerNode.targetY = cy;
+
+    const innerNodes = [...tbrs.filter(t => t !== centerNode), ...routers];
+    const outerNodes = seds;
+
+    const minDim = Math.min(width, height);
+    const rInner = minDim * 0.22;
+    const rOuter = minDim * 0.40;
+
+    const placeRing = (nodes, radius) => {
+      const count = nodes.length;
+      if (count === 0) return;
+      nodes.forEach((n, idx) => {
+        const angle = (2 * Math.PI * idx) / count - Math.PI / 2;
+        n.targetX = cx + Math.cos(angle) * radius;
+        n.targetY = cy + Math.sin(angle) * radius;
+      });
+    };
+
+    placeRing(innerNodes, rInner);
+    placeRing(outerNodes, rOuter);
+    return;
+  }
+
+  if (layoutMode === "room") {
+    const groups = {};
+    simNodes.forEach(n => {
+      const area = (n.ha_area && n.ha_area.trim()) || "Unassigned";
+      if (!groups[area]) groups[area] = [];
+      groups[area].push(n);
+    });
+
+    const areaNames = Object.keys(groups);
+    const numAreas = areaNames.length;
+    const areaRadius = Math.min(width, height) * 0.32;
+
+    areaNames.forEach((area, aIdx) => {
+      const areaAngle = (2 * Math.PI * aIdx) / numAreas - Math.PI / 2;
+      const areaCenterX = numAreas === 1 ? cx : cx + Math.cos(areaAngle) * areaRadius;
+      const areaCenterY = numAreas === 1 ? cy : cy + Math.sin(areaAngle) * areaRadius;
+
+      const groupNodes = groups[area];
+      const gCount = groupNodes.length;
+      const subRadius = Math.min(75, 24 + gCount * 7);
+
+      groupNodes.forEach((n, idx) => {
+        if (gCount === 1) {
+          n.targetX = areaCenterX;
+          n.targetY = areaCenterY;
+        } else {
+          const subAngle = (2 * Math.PI * idx) / gCount;
+          n.targetX = areaCenterX + Math.cos(subAngle) * subRadius;
+          n.targetY = areaCenterY + Math.sin(subAngle) * subRadius;
+        }
+      });
+    });
+    return;
+  }
+}
+
+function updateTopologyNodeColors() {
+  const nodes = topologyPhysicsState.nodes || [];
+  const colorMode = topologyPhysicsState.colorMode || "role";
+  const { brMap, nodeAffinity } = topologyPhysicsState.affinityData || { brMap: {}, nodeAffinity: {} };
+
+  nodes.forEach(n => {
+    const fill = getNodeColor(n, colorMode, brMap, nodeAffinity);
+    n.fill = fill;
+    if (n.circleElem) {
+      n.circleElem.setAttribute("fill", fill);
+    }
+  });
+}
+
+function updateTopologyLegend() {
+  const legend = document.getElementById("topology-legend");
+  if (!legend) return;
+
+  const colorMode = topologyPhysicsState.colorMode || "role";
+  const { brMap } = topologyPhysicsState.affinityData || { brMap: {} };
+
+  if (colorMode === "rssi") {
+    legend.innerHTML = `
+      <span><span class="dot" style="background: #10b981;"></span> Excellent (&gt; -60 dBm)</span>
+      <span><span class="dot" style="background: #84cc16;"></span> Good (-60 to -70 dBm)</span>
+      <span><span class="dot" style="background: #f59e0b;"></span> Fair (-70 to -80 dBm)</span>
+      <span><span class="dot" style="background: #ef4444;"></span> Poor (&lt; -80 dBm)</span>
+      <span><span class="dot" style="background: #64748b;"></span> Offline / Unknown</span>
+    `;
+    return;
+  }
+
+  if (colorMode === "affinity") {
+    const brKeys = Object.keys(brMap || {});
+    if (brKeys.length === 0) {
+      legend.innerHTML = `<span><span class="dot" style="background: #64748b;"></span> No Border Routers Detected</span>`;
+      return;
+    }
+    legend.innerHTML = brKeys.map(k => {
+      const br = brMap[k];
+      return `<span><span class="dot" style="background: ${br.color};"></span> ${escapeHtml(br.label)}</span>`;
+    }).join("") + `<span><span class="dot" style="background: #64748b;"></span> Unpartitioned</span>`;
+    return;
+  }
+
+  if (colorMode === "power") {
+    legend.innerHTML = `
+      <span><span class="dot" style="background: #06b6d4;"></span> Mains Powered (Always-On Backbone)</span>
+      <span><span class="dot" style="background: #a855f7;"></span> Battery Powered (Sleepy Sensor / SED)</span>
+      <span><span class="dot" style="background: #ef4444;"></span> Offline</span>
+    `;
+    return;
+  }
+
+  // Default: role
+  legend.innerHTML = `
+    <span><span class="dot" style="background: #4285F4;"></span> Google Nest TBR</span>
+    <span><span class="dot" style="background: #94a3b8;"></span> Apple TV / HomePod TBR</span>
+    <span><span class="dot" style="background: #03A9F4;"></span> HA OTBR (ZBT-1)</span>
+    <span><span class="dot" style="background: #10b981;"></span> Thread Router (Mains)</span>
+    <span><span class="dot" style="background: #8b5cf6;"></span> Battery End Device (SED)</span>
+    <span><span class="dot" style="background: #f59e0b;"></span> Weak Signal / Warning</span>
+    <span><span class="dot" style="background: #ef4444;"></span> Offline</span>
+  `;
+}
+
+function applyTopologyVisibilityFilter() {
+  const filter = topologyPhysicsState.filterMode || "all";
+  const showLabels = topologyPhysicsState.showLinkLabels !== false;
+  const nodes = topologyPhysicsState.nodes || [];
+  const edges = topologyPhysicsState.edges || [];
+
+  const hiddenNodeIds = new Set();
+
+  nodes.forEach(n => {
+    let visible = true;
+    if (filter === "routers_only") {
+      if (n.type === "end_device") visible = false;
+    } else if (filter === "end_only") {
+      if (n.type !== "end_device") visible = false;
+    } else if (filter === "online_only") {
+      if (n.status === "offline") visible = false;
+    }
+
+    if (!visible) hiddenNodeIds.add(n.id);
+    if (n.elem) {
+      n.elem.style.display = visible ? "" : "none";
+    }
+  });
+
+  edges.forEach(e => {
+    const sId = e.src ? e.src.id : null;
+    const tId = e.tgt ? e.tgt.id : null;
+    const edgeVisible = !hiddenNodeIds.has(sId) && !hiddenNodeIds.has(tId);
+
+    if (e.groupElem) {
+      e.groupElem.style.display = edgeVisible ? "" : "none";
+    }
+    if (e.lblElem && e.lblBgElem) {
+      const lblDisplay = (edgeVisible && showLabels) ? "" : "none";
+      e.lblElem.style.display = lblDisplay;
+      e.lblBgElem.style.display = lblDisplay;
+    }
+  });
 }
 
 function updateTopologySearchHighlight() {

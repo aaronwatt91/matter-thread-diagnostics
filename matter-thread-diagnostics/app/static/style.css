@@ -312,6 +312,26 @@ body {
   background: #374151;
 }
 
+.btn-layout-mode {
+  background: #1e293b;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-layout-mode:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+
+.btn-layout-mode.active {
+  background: #0284c7;
+  color: #ffffff;
+  font-weight: 700;
+}
+
 /* Form inputs */
 .form-group {
   margin-bottom: 18px;

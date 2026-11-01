@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.3.0] - 2026-11-01
+
+### Added: Multi-Perspective Topology Views, Dynamic Heatmaps & Filters
+- **Multi-Layout Perspectives Toolbar**:
+  - **Force / RF Mesh**: Organic signal-physics simulation where distance corresponds to live RF RSSI, LQI, and Ping RTT.
+  - **Tree / Hierarchy**: Clean structured tiered hierarchy (TBRs at top -> Mains Routers -> Sleepy End Devices).
+  - **Concentric / Orbit**: Polar orbit rings with primary Border Router at the center, intermediate routers on an inner ring, and battery sensors on outer orbital rings.
+  - **Room / Area**: Automatic spatial clustering grouped by Home Assistant Area / Room assignment (e.g. Living Room, Office, Kitchen).
+- **Dynamic "Color By" Modes**:
+  - **Device Role**: Color-coded by device type (Google Nest TBR `#4285F4`, Apple TV/HomePod `#94a3b8`, HA OTBR `#03A9F4`, Thread Router `#10b981`, Battery End Device `#8b5cf6`, Warning/Offline).
+  - **Signal Quality (RSSI Heatmap)**: Dynamic signal gradient (Excellent `>-60 dBm`, Good `-60 to -70 dBm`, Fair `-70 to -80 dBm`, Poor `<-80 dBm`, Offline/Unknown).
+  - **Border Router / Parent Affinity**: Multi-source BFS propagation identifying which Border Router partition and route each child node routes through, using high-contrast partition colors.
+  - **Power Source**: Mains-powered always-on backbone (`#06b6d4`) vs battery-powered sleepy sensors (`#a855f7`).
+- **Interactive Filtering & Detail Toggles**:
+  - **Filter Dropdown**: Toggle between *All Devices*, *Routers & TBRs Only (Backbone)*, *Battery Sensors Only (SEDs)*, and *Hide Offline Nodes*.
+  - **Link Signal (dBm) Toggle**: Checkbox to instantly show/hide link RSSI and latency badges on mesh edges.
+- **Dynamic Legend**:
+  - Color swatches and legend labels dynamically re-render based on the currently selected Color Mode.
+
+
 ## [2.2.1] - 2026-10-31
 
 ### Fixed: Active Network Option Enabled for Inspection & Re-synchronization
