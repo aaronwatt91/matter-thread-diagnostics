@@ -423,11 +423,18 @@
                 </div>
               </div>
 
-              <!-- Center-Left: Wall Transparency -->
+              <!-- Center-Left: X-Ray Progressive Layer Peeler -->
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase;"><i class="fa-solid fa-ghost"></i> X-Ray:</span>
-                <input type="range" id="slider-3d-opacity" min="5" max="100" value="80" style="width: 75px; cursor: pointer; accent-color: #38bdf8;" title="Adjust wall transparency" />
-                <span id="label-3d-opacity" style="font-size: 11px; color: #94a3b8; min-width: 26px;">80%</span>
+                <input type="range" id="slider-3d-opacity" min="0" max="100" value="0" step="1" style="width: 80px; cursor: pointer; accent-color: #38bdf8;" title="0%: Fully Rendered | 25%: No External Walls | 50%: No Roof/Ceiling | 100%: No Internal Walls" />
+                <span id="label-3d-opacity" style="font-size: 11px; color: #38bdf8; min-width: 72px; font-weight: 700;">0% (Solid)</span>
+                <!-- Quick Peel Step Buttons -->
+                <div class="btn-group" role="group" style="display: inline-flex; border-radius: 4px; overflow: hidden; border: 1px solid #475569;">
+                  <button type="button" class="btn btn-3d-xray-step active" data-xray="0" style="padding: 2px 7px; font-size: 10px; background: #0284c7; color: #ffffff;" title="0%: Fully Rendered House">0%</button>
+                  <button type="button" class="btn btn-3d-xray-step" data-xray="25" style="padding: 2px 7px; font-size: 10px; background: #1e293b; color: #94a3b8;" title="25%: External walls &amp; party wall removed">25%</button>
+                  <button type="button" class="btn btn-3d-xray-step" data-xray="50" style="padding: 2px 7px; font-size: 10px; background: #1e293b; color: #94a3b8;" title="50%: Roof &amp; upstairs ceiling removed (+ previous)">50%</button>
+                  <button type="button" class="btn btn-3d-xray-step" data-xray="100" style="padding: 2px 7px; font-size: 10px; background: #1e293b; color: #94a3b8;" title="100%: Internal walls removed (+ all previous)">100%</button>
+                </div>
               </div>
 
               <!-- Center-Right: Camera Presets -->

@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.8.3] - 2026-11-01
+
+### Added: Progressive Layered X-Ray Peeler (0% to 100%)
+- **0% Starting Default (Fully Rendered House)**:
+  - The 3D House Twin now starts at **0% X-Ray**, rendering the house fully solid with 100% opaque materials (`opacity: 1.0`, `depthWrite: true`, `transparent: false`).
+- **25% Threshold (External Walls & Party Wall Removed)**:
+  - Sliding from 0% to 25% smoothly fades out external walls, party wall, exterior window frames, exterior glass, entrance door, and chrome hardware.
+  - At **25%**, external walls and party wall are completely removed from view.
+- **50% Threshold (Roof & Upstairs Ceiling Removed + Previous)**:
+  - External walls and party wall remain removed.
+  - Sliding from 25% to 50% smoothly fades out the roof structure, ridge tiles, fascia & soffits, rainwater gutters, solar panels, and first floor ceiling.
+  - At **50%**, the entire roof and upper ceiling are completely removed from view.
+- **100% Threshold (Internal Walls Removed + All Previous)**:
+  - All external walls, party wall, roof, and ceilings remain removed.
+  - Sliding from 50% to 100% smoothly fades out ground and first-floor interior partition walls and internal doors.
+  - At **100%**, all interior walls are completely removed from view, leaving only the core floor slabs, timber/tile floors, carpets, staircase, kitchen cabinets/appliances, sanitaryware, meter cupboard, driveway, car, and glowing spatial network nodes.
+- **Quick-Peel Preset Buttons**:
+  - Added dedicated one-click step buttons (`0%`, `25%`, `50%`, `100%`) alongside the progressive slider in the 3D HUD toolbar for instant threshold jumping.
+  - Dynamic label displays the exact active peel stage in real time (`0% (Solid)`, `25% (No Ext)`, `50% (No Roof)`, `100% (No Walls)`).
+
 ## [2.8.2] - 2026-11-01
 
 ### Added: Free-Hand 3D Node Dragging & Persistence, Clean Spheres, and Updated Blair House Model

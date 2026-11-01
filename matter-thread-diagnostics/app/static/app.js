@@ -4495,11 +4495,12 @@ const house3DState = {
   controls: null,
   modelRoot: null,
   meshesByCategory: {
-    ground_floor: [],
-    first_floor: [],
-    roof: [],
-    exterior: [],
-    driveway: []
+    exterior_walls_party: [],
+    roof_ceiling: [],
+    interior_walls: [],
+    core_structure: [],
+    fixtures: [],
+    driveway_car: []
   },
   originalMaterials: new Map(),
   nodeObjects: new Map(),
@@ -4512,7 +4513,8 @@ const house3DState = {
   dragOffset: null,
   dragIntersect: null,
   floorCutawayMode: "all",
-  wallOpacity: 0.80,
+  xrayPercent: 0,
+  wallOpacity: 1.0,
   raycaster: null,
   mouse: null,
   hoveredNode: null,
@@ -4662,24 +4664,14 @@ function generateRoomOptionsHtml(selectedId) {
 function classifyMeshCategory(meshName) {
   const nm = (meshName || "").toLowerCase();
   if (
-    nm.includes("ground_floor") ||
-    nm.includes("interior_walls_ground") ||
-    nm.includes("entrance_meter") ||
-    nm.includes("kitchen_") ||
-    nm.includes("staircase")
+    nm.includes("exterior_walls") ||
+    nm.includes("separating_party_wall") ||
+    nm.includes("windows_") ||
+    nm.includes("entrance_door") ||
+    nm.includes("exterior_hardware") ||
+    nm.includes("french_doors")
   ) {
-    return "ground_floor";
-  }
-  if (
-    nm.includes("first_floor_structure") ||
-    nm.includes("landing_carpet") ||
-    nm.includes("carpet_") ||
-    nm.includes("interior_walls_first") ||
-    nm.includes("sanitaryware") ||
-    nm.includes("room_labels") ||
-    nm.includes("first_floor_tiles")
-  ) {
-    return "first_floor";
+    return "exterior_walls_party";
   }
   if (
     nm.includes("roof_") ||
@@ -4687,7 +4679,31 @@ function classifyMeshCategory(meshName) {
     nm.includes("rainwater_") ||
     nm.includes("first_floor_ceiling")
   ) {
-    return "roof";
+    return "roof_ceiling";
+  }
+  if (
+    nm.includes("interior_walls") ||
+    nm.includes("interior_doors")
+  ) {
+    return "interior_walls";
+  }
+  if (
+    nm.includes("ground_floor_") ||
+    nm.includes("first_floor_structure") ||
+    nm.includes("landing_carpet") ||
+    nm.includes("carpet_") ||
+    nm.includes("first_floor_tiles") ||
+    nm.includes("staircase") ||
+    nm.includes("room_labels")
+  ) {
+    return "core_structure";
+  }
+  if (
+    nm.includes("kitchen_") ||
+    nm.includes("entrance_meter") ||
+    nm.includes("sanitaryware")
+  ) {
+    return "fixtures";
   }
   if (
     nm.includes("driveway") ||
@@ -4695,120 +4711,173 @@ function classifyMeshCategory(meshName) {
     nm.includes("ev_charger") ||
     nm.includes("ev_charging")
   ) {
-    return "driveway";
+    return "driveway_car";
   }
-  return "exterior";
+  return "core_structure";
+}
+
+function setMeshTransparency(mesh, opacity, isVisible) {
+  if (!mesh) return;
+  mesh.visible = isVisible && opacity > 0.001;
+  if (!mesh.visible) return;
+
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  mats.forEach((mat) => {
+    if (!mat) return;
+    if (opacity >= 0.999) {
+      mat.transparent = false;
+      mat.opacity = 1.0;
+      mat.depthWrite = true;
+    } else {
+      mat.transparent = true;
+      mat.opacity = opacity;
+      mat.depthWrite = false;
+    }
+  });
 }
 
 function apply3DCutawayAndTransparency() {
   const mode = house3DState.floorCutawayMode;
-  const op = house3DState.wallOpacity;
+  const pct = Math.max(0, Math.min(100, house3DState.xrayPercent !== undefined ? house3DState.xrayPercent : 0));
 
-  const { ground_floor, first_floor, roof, exterior, driveway } = house3DState.meshesByCategory;
+  const {
+    exterior_walls_party = [],
+    roof_ceiling = [],
+    interior_walls = [],
+    core_structure = [],
+    fixtures = [],
+    driveway_car = []
+  } = house3DState.meshesByCategory;
 
   if (mode === "solid") {
-    [...ground_floor, ...first_floor, ...roof, ...exterior, ...driveway].forEach(m => {
-      m.visible = true;
-      if (m.material) {
-        m.material.transparent = false;
-        m.material.opacity = 1.0;
-        m.material.depthWrite = true;
-      }
+    [...exterior_walls_party, ...roof_ceiling, ...interior_walls, ...core_structure, ...fixtures, ...driveway_car].forEach(m => {
+      setMeshTransparency(m, 1.0, true);
     });
     return;
   }
 
   if (mode === "ground") {
-    // Hide Roof & First Floor
-    roof.forEach(m => (m.visible = false));
-    first_floor.forEach(m => (m.visible = false));
-    // Ground floor visible and opaque
-    ground_floor.forEach(m => {
-      m.visible = true;
-      if (m.material) {
-        m.material.transparent = false;
-        m.material.opacity = 1.0;
-        m.material.depthWrite = true;
-      }
+    roof_ceiling.forEach(m => setMeshTransparency(m, 0.0, false));
+    interior_walls.forEach(m => {
+      const isGround = (m.name || "").toLowerCase().includes("ground");
+      setMeshTransparency(m, 1.0, isGround);
     });
-    exterior.forEach(m => {
-      m.visible = true;
-      if (m.material) {
-        m.material.transparent = true;
-        m.material.opacity = Math.min(op, 0.45);
-        m.material.depthWrite = false;
-      }
+    core_structure.forEach(m => {
+      const isFirst = (m.name || "").toLowerCase().includes("first") || (m.name || "").toLowerCase().includes("carpet");
+      setMeshTransparency(m, 1.0, !isFirst);
     });
-    driveway.forEach(m => (m.visible = true));
+    exterior_walls_party.forEach(m => setMeshTransparency(m, 0.25, true));
+    fixtures.forEach(m => setMeshTransparency(m, 1.0, true));
+    driveway_car.forEach(m => setMeshTransparency(m, 1.0, true));
     return;
   }
 
   if (mode === "first") {
-    // Hide Roof & Ceiling
-    roof.forEach(m => (m.visible = false));
-    // First Floor visible & clear
-    first_floor.forEach(m => {
-      m.visible = true;
-      if (m.material) {
-        m.material.transparent = false;
-        m.material.opacity = 1.0;
-        m.material.depthWrite = true;
-      }
+    roof_ceiling.forEach(m => setMeshTransparency(m, 0.0, false));
+    interior_walls.forEach(m => {
+      const isFirst = (m.name || "").toLowerCase().includes("first");
+      setMeshTransparency(m, 1.0, isFirst);
     });
-    ground_floor.forEach(m => (m.visible = true));
-    exterior.forEach(m => {
-      m.visible = true;
-      if (m.material) {
-        m.material.transparent = true;
-        m.material.opacity = Math.min(op, 0.45);
-        m.material.depthWrite = false;
-      }
-    });
-    driveway.forEach(m => (m.visible = true));
+    core_structure.forEach(m => setMeshTransparency(m, 1.0, true));
+    exterior_walls_party.forEach(m => setMeshTransparency(m, 0.25, true));
+    fixtures.forEach(m => setMeshTransparency(m, 1.0, true));
+    driveway_car.forEach(m => setMeshTransparency(m, 1.0, true));
     return;
   }
 
-  // Default: 'all' floors visible with ghost/x-ray exterior walls
-  ground_floor.forEach(m => {
-    m.visible = true;
-    if (m.material) {
-      m.material.transparent = false;
-      m.material.opacity = 1.0;
-      m.material.depthWrite = true;
+  // mode === "all": Progressive Layer Peeler
+  // 0%: House fully rendered
+  // 25%: External walls and party wall removed
+  // 50%: Roof and upstairs ceiling removed (+ external & party walls removed)
+  // 100%: Internal walls removed (+ all previous stuff removed)
+  // Every move up is new stuff removed and all previous stuff removed also!
+
+  // 1. Exterior walls & party wall (solid at 0%, fades 0% -> 25%, completely removed at >= 25%)
+  let extOpacity = 1.0;
+  let extVisible = true;
+  if (pct >= 25) {
+    extOpacity = 0.0;
+    extVisible = false;
+  } else if (pct > 0) {
+    extOpacity = (25 - pct) / 25;
+    extVisible = true;
+  }
+  exterior_walls_party.forEach(m => setMeshTransparency(m, extOpacity, extVisible));
+
+  // 2. Roof & upstairs ceiling (solid <= 25%, fades 25% -> 50%, completely removed at >= 50%)
+  let roofOpacity = 1.0;
+  let roofVisible = true;
+  if (pct >= 50) {
+    roofOpacity = 0.0;
+    roofVisible = false;
+  } else if (pct > 25) {
+    roofOpacity = (50 - pct) / 25;
+    roofVisible = true;
+  }
+  roof_ceiling.forEach(m => setMeshTransparency(m, roofOpacity, roofVisible));
+
+  // 3. Internal walls and doors (solid <= 50%, fades 50% -> 100%, completely removed at >= 100%)
+  let intOpacity = 1.0;
+  let intVisible = true;
+  if (pct >= 100) {
+    intOpacity = 0.0;
+    intVisible = false;
+  } else if (pct > 50) {
+    intOpacity = (100 - pct) / 50;
+    intVisible = true;
+  }
+  interior_walls.forEach(m => setMeshTransparency(m, intOpacity, intVisible));
+
+  // 4. Core structure (slabs, floors, carpets, staircase, room labels), fixtures, and driveway/car
+  core_structure.forEach(m => setMeshTransparency(m, 1.0, true));
+  fixtures.forEach(m => setMeshTransparency(m, 1.0, true));
+  driveway_car.forEach(m => setMeshTransparency(m, 1.0, true));
+}
+
+function setXRayPercent(pct) {
+  const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+  house3DState.xrayPercent = clamped;
+
+  const slider = document.getElementById("slider-3d-opacity");
+  if (slider && parseInt(slider.value, 10) !== clamped) {
+    slider.value = clamped;
+  }
+
+  const label = document.getElementById("label-3d-opacity");
+  if (label) {
+    let tag = `${clamped}%`;
+    if (clamped === 0) tag = "0% (Solid)";
+    else if (clamped === 25) tag = "25% (No Ext)";
+    else if (clamped === 50) tag = "50% (No Roof)";
+    else if (clamped === 100) tag = "100% (No Walls)";
+    label.innerText = tag;
+    label.title = `X-Ray: ${clamped}% (0%=Fully Rendered, 25%=No External Walls, 50%=No Roof/Ceiling, 100%=No Internal Walls)`;
+  }
+
+  // Update quick step buttons active state
+  document.querySelectorAll(".btn-3d-xray-step").forEach((btn) => {
+    const stepVal = parseInt(btn.getAttribute("data-xray"), 10);
+    if (stepVal === clamped) {
+      btn.classList.add("active");
+      btn.style.background = "#0284c7";
+      btn.style.color = "#ffffff";
+    } else {
+      btn.classList.remove("active");
+      btn.style.background = "#1e293b";
+      btn.style.color = "#94a3b8";
     }
   });
-  first_floor.forEach(m => {
-    m.visible = true;
-    if (m.material) {
-      m.material.transparent = false;
-      m.material.opacity = 1.0;
-      m.material.depthWrite = true;
-    }
-  });
-  roof.forEach(m => {
-    m.visible = true;
-    if (m.material) {
-      m.material.transparent = true;
-      m.material.opacity = op;
-      m.material.depthWrite = false;
-    }
-  });
-  exterior.forEach(m => {
-    m.visible = true;
-    if (m.material) {
-      m.material.transparent = true;
-      m.material.opacity = op;
-      m.material.depthWrite = false;
-    }
-  });
-  driveway.forEach(m => {
-    m.visible = true;
-    if (m.material) {
-      m.material.transparent = false;
-      m.material.opacity = 1.0;
-      m.material.depthWrite = true;
-    }
-  });
+
+  // If user adjusts X-Ray, ensure Floor mode is "all" unless user clicked solid
+  if (house3DState.floorCutawayMode !== "all" && house3DState.floorCutawayMode !== "solid") {
+    house3DState.floorCutawayMode = "all";
+    document.querySelectorAll(".btn-3d-floor").forEach((b) => {
+      if (b.getAttribute("data-floor") === "all") b.classList.add("active");
+      else b.classList.remove("active");
+    });
+  }
+
+  apply3DCutawayAndTransparency();
 }
 
 function flyCameraTo(posArray, targetArray, duration = 800) {
@@ -5190,11 +5259,19 @@ function initHouse3DViewer() {
         model.traverse((child) => {
           if (child.isMesh) {
             const cat = classifyMeshCategory(child.name);
-            house3DState.meshesByCategory[cat].push(child);
+            if (house3DState.meshesByCategory[cat]) {
+              house3DState.meshesByCategory[cat].push(child);
+            } else {
+              house3DState.meshesByCategory.core_structure.push(child);
+            }
 
             if (child.material) {
-              child.material = child.material.clone();
-              house3DState.originalMaterials.set(child.uuid, child.material.clone());
+              if (Array.isArray(child.material)) {
+                child.material = child.material.map(m => m.clone());
+              } else {
+                child.material = child.material.clone();
+              }
+              house3DState.originalMaterials.set(child.uuid, child.material);
             }
           }
         });
@@ -5236,20 +5313,28 @@ function initHouse3DViewer() {
       btn.classList.add("active");
       const floor = btn.getAttribute("data-floor") || "all";
       house3DState.floorCutawayMode = floor;
-      apply3DCutawayAndTransparency();
+      if (floor === "solid") {
+        setXRayPercent(0);
+      } else {
+        apply3DCutawayAndTransparency();
+      }
     });
   });
 
   const sliderOpacity = document.getElementById("slider-3d-opacity");
-  const labelOpacity = document.getElementById("label-3d-opacity");
   if (sliderOpacity) {
     sliderOpacity.addEventListener("input", (e) => {
-      const val = parseInt(e.target.value, 10) / 100;
-      house3DState.wallOpacity = val;
-      if (labelOpacity) labelOpacity.innerText = `${Math.round(val * 100)}%`;
-      apply3DCutawayAndTransparency();
+      const val = parseInt(e.target.value, 10);
+      setXRayPercent(val);
     });
   }
+
+  document.querySelectorAll(".btn-3d-xray-step").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const val = parseInt(btn.getAttribute("data-xray"), 10);
+      setXRayPercent(val);
+    });
+  });
 
   const selectCam = document.getElementById("select-3d-camera");
   if (selectCam) {
