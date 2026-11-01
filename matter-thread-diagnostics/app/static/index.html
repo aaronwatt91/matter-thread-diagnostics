@@ -511,48 +511,97 @@
       </div>
 
       <!-- 2.4 GHz RF Spectrum Visualizer & Channel Selection -->
+      <!-- 2.4 GHz RF Spectrum & Coexistence Analyzer -->
       <div class="card">
-        <div class="card-header-flex">
+        <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3><i class="fa-solid fa-satellite-dish"></i> 2.4 GHz RF Coexistence Spectrum &amp; Target Channel Picker</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Standard Wi-Fi 2.4 GHz channels (1, 6, 11) occupy 20–22 MHz of bandwidth. Thread (IEEE 802.15.4) channels 11 to 26 use narrower 2 MHz channels. Select a target channel below to migrate your mesh away from Wi-Fi congestion.</p>
+            <h3><i class="fa-solid fa-satellite-dish" style="color: #38bdf8;"></i> 2.4 GHz Network Coexistence Analyzer &amp; Overlap Graph</h3>
+            <p class="section-desc" style="margin-bottom: 0;">Live multi-protocol frequency analyzer. Scans your Home Assistant environment for active <strong>Thread</strong>, <strong>Zigbee (ZHA / Z2M)</strong>, and <strong>2.4 GHz Wi-Fi</strong> channels, and visualizes frequency collisions, guard bands, and RF overlaps.</p>
+          </div>
+          <button id="btn-scan-spectrum" type="button" class="btn btn-outline" style="padding: 6px 12px; font-size: 12px;" title="Scan live Thread, Zigbee, and Wi-Fi channels">
+            <i class="fa-solid fa-tower-cell"></i> Scan Live Coexistence Spectrum
+          </button>
+        </div>
+
+        <!-- Coexistence Status Pill Indicators Bar -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 14px;">
+          <!-- Thread Status Pill -->
+          <div style="background: #0f172a; border: 1px solid #0284c7; padding: 12px 14px; border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #38bdf8;">🧵 Thread Network</span>
+              <span id="coex-thread-badge" class="badge badge-info" style="font-size: 10px;">Scanning...</span>
+            </div>
+            <div style="margin-top: 6px; display: flex; align-items: baseline; gap: 6px;">
+              <span id="coex-thread-ch" style="font-size: 20px; font-weight: 800; color: #f8fafc;">Ch --</span>
+              <span id="coex-thread-freq" style="font-size: 12px; color: #94a3b8;">(-- MHz)</span>
+            </div>
+            <div id="coex-thread-name" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Detecting PAN...</div>
+          </div>
+
+          <!-- Zigbee Status Pill -->
+          <div style="background: #0f172a; border: 1px solid #eab308; padding: 12px 14px; border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #eab308;">🐝 Zigbee Network</span>
+              <span id="coex-zigbee-badge" class="badge" style="background: #ca8a04; color: #fff; font-size: 10px;">Scanning...</span>
+            </div>
+            <div style="margin-top: 6px; display: flex; align-items: baseline; gap: 6px;">
+              <span id="coex-zigbee-ch" style="font-size: 20px; font-weight: 800; color: #f8fafc;">Ch --</span>
+              <span id="coex-zigbee-freq" style="font-size: 12px; color: #94a3b8;">(-- MHz)</span>
+            </div>
+            <div id="coex-zigbee-source" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Probing ZHA / Z2M...</div>
+          </div>
+
+          <!-- Wi-Fi Status Pill -->
+          <div style="background: #0f172a; border: 1px solid #ef4444; padding: 12px 14px; border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #f87171;">📶 2.4 GHz Wi-Fi</span>
+              <span id="coex-wifi-badge" class="badge badge-warning" style="font-size: 10px;">Channels 1, 6, 11</span>
+            </div>
+            <div style="margin-top: 6px; display: flex; align-items: baseline; gap: 6px;">
+              <span id="coex-wifi-ch" style="font-size: 20px; font-weight: 800; color: #f8fafc;">Ch 1, 6, 11</span>
+              <span id="coex-wifi-bw" style="font-size: 12px; color: #94a3b8;">(20 MHz wide)</span>
+            </div>
+            <div id="coex-wifi-source" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Standard 2.4 GHz Plan</div>
           </div>
         </div>
 
-        <!-- Spectrum Visualizer -->
-        <div style="margin: 16px 0; background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155;">
-          <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 8px; font-weight: 700;">
-            <span>2400 MHz</span>
-            <span>2.4 GHz ISM Spectrum (Wi-Fi 1, 6, 11 vs Thread 11-26)</span>
-            <span>2485 MHz</span>
+        <!-- Live Dynamic Coexistence Overlap Graph Container -->
+        <div style="margin-top: 14px; background: #070b14; padding: 16px; border-radius: 8px; border: 1px solid #334155; position: relative;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+            <span style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">
+              <i class="fa-solid fa-chart-area"></i> 2.4 GHz RF Overlap &amp; Coexistence Spectrum (2400 MHz – 2485 MHz)
+            </span>
+            <div style="display: flex; gap: 12px; font-size: 11px; color: #f8fafc; align-items: center; flex-wrap: wrap;">
+              <span><span class="dot" style="background: #ef444488; border: 1px solid #ef4444;"></span> Wi-Fi 20 MHz Masks</span>
+              <span><span class="dot" style="background: #eab308; border: 1px solid #fde047;"></span> Zigbee Channel</span>
+              <span><span class="dot" style="background: #38bdf8; border: 1px solid #bae6fd;"></span> Thread Channel</span>
+              <span><span class="dot" style="background: #10b981; border: 1px solid #34d399;"></span> Clean Guard Band</span>
+            </div>
           </div>
 
-          <!-- Wi-Fi Bands -->
-          <div style="display: grid; grid-template-columns: 3fr 1fr 3fr 1fr 3fr 1fr; gap: 4px; margin-bottom: 6px; text-align: center; font-size: 11px; font-weight: 700;">
-            <div style="background: #ef444433; border: 1px solid #ef444488; color: #fca5a5; padding: 6px 2px; border-radius: 4px;">Wi-Fi Ch 1 (20 MHz)</div>
-            <div style="background: #33415533; border: 1px dashed #64748b66; color: #94a3b8; padding: 6px 2px; border-radius: 4px;">Guard</div>
-            <div style="background: #ef444433; border: 1px solid #ef444488; color: #fca5a5; padding: 6px 2px; border-radius: 4px;">Wi-Fi Ch 6 (20 MHz)</div>
-            <div style="background: #33415533; border: 1px dashed #64748b66; color: #94a3b8; padding: 6px 2px; border-radius: 4px;">Guard</div>
-            <div style="background: #ef444433; border: 1px solid #ef444488; color: #fca5a5; padding: 6px 2px; border-radius: 4px;">Wi-Fi Ch 11 (20 MHz)</div>
-            <div style="background: #10b98133; border: 1px solid #10b98188; color: #6ee7b7; padding: 6px 2px; border-radius: 4px;">★ Safe Zone</div>
-          </div>
+          <!-- SVG Frequency Spectrum Canvas -->
+          <svg id="spectrum-svg" width="100%" height="240" style="display: block; overflow: visible;"></svg>
+        </div>
 
-          <!-- Thread Channel Scale Indicator -->
-          <div style="display: flex; justify-content: space-between; font-size: 10px; color: #38bdf8; padding: 4px 6px; border-top: 1px solid #334155;">
-            <span>Ch 11 (2405)</span>
-            <span>Ch 15 (2425)</span>
-            <span>Ch 18 (2440)</span>
-            <span>Ch 20 (2450)</span>
-            <span>Ch 23 (2465)</span>
-            <span style="color: #34d399; font-weight: 700;">Ch 25 (2475)</span>
-            <span style="color: #34d399; font-weight: 800;">Ch 26 (2480)</span>
+        <!-- Coexistence Diagnostic Alert & Recommendation Banner -->
+        <div id="coex-alert-box" style="margin-top: 14px; background: #0f172a; padding: 14px 18px; border-radius: 8px; border: 1px solid #334155;">
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <div id="coex-alert-icon" style="font-size: 20px; color: #38bdf8; margin-top: 2px;">
+              <i class="fa-solid fa-circle-info"></i>
+            </div>
+            <div>
+              <div id="coex-alert-title" style="font-size: 13px; font-weight: 700; color: #f8fafc;">RF Coexistence Evaluation</div>
+              <div id="coex-alert-desc" style="font-size: 12px; color: #94a3b8; margin-top: 3px; line-height: 1.5;">Click "Scan Live Coexistence Spectrum" above to evaluate real-time channel overlap between Thread, Zigbee, and Wi-Fi.</div>
+              <div id="coex-recommendation" style="font-size: 12px; color: #34d399; font-weight: 600; margin-top: 6px;"></div>
+            </div>
           </div>
         </div>
 
         <!-- 16-Channel Selection Grid -->
-        <div style="margin-top: 14px;">
+        <div style="margin-top: 18px;">
           <label style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 8px;">
             Select Target Operating Channel (11–26):
+          </label>
           </label>
           <div id="channel-picker-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;">
             <!-- Rendered dynamically by app.js -->

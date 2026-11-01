@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.4.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.5.0")
 
 
 @app.middleware("http")
@@ -159,7 +159,7 @@ async def get_status():
     """Return runtime status of the diagnostics add-on."""
     return {
         "status": "online",
-        "version": "2.4.0",
+        "version": "2.5.0",
         "running_in_haos": ha_client.is_available,
         "ai_provider": config.ai_provider,
         "ai_model": config.ai_model,
@@ -179,6 +179,12 @@ async def get_status():
 async def get_otbr_channel_status():
     """Return live ZBT-1 / OTBR radio channel, hardware identity, and 11-26 RF spectrum matrix."""
     return await ha_client.get_zbt1_channel_status(otbr_url=config.otbr_url)
+
+
+@app.get("/api/coexistence/scan")
+async def get_coexistence_scan_endpoint():
+    """Scan live 2.4 GHz RF environment across Thread, Zigbee, and Wi-Fi channels with collision analysis."""
+    return await ha_client.get_coexistence_spectrum_scan(otbr_url=config.otbr_url)
 
 
 @app.post("/api/otbr/set_channel")

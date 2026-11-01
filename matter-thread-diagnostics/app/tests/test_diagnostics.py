@@ -555,5 +555,72 @@ def test_zbt1_channel_management():
         loop.close()
 
 
+def test_coexistence_spectrum_scan():
+    """Verify live 2.4 GHz coexistence spectrum scanning, Zigbee/Wi-Fi collision analysis, and recommendations."""
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    try:
+        ha = HAClient()
+
+        # Mock ZBT-1 channel status, ZHA network settings, and states
+        async def mock_zbt1(otbr_url=""):
+            return {
+                "current_channel": 15,
+                "otbr": {"pan_id": "0x2e89", "network_name": "NEST-PAN-2E89"},
+            }
+
+        async def mock_ws(cmd, timeout=8.0):
+            if cmd.get("type") == "zha/network/settings":
+                return {"type": "result", "success": True, "result": {"channel": 20}}
+            if cmd.get("type") == "config_entries/get":
+                return {
+                    "type": "result",
+                    "success": True,
+                    "result": [{"domain": "zha", "title": "Sonoff Zigbee 3.0 USB Dongle Plus"}],
+                }
+            return {"type": "result", "success": True, "result": None}
+
+        async def mock_states():
+            return [
+                {"entity_id": "sensor.unifi_ap_living_room_channel", "state": "6", "attributes": {"channel": 6}},
+            ]
+
+        ha.get_zbt1_channel_status = mock_zbt1
+        ha.query_ha_websocket = mock_ws
+        ha._get_all_ha_states = mock_states
+
+        scan = loop.run_until_complete(ha.get_coexistence_spectrum_scan())
+        assert scan["success"] is True
+        assert scan["thread"]["channel"] == 15
+        assert scan["thread"]["frequency_mhz"] == 2425
+
+        assert scan["zigbee"]["detected"] is True
+        assert scan["zigbee"]["channel"] == 20
+        assert scan["zigbee"]["frequency_mhz"] == 2450
+
+        assert scan["wifi"]["primary_channel"] == 6
+
+        analysis = scan["coexistence_analysis"]
+        assert analysis["thread_zigbee_collision"] is False
+        assert analysis["thread_wifi_status"] == "guard_band"
+        assert analysis["recommended_channel"] in (25, 26)
+
+        # Test Direct Collision condition: Thread & Zigbee both on Ch 15
+        async def mock_zbt1_coll(otbr_url=""):
+            return {
+                "current_channel": 20,
+                "otbr": {"pan_id": "0x2e89", "network_name": "NEST-PAN-2E89"},
+            }
+
+        ha.get_zbt1_channel_status = mock_zbt1_coll
+        coll_scan = loop.run_until_complete(ha.get_coexistence_spectrum_scan())
+        assert coll_scan["coexistence_analysis"]["thread_zigbee_collision"] is True
+        assert coll_scan["coexistence_analysis"]["thread_zigbee_status"] == "critical"
+    finally:
+        loop.close()
+
+
+
 
 

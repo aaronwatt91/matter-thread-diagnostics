@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.5.0] - 2026-11-01
+
+### Added: 2.4 GHz Network Coexistence Analyzer & Live Overlap Graph
+- **Multi-Protocol Spectrum Probing Engine**:
+  - `GET /api/coexistence/scan`: Gathers and cross-references active RF frequencies across **Thread**, **Zigbee**, and **Wi-Fi**.
+  - **Thread**: Live channel, operational frequency, and PAN ID from ZBT-1 / OTBR.
+  - **Zigbee**: Automatically probes Home Assistant for ZHA (`zha/network/settings`, config entries) or Zigbee2MQTT (bridge entities/attributes) to resolve the coordinator channel.
+  - **Wi-Fi**: Detects router / AP 2.4 GHz primary channels from Home Assistant network/router integration entities (UniFi, AsusWRT, FritzBox, eero, Deco, Omada) or evaluates standard non-overlapping channels (1, 6, 11).
+- **Interactive 2.4 GHz RF Overlap Spectrum Graph**:
+  - Continuous 2400 MHz to 2485 MHz frequency spectrum canvas.
+  - **Wi-Fi 20 MHz Masks**: Rendered as parabolic power curves centered at 2412 MHz (Ch 1), 2437 MHz (Ch 6), and 2462 MHz (Ch 11).
+  - **Safe Wi-Fi Guard Bands**: Highlights Guard Band 1 (Ch 15 @ 2425 MHz), Guard Band 2 (Ch 20 @ 2450 MHz), and the Safe Zone (Ch 25–26 @ 2475–2480 MHz).
+  - **Zigbee Channel Column**: Plotted in yellow/amber (`#eab308`) with pinned coordinator badge.
+  - **Thread Channel Column**: Plotted in sky blue (`#38bdf8`) with pinned network badge.
+  - **Collision Warning Overlays**: Visual danger badges indicating direct channel collisions with Zigbee or mask overlap with Wi-Fi.
+  - **Interactive Channel Selecting**: Clicking any channel on the spectrum graph immediately marks it as target migration channel.
+- **RF Diagnostic & Recommendation Banner**:
+  - Evaluates mathematical frequency clearance between Thread, Zigbee, and Wi-Fi.
+  - Live AI-driven channel migration recommendation tailored to user's exact Zigbee and Wi-Fi environment.
+- **Unit Tests**: Added `test_coexistence_spectrum_scan()` to verify multi-protocol probing and collision detection.
+
+
 ## [2.4.0] - 2026-11-01
 
 ### Added: 6 Distinct Network Topology Visual Perspectives

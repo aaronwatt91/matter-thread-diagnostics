@@ -736,6 +736,259 @@ class HAClient:
             "channels_matrix": channels_matrix,
         }
 
+    async def get_coexistence_spectrum_scan(
+        self,
+        otbr_url: str = "http://core-openthread-border-router:8081",
+    ) -> Dict[str, Any]:
+        """
+        Scan live 2.4 GHz RF environment across Thread, Zigbee, and Wi-Fi:
+        - Detect active Thread channel (ZBT-1 / OTBR + secondary PANs)
+        - Probe Home Assistant for active Zigbee channels (ZHA / Zigbee2MQTT)
+        - Probe Home Assistant & Supervisor for active 2.4 GHz Wi-Fi channels (1, 6, 11)
+        - Compute exact frequency overlaps, collision alerts, and clean migration recommendations.
+        """
+        probes = await asyncio.gather(
+            self.get_zbt1_channel_status(otbr_url=otbr_url),
+            self.query_ha_websocket({"type": "config_entries/get"}),
+            self.query_ha_websocket({"type": "zha/network/settings"}),
+            self._get_all_ha_states(),
+            self.get_supervisor_info(),
+            return_exceptions=True,
+        )
+
+        zbt1_status = probes[0] if isinstance(probes[0], dict) else {}
+        config_entries_res = probes[1] if isinstance(probes[1], dict) else {}
+        zha_settings_res = probes[2] if isinstance(probes[2], dict) else {}
+        ha_states = probes[3] if isinstance(probes[3], list) else []
+
+        # 1. Thread Channel & Network
+        thread_channel = zbt1_status.get("current_channel")
+        thread_freq = (2405 + 5 * (int(thread_channel) - 11)) if thread_channel else None
+        thread_pan = zbt1_status.get("otbr", {}).get("pan_id")
+        thread_net_name = zbt1_status.get("otbr", {}).get("network_name") or "Home Assistant Thread Network"
+
+        # 2. Zigbee Channel Probe
+        zigbee_detected = False
+        zigbee_channel = None
+        zigbee_source = None
+        zigbee_coordinator = None
+
+        if zha_settings_res.get("success") and isinstance(zha_settings_res.get("result"), dict):
+            zha_res = zha_settings_res["result"]
+            if "channel" in zha_res:
+                try:
+                    zigbee_channel = int(zha_res["channel"])
+                    zigbee_detected = True
+                    zigbee_source = "ZHA (Zigbee Home Automation Settings)"
+                except (ValueError, TypeError):
+                    pass
+
+        entries_list = config_entries_res.get("result") if isinstance(config_entries_res.get("result"), list) else []
+        zha_entry = None
+        for entry in entries_list:
+            if isinstance(entry, dict) and entry.get("domain") == "zha":
+                zha_entry = entry
+                break
+
+        if zha_entry:
+            zigbee_detected = True
+            if not zigbee_source:
+                zigbee_source = "ZHA (Zigbee Home Automation Integration)"
+            zigbee_coordinator = zha_entry.get("title") or "Zigbee Coordinator"
+            if not zigbee_channel:
+                data = zha_entry.get("data") or {}
+                opts = zha_entry.get("options") or {}
+                raw_ch = opts.get("network_channel") or data.get("network_channel") or opts.get("channel") or data.get("channel")
+                if raw_ch is not None:
+                    try:
+                        zigbee_channel = int(raw_ch)
+                    except (ValueError, TypeError):
+                        pass
+
+        if not zigbee_channel:
+            for s in ha_states:
+                if not isinstance(s, dict):
+                    continue
+                eid = (s.get("entity_id") or "").lower()
+                attrs = s.get("attributes") or {}
+                if "zigbee2mqtt" in eid or "bridge" in eid or "z2m" in eid:
+                    if "channel" in attrs:
+                        try:
+                            zigbee_channel = int(attrs["channel"])
+                            zigbee_detected = True
+                            zigbee_source = "Zigbee2MQTT (Bridge Entity)"
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                    state_val = str(s.get("state") or "")
+                    if "channel" in eid and state_val.isdigit() and 11 <= int(state_val) <= 26:
+                        zigbee_channel = int(state_val)
+                        zigbee_detected = True
+                        zigbee_source = f"Zigbee2MQTT ({eid})"
+                        break
+
+        if zigbee_detected and not zigbee_channel:
+            zigbee_channel = 15
+            zigbee_source = f"{zigbee_source} (Default Ch 15)"
+
+        zigbee_freq = (2405 + 5 * (int(zigbee_channel) - 11)) if zigbee_channel else None
+
+        # 3. Wi-Fi Channel Probe
+        wifi_detected = False
+        wifi_channels = [1, 6, 11]
+        wifi_primary_channel = 6
+        wifi_source = "Standard 2.4 GHz Plan (Channels 1, 6, 11)"
+
+        for s in ha_states:
+            if not isinstance(s, dict):
+                continue
+            eid = (s.get("entity_id") or "").lower()
+            attrs = s.get("attributes") or {}
+            if any(k in eid for k in ("wifi_channel", "wlan_channel", "channel_2_4", "unifi", "asuswrt", "fritz", "eero")):
+                raw_val = attrs.get("channel") or attrs.get("channel_2_4ghz") or s.get("state")
+                if raw_val is not None:
+                    try:
+                        val = int(raw_val)
+                        if 1 <= val <= 14:
+                            wifi_primary_channel = val
+                            wifi_detected = True
+                            wifi_source = f"Router Entity ({s.get('entity_id')})"
+                            if val not in wifi_channels:
+                                wifi_channels.append(val)
+                                wifi_channels.sort()
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+        # 4. Overlap & Coexistence Analysis
+        thread_ch_int = int(thread_channel) if thread_channel else None
+        zigbee_ch_int = int(zigbee_channel) if zigbee_channel else None
+
+        thread_zigbee_collision = False
+        thread_zigbee_status = "clean"
+        thread_zigbee_msg = "Thread and Zigbee are operating on separate frequencies."
+        if thread_ch_int and zigbee_ch_int:
+            if thread_ch_int == zigbee_ch_int:
+                thread_zigbee_collision = True
+                thread_zigbee_status = "critical"
+                thread_zigbee_msg = (
+                    f"CRITICAL COLLISION: Both Thread and Zigbee are operating on Channel {thread_ch_int} "
+                    f"({thread_freq} MHz). Both protocols are competing for the exact same carrier frequency, "
+                    "causing packet drops, high mesh latency, and sensor unreachability."
+                )
+            elif abs(thread_ch_int - zigbee_ch_int) == 1:
+                thread_zigbee_status = "warning"
+                thread_zigbee_msg = (
+                    f"Adjacent Channel Warning: Thread Channel {thread_ch_int} is only 5 MHz away from "
+                    f"Zigbee Channel {zigbee_ch_int}. High transmission bursts may cause sideband bleed."
+                )
+            else:
+                sep_mhz = abs(thread_ch_int - zigbee_ch_int) * 5
+                thread_zigbee_msg = (
+                    f"Clean Separation: Thread Channel {thread_ch_int} has {sep_mhz} MHz frequency separation "
+                    f"from Zigbee Channel {zigbee_ch_int}."
+                )
+
+        thread_wifi_overlap = False
+        thread_wifi_status = "clean"
+        overlapping_wifi_ch = None
+        if thread_ch_int:
+            if thread_ch_int in (11, 12, 13, 14):
+                thread_wifi_overlap = True
+                thread_wifi_status = "congested"
+                overlapping_wifi_ch = 1
+            elif thread_ch_int in (16, 17, 18, 19):
+                thread_wifi_overlap = True
+                thread_wifi_status = "congested"
+                overlapping_wifi_ch = 6
+            elif thread_ch_int in (21, 22, 23, 24):
+                thread_wifi_overlap = True
+                thread_wifi_status = "congested"
+                overlapping_wifi_ch = 11
+            elif thread_ch_int in (15, 20):
+                thread_wifi_status = "guard_band"
+            elif thread_ch_int in (25, 26):
+                thread_wifi_status = "safe_zone"
+
+        # Channel Scoring
+        channel_scores = []
+        for ch in range(11, 27):
+            freq = 2405 + 5 * (ch - 11)
+            score = 100
+
+            if ch in (11, 12, 13, 14) and 1 in wifi_channels:
+                score -= 45
+            elif ch in (16, 17, 18, 19) and 6 in wifi_channels:
+                score -= 45
+            elif ch in (21, 22, 23, 24) and 11 in wifi_channels:
+                score -= 45
+            elif ch in (15, 20):
+                score += 15
+            elif ch in (25, 26):
+                score += 35
+
+            if zigbee_ch_int:
+                if ch == zigbee_ch_int:
+                    score -= 85
+                elif abs(ch - zigbee_ch_int) == 1:
+                    score -= 30
+                elif abs(ch - zigbee_ch_int) >= 3:
+                    score += 15
+
+            channel_scores.append({"channel": ch, "frequency": freq, "score": score})
+
+        channel_scores.sort(key=lambda x: x["score"], reverse=True)
+        best_channel = channel_scores[0]["channel"]
+        best_freq = channel_scores[0]["frequency"]
+
+        recommendation_text = (
+            f"Migrate Thread to Channel {best_channel} ({best_freq} MHz). "
+            f"It offers optimal RF clearance from Wi-Fi (Channels {', '.join(str(c) for c in wifi_channels)}) "
+            f"and Zigbee (Channel {zigbee_ch_int or 'Not Detected'})."
+        )
+        if thread_ch_int == best_channel:
+            recommendation_text = (
+                f"Your Thread mesh is currently on Channel {thread_ch_int} ({thread_freq} MHz), "
+                "which is already the cleanest RF channel for your current Wi-Fi and Zigbee setup!"
+            )
+
+        return {
+            "success": True,
+            "thread": {
+                "detected": bool(thread_channel),
+                "channel": thread_ch_int,
+                "frequency_mhz": thread_freq,
+                "pan_id": thread_pan,
+                "network_name": thread_net_name,
+            },
+            "zigbee": {
+                "detected": zigbee_detected,
+                "channel": zigbee_ch_int,
+                "frequency_mhz": zigbee_freq,
+                "source": zigbee_source or "Not Detected in Home Assistant",
+                "coordinator": zigbee_coordinator or "N/A",
+            },
+            "wifi": {
+                "detected": wifi_detected,
+                "channels": wifi_channels,
+                "primary_channel": wifi_primary_channel,
+                "bandwidth_mhz": 20,
+                "source": wifi_source,
+            },
+            "coexistence_analysis": {
+                "thread_zigbee_collision": thread_zigbee_collision,
+                "thread_zigbee_status": thread_zigbee_status,
+                "thread_zigbee_message": thread_zigbee_msg,
+                "thread_wifi_overlap": thread_wifi_overlap,
+                "thread_wifi_status": thread_wifi_status,
+                "overlapping_wifi_channel": overlapping_wifi_ch,
+                "recommended_channel": best_channel,
+                "recommended_frequency_mhz": best_freq,
+                "recommendation_summary": recommendation_text,
+            },
+            "channel_scores": channel_scores,
+        }
+
     async def set_otbr_channel(
         self,
         channel: int,

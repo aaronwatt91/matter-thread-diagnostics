@@ -115,7 +115,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const btnRefreshChannel = document.getElementById("btn-refresh-channel-status");
   if (btnRefreshChannel) {
-    btnRefreshChannel.addEventListener("click", () => fetchOtbrChannelInfo(true));
+    btnRefreshChannel.addEventListener("click", () => {
+      fetchOtbrChannelInfo(true);
+      fetchCoexistenceSpectrum(true);
+    });
+  }
+
+  const btnScanSpectrum = document.getElementById("btn-scan-spectrum");
+  if (btnScanSpectrum) {
+    btnScanSpectrum.addEventListener("click", () => fetchCoexistenceSpectrum(true));
   }
 
   const btnApplyChannel = document.getElementById("btn-apply-channel-change");
@@ -344,6 +352,7 @@ function activateTab(tabId) {
   } else if (tabId === "tab-channel") {
     fetchOtbrChannelInfo();
     fetchJoinableNetworks();
+    fetchCoexistenceSpectrum();
   }
 }
 
@@ -3681,19 +3690,7 @@ function renderChannelPickerGrid(channels, curCh) {
   grid.querySelectorAll(".channel-tile").forEach(tile => {
     tile.addEventListener("click", () => {
       const ch = parseInt(tile.getAttribute("data-channel"), 10);
-      selectedTargetChannel = ch;
-      const freq = tile.getAttribute("data-freq");
-      const rec = tile.getAttribute("data-rec");
-
-      const labelEl = document.getElementById("selected-target-channel-label");
-      if (labelEl) {
-        labelEl.innerText = `Channel ${ch} (${freq} MHz) — ${rec}`;
-      }
-
-      // Re-render picker grid to highlight selected tile
-      if (currentOtbrChannelData && currentOtbrChannelData.channels_matrix) {
-        renderChannelPickerGrid(currentOtbrChannelData.channels_matrix, currentOtbrChannelData.current_channel);
-      }
+      onSelectTargetMigrationChannel(ch);
     });
   });
 
@@ -3703,6 +3700,382 @@ function renderChannelPickerGrid(channels, curCh) {
   if (labelEl) {
     labelEl.innerText = `Channel ${selectedTargetChannel} (${curTargetInfo.frequency_mhz || 2475} MHz) — ${curTargetInfo.recommendation_badge || 'Selected'}`;
   }
+}
+
+function onSelectTargetMigrationChannel(ch) {
+  selectedTargetChannel = ch;
+  const freq = 2405 + (ch - 11) * 5;
+  const curTargetInfo = (currentOtbrChannelData?.channels_matrix || []).find(c => c.channel === ch) || {};
+  const labelEl = document.getElementById("selected-target-channel-label");
+  if (labelEl) {
+    labelEl.innerText = `Channel ${ch} (${freq} MHz) — ${curTargetInfo.recommendation_badge || 'Selected'}`;
+  }
+  if (currentOtbrChannelData && currentOtbrChannelData.channels_matrix) {
+    renderChannelPickerGrid(currentOtbrChannelData.channels_matrix, currentOtbrChannelData.current_channel);
+  }
+  if (currentCoexistenceData) {
+    renderCoexistenceSpectrumGraph(currentCoexistenceData);
+  }
+}
+
+/* =========================================================================
+   2.4 GHz Network Coexistence Analyzer & Overlap Graph
+   ========================================================================= */
+let currentCoexistenceData = null;
+
+async function fetchCoexistenceSpectrum(showSpinner = false) {
+  const btnScan = document.getElementById("btn-scan-spectrum");
+  const origHtml = btnScan ? btnScan.innerHTML : "";
+  if (showSpinner && btnScan) {
+    btnScan.disabled = true;
+    btnScan.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Scanning Spectrum...`;
+  }
+
+  try {
+    const res = await fetch(apiPath("/api/coexistence/scan"));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    currentCoexistenceData = data;
+    renderCoexistenceUI(data);
+  } catch (err) {
+    console.error("Failed fetching coexistence spectrum:", err);
+    const alertDesc = document.getElementById("coex-alert-desc");
+    if (alertDesc) {
+      alertDesc.innerHTML = `<span style="color: var(--color-danger);"><i class="fa-solid fa-triangle-exclamation"></i> Spectrum scan failed: ${escapeHtml(err.message)}</span>`;
+    }
+  } finally {
+    if (showSpinner && btnScan) {
+      btnScan.disabled = false;
+      btnScan.innerHTML = origHtml;
+    }
+  }
+}
+
+function renderCoexistenceUI(data) {
+  if (!data) return;
+
+  const th = data.thread || {};
+  const zb = data.zigbee || {};
+  const wf = data.wifi || {};
+  const analysis = data.coexistence_analysis || {};
+
+  // 1. Thread Status Pill
+  const thChEl = document.getElementById("coex-thread-ch");
+  const thFreqEl = document.getElementById("coex-thread-freq");
+  const thNameEl = document.getElementById("coex-thread-name");
+  const thBadgeEl = document.getElementById("coex-thread-badge");
+
+  if (thChEl) thChEl.innerText = th.channel ? `Ch ${th.channel}` : "Ch --";
+  if (thFreqEl) thFreqEl.innerText = th.frequency_mhz ? `(${th.frequency_mhz} MHz)` : "(-- MHz)";
+  if (thNameEl) thNameEl.innerText = th.network_name || "Thread Mesh";
+  if (thBadgeEl) {
+    thBadgeEl.innerText = th.detected ? "Live Radio" : "No Radio";
+    thBadgeEl.className = `badge ${th.detected ? "badge-success" : "badge-warning"}`;
+  }
+
+  // 2. Zigbee Status Pill
+  const zbChEl = document.getElementById("coex-zigbee-ch");
+  const zbFreqEl = document.getElementById("coex-zigbee-freq");
+  const zbSourceEl = document.getElementById("coex-zigbee-source");
+  const zbBadgeEl = document.getElementById("coex-zigbee-badge");
+
+  if (zbChEl) zbChEl.innerText = zb.channel ? `Ch ${zb.channel}` : "Not Running";
+  if (zbFreqEl) zbFreqEl.innerText = zb.frequency_mhz ? `(${zb.frequency_mhz} MHz)` : "";
+  if (zbSourceEl) zbSourceEl.innerText = zb.source || "ZHA / Z2M";
+  if (zbBadgeEl) {
+    if (zb.detected && zb.channel) {
+      zbBadgeEl.innerText = "Active Coordinator";
+      zbBadgeEl.style.background = "#ca8a04";
+      zbBadgeEl.style.color = "#fff";
+    } else {
+      zbBadgeEl.innerText = "Not Detected";
+      zbBadgeEl.style.background = "#475569";
+      zbBadgeEl.style.color = "#cbd5e1";
+    }
+  }
+
+  // 3. Wi-Fi Status Pill
+  const wfChEl = document.getElementById("coex-wifi-ch");
+  const wfBwEl = document.getElementById("coex-wifi-bw");
+  const wfSourceEl = document.getElementById("coex-wifi-source");
+  const wfBadgeEl = document.getElementById("coex-wifi-badge");
+
+  if (wfChEl) {
+    const chList = wf.channels && wf.channels.length ? wf.channels.join(", ") : "1, 6, 11";
+    wfChEl.innerText = `Ch ${chList}`;
+  }
+  if (wfBwEl) wfBwEl.innerText = `(${wf.bandwidth_mhz || 20} MHz wide)`;
+  if (wfSourceEl) wfSourceEl.innerText = wf.source || "2.4 GHz Band";
+  if (wfBadgeEl) {
+    wfBadgeEl.innerText = wf.detected ? "Detected AP" : "Standard Plan";
+    wfBadgeEl.className = `badge ${wf.detected ? "badge-info" : "badge-warning"}`;
+  }
+
+  // 4. Diagnostic Alert & Recommendation Box
+  const alertBox = document.getElementById("coex-alert-box");
+  const alertIcon = document.getElementById("coex-alert-icon");
+  const alertTitle = document.getElementById("coex-alert-title");
+  const alertDesc = document.getElementById("coex-alert-desc");
+  const recEl = document.getElementById("coex-recommendation");
+
+  if (alertBox && alertTitle && alertDesc) {
+    if (analysis.thread_zigbee_collision) {
+      alertBox.style.borderColor = "#ef4444";
+      alertBox.style.background = "#450a0a33";
+      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #ef4444;"></i>`;
+      alertTitle.innerHTML = `<span style="color: #f87171;">CRITICAL RF COLLISION: Thread &amp; Zigbee on Same Channel!</span>`;
+      alertDesc.innerHTML = escapeHtml(analysis.thread_zigbee_message || "");
+    } else if (analysis.thread_wifi_overlap) {
+      alertBox.style.borderColor = "#f59e0b";
+      alertBox.style.background = "#451a0333";
+      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b;"></i>`;
+      alertTitle.innerHTML = `<span style="color: #fbbf24;">High Wi-Fi Overlap: Inside Wi-Fi Channel ${analysis.overlapping_wifi_channel || '1/6/11'} Mask</span>`;
+      alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is inside the 20 MHz transmission mask of Wi-Fi Channel ${analysis.overlapping_wifi_channel}. High-bandwidth Wi-Fi traffic (video streaming, downloads) will degrade Thread response times and cause packet retries.`;
+    } else {
+      alertBox.style.borderColor = "#10b981";
+      alertBox.style.background = "#064e3b33";
+      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #10b981;"></i>`;
+      alertTitle.innerHTML = `<span style="color: #34d399;">Clean RF Environment: Guard Band / Safe Zone</span>`;
+      alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is operating cleanly outside of primary Wi-Fi channels and is separated from Zigbee.`;
+    }
+
+    if (recEl) {
+      recEl.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Recommendation: ${escapeHtml(analysis.recommendation_summary || '')}`;
+    }
+  }
+
+  // 5. Render SVG Spectrum Graph
+  renderCoexistenceSpectrumGraph(data);
+}
+
+function renderCoexistenceSpectrumGraph(data) {
+  const svg = document.getElementById("spectrum-svg");
+  if (!svg) return;
+  svg.innerHTML = "";
+
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(rect.width || svg.clientWidth || 800, 600);
+  const height = 240;
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+  const L = 35;
+  const R = 35;
+  const T = 30;
+  const B = 40;
+  const GW = width - L - R;
+  const GH = height - T - B;
+  const Y_base = height - B;
+
+  const X = (f) => L + ((f - 2400) / 85) * GW;
+
+  const th = data.thread || {};
+  const zb = data.zigbee || {};
+  const wf = data.wifi || {};
+  const wifiChannels = (wf.channels && wf.channels.length) ? wf.channels : [1, 6, 11];
+
+  // 1. Guard Band Background Shading
+  const safeZones = [
+    { start: 2422, end: 2428, label: "Guard 1 (Ch 15)" },
+    { start: 2447, end: 2453, label: "Guard 2 (Ch 20)" },
+    { start: 2472, end: 2485, label: "★ Safe Zone (Ch 25-26)" },
+  ];
+
+  safeZones.forEach((sz) => {
+    const x1 = X(sz.start);
+    const x2 = X(sz.end);
+    const w = x2 - x1;
+
+    const rectEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rectEl.setAttribute("x", x1);
+    rectEl.setAttribute("y", T);
+    rectEl.setAttribute("width", w);
+    rectEl.setAttribute("height", GH);
+    rectEl.setAttribute("fill", "#10b98112");
+    rectEl.setAttribute("stroke", "#10b98133");
+    rectEl.setAttribute("stroke-width", "1");
+    rectEl.setAttribute("stroke-dasharray", "3,3");
+    svg.appendChild(rectEl);
+
+    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt.setAttribute("x", x1 + w / 2);
+    txt.setAttribute("y", T - 8);
+    txt.setAttribute("fill", "#34d399");
+    txt.setAttribute("font-size", "9");
+    txt.setAttribute("font-weight", "700");
+    txt.setAttribute("text-anchor", "middle");
+    txt.textContent = sz.label;
+    svg.appendChild(txt);
+  });
+
+  // 2. Base Axis Line
+  const axisLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  axisLine.setAttribute("x1", L);
+  axisLine.setAttribute("y1", Y_base);
+  axisLine.setAttribute("x2", width - R);
+  axisLine.setAttribute("y2", Y_base);
+  axisLine.setAttribute("stroke", "#475569");
+  axisLine.setAttribute("stroke-width", "1.5");
+  svg.appendChild(axisLine);
+
+  // 3. Wi-Fi Parabolic 20 MHz Curves
+  const WIFI_CENTERS = { 1: 2412, 6: 2437, 11: 2462 };
+  wifiChannels.forEach((wch) => {
+    const fCenter = WIFI_CENTERS[wch] || (2412 + (wch - 1) * 5);
+    const fMin = fCenter - 11;
+    const fMax = fCenter + 11;
+    const peakH = GH * 0.62;
+
+    let pathD = `M ${X(fMin).toFixed(1)} ${Y_base}`;
+    const steps = 24;
+    for (let i = 0; i <= steps; i++) {
+      const f = fMin + (i / steps) * 22;
+      const norm = (f - fCenter) / 11;
+      const y = Y_base - Math.max(0, 1 - norm * norm) * peakH;
+      pathD += ` L ${X(f).toFixed(1)} ${y.toFixed(1)}`;
+    }
+    pathD += ` L ${X(fMax).toFixed(1)} ${Y_base} Z`;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathD);
+    path.setAttribute("fill", "#ef444420");
+    path.setAttribute("stroke", "#ef444488");
+    path.setAttribute("stroke-width", "1.8");
+    svg.appendChild(path);
+
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", X(fCenter));
+    lbl.setAttribute("y", Y_base - peakH - 6);
+    lbl.setAttribute("fill", "#f87171");
+    lbl.setAttribute("font-size", "11");
+    lbl.setAttribute("font-weight", "700");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.textContent = `Wi-Fi Ch ${wch} (20 MHz)`;
+    svg.appendChild(lbl);
+  });
+
+  // 4. All 16 802.15.4 Channels along X-Axis
+  for (let ch = 11; ch <= 26; ch++) {
+    const f = 2405 + 5 * (ch - 11);
+    const x = X(f);
+
+    const isCurrentThread = th.channel === ch;
+    const isCurrentZigbee = zb.channel === ch;
+    const isRecommended = data.coexistence_analysis?.recommended_channel === ch;
+    const isSelected = selectedTargetChannel === ch;
+
+    const tick = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    tick.setAttribute("x1", x);
+    tick.setAttribute("y1", Y_base);
+    tick.setAttribute("x2", x);
+    tick.setAttribute("y2", Y_base + 6);
+    tick.setAttribute("stroke", isCurrentThread ? "#38bdf8" : (isCurrentZigbee ? "#eab308" : (isSelected ? "#34d399" : "#475569")));
+    tick.setAttribute("stroke-width", isCurrentThread || isCurrentZigbee || isSelected ? "2" : "1");
+    svg.appendChild(tick);
+
+    const chTxt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    chTxt.setAttribute("x", x);
+    chTxt.setAttribute("y", Y_base + 18);
+    chTxt.setAttribute("fill", isCurrentThread ? "#38bdf8" : (isCurrentZigbee ? "#facc15" : (isSelected ? "#34d399" : (isRecommended ? "#a7f3d0" : "#94a3b8"))));
+    chTxt.setAttribute("font-size", isCurrentThread || isCurrentZigbee || isSelected ? "11" : "9");
+    chTxt.setAttribute("font-weight", isCurrentThread || isCurrentZigbee || isRecommended || isSelected ? "700" : "500");
+    chTxt.setAttribute("text-anchor", "middle");
+    chTxt.setAttribute("style", "cursor: pointer;");
+    chTxt.textContent = `${ch}`;
+    chTxt.addEventListener("click", () => {
+      onSelectTargetMigrationChannel(ch);
+    });
+    svg.appendChild(chTxt);
+  }
+
+  // 5. Active Zigbee Channel (if detected)
+  if (zb.channel && zb.frequency_mhz) {
+    const fZb = zb.frequency_mhz;
+    const xZb = X(fZb);
+    const peakZb = GH * 0.85;
+
+    const zbPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const x1 = X(fZb - 1.2);
+    const x2 = X(fZb + 1.2);
+    zbPath.setAttribute("d", `M ${x1} ${Y_base} L ${x1} ${Y_base - peakZb} L ${x2} ${Y_base - peakZb} L ${x2} ${Y_base} Z`);
+    zbPath.setAttribute("fill", "#eab30855");
+    zbPath.setAttribute("stroke", "#facc15");
+    zbPath.setAttribute("stroke-width", "2.2");
+    svg.appendChild(zbPath);
+
+    const zbBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const badgeW = 125;
+    zbBadgeG.innerHTML = `
+      <rect x="${xZb - badgeW / 2}" y="${Y_base - peakZb - 22}" width="${badgeW}" height="20" rx="4" fill="#854d0e" stroke="#facc15" stroke-width="1.5" />
+      <text x="${xZb}" y="${Y_base - peakZb - 8}" fill="#ffffff" font-size="10" font-weight="700" text-anchor="middle">🐝 Zigbee Ch ${zb.channel}</text>
+    `;
+    svg.appendChild(zbBadgeG);
+  }
+
+  // 6. Active Thread Channel (if detected)
+  if (th.channel && th.frequency_mhz) {
+    const fTh = th.frequency_mhz;
+    const xTh = X(fTh);
+    const peakTh = GH * 0.95;
+
+    const thPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const x1 = X(fTh - 1.2);
+    const x2 = X(fTh + 1.2);
+    thPath.setAttribute("d", `M ${x1} ${Y_base} L ${x1} ${Y_base - peakTh} L ${x2} ${Y_base - peakTh} L ${x2} ${Y_base} Z`);
+    thPath.setAttribute("fill", "#0284c766");
+    thPath.setAttribute("stroke", "#38bdf8");
+    thPath.setAttribute("stroke-width", "2.8");
+    svg.appendChild(thPath);
+
+    const thBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const badgeW = 125;
+    thBadgeG.innerHTML = `
+      <rect x="${xTh - badgeW / 2}" y="${Y_base - peakTh - 24}" width="${badgeW}" height="20" rx="4" fill="#0369a1" stroke="#38bdf8" stroke-width="1.8" />
+      <text x="${xTh}" y="${Y_base - peakTh - 10}" fill="#ffffff" font-size="10" font-weight="700" text-anchor="middle">🧵 Thread Ch ${th.channel}</text>
+    `;
+    svg.appendChild(thBadgeG);
+
+    // Direct Collision Hazard Indicator
+    if (zb.channel && th.channel === zb.channel) {
+      const hazardG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      hazardG.innerHTML = `
+        <rect x="${xTh - 95}" y="${Y_base - peakTh - 52}" width="190" height="24" rx="5" fill="#ef4444" stroke="#ffffff" stroke-width="2" />
+        <text x="${xTh}" y="${Y_base - peakTh - 36}" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">🚨 DIRECT COLLISION: Ch ${th.channel}</text>
+      `;
+      svg.appendChild(hazardG);
+    }
+  }
+
+  // 7. Target Migration Marker (if user selected a new channel)
+  if (selectedTargetChannel && selectedTargetChannel !== th.channel) {
+    const fTarget = 2405 + 5 * (selectedTargetChannel - 11);
+    const xTarget = X(fTarget);
+    const targetBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const badgeW = 115;
+    targetBadgeG.innerHTML = `
+      <line x1="${xTarget}" y1="${Y_base}" x2="${xTarget}" y2="${T + 20}" stroke="#34d399" stroke-width="2" stroke-dasharray="4,3" />
+      <rect x="${xTarget - badgeW / 2}" y="${T + 8}" width="${badgeW}" height="18" rx="4" fill="#065f46" stroke="#34d399" stroke-width="1.5" />
+      <text x="${xTarget}" y="${T + 21}" fill="#34d399" font-size="9" font-weight="800" text-anchor="middle">🎯 TARGET: Ch ${selectedTargetChannel}</text>
+    `;
+    svg.appendChild(targetBadgeG);
+  }
+
+  // 8. Frequency Scale Labels
+  const startLbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  startLbl.setAttribute("x", L);
+  startLbl.setAttribute("y", Y_base + 32);
+  startLbl.setAttribute("fill", "#64748b");
+  startLbl.setAttribute("font-size", "9");
+  startLbl.textContent = "2400 MHz";
+  svg.appendChild(startLbl);
+
+  const endLbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  endLbl.setAttribute("x", width - R);
+  endLbl.setAttribute("y", Y_base + 32);
+  endLbl.setAttribute("fill", "#64748b");
+  endLbl.setAttribute("font-size", "9");
+  endLbl.setAttribute("text-anchor", "end");
+  endLbl.textContent = "2485 MHz";
+  svg.appendChild(endLbl);
 }
 
 async function triggerChannelChange() {
