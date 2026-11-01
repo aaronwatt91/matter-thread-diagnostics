@@ -280,10 +280,14 @@ function initDeviceSearchAndTopologyControls() {
       topologyPhysicsState.panX = 0;
       topologyPhysicsState.panY = 0;
       topologyPhysicsState.energy = Math.max(topologyPhysicsState.energy, 0.5);
+      const vpG = document.getElementById("topology-viewport-g");
+      if (vpG) {
+        vpG.setAttribute("transform", "translate(0, 0) scale(1)");
+      }
     });
   }
 
-  // Topology Layout Mode Switcher (Force, Transit, Matrix, Sankey, Radar, Sunburst, Chord)
+  // Topology Layout Mode Switcher (Force, Tree, Transit, Sankey, Matrix)
   document.querySelectorAll(".btn-layout-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".btn-layout-mode").forEach((b) => b.classList.remove("active"));
@@ -1680,18 +1684,13 @@ function dispatchTopologyRender() {
   svg.style.display = "block";
   matrixContainer.classList.add("hidden");
 
-  if (mode === "force") {
+  if (mode === "force" || mode === "tree") {
+    topologyPhysicsState.layoutMode = mode;
     renderSvgTopology(nodes, edges);
   } else if (mode === "transit") {
     renderTransitMap(nodes, edges);
   } else if (mode === "sankey") {
     renderSankeyFlow(nodes, edges);
-  } else if (mode === "radar") {
-    renderRadarScope(nodes, edges);
-  } else if (mode === "sunburst") {
-    renderSunburst(nodes, edges);
-  } else if (mode === "chord") {
-    renderChordBundle(nodes, edges);
   } else {
     renderSvgTopology(nodes, edges);
   }
@@ -1792,6 +1791,7 @@ function renderSvgTopology(nodes, edges) {
 
   // Root viewport group for pan & zoom
   const viewportG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.setAttribute("id", "topology-viewport-g");
   const edgesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
   const nodesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
   viewportG.appendChild(edgesG);
@@ -2538,22 +2538,23 @@ function renderTransitMap(nodes, edges) {
   topologyPhysicsState.affinityData = affinity;
 
   const viewportG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.setAttribute("id", "topology-viewport-g");
   svg.appendChild(viewportG);
 
-  // Background metro coordinate grid
+  // Background metro coordinate grid extending well beyond visible bounds
   const gridG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  gridG.setAttribute("opacity", "0.12");
-  for (let x = 40; x < width; x += 55) {
+  gridG.setAttribute("opacity", "0.10");
+  for (let x = -1000; x < width + 1500; x += 60) {
     const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    l.setAttribute("x1", x); l.setAttribute("y1", 0);
-    l.setAttribute("x2", x); l.setAttribute("y2", height);
+    l.setAttribute("x1", x); l.setAttribute("y1", -1000);
+    l.setAttribute("x2", x); l.setAttribute("y2", height + 1500);
     l.setAttribute("stroke", "#475569"); l.setAttribute("stroke-width", "1");
     gridG.appendChild(l);
   }
-  for (let y = 40; y < height; y += 55) {
+  for (let y = -1000; y < height + 1500; y += 60) {
     const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    l.setAttribute("x1", 0); l.setAttribute("y1", y);
-    l.setAttribute("x2", width); l.setAttribute("y2", y);
+    l.setAttribute("x1", -1000); l.setAttribute("y1", y);
+    l.setAttribute("x2", width + 1500); l.setAttribute("y2", y);
     l.setAttribute("stroke", "#475569"); l.setAttribute("stroke-width", "1");
     gridG.appendChild(l);
   }
@@ -2571,8 +2572,8 @@ function renderTransitMap(nodes, edges) {
   const posMap = {};
   const tbrCount = Math.max(tbrs.length, 1);
   tbrs.forEach((tbr, idx) => {
-    const y = ((idx + 1) / (tbrCount + 1)) * (height - 80) + 40;
-    posMap[tbr.id] = { x: 130, y };
+    const y = ((idx + 1) / (tbrCount + 1)) * (height - 100) + 50;
+    posMap[tbr.id] = { x: 140, y };
   });
 
   const rtrCount = Math.max(routers.length, 1);
@@ -2580,8 +2581,8 @@ function renderTransitMap(nodes, edges) {
     const col = idx % 2;
     const row = Math.floor(idx / 2);
     const rows = Math.ceil(rtrCount / 2);
-    const x = 320 + col * 160;
-    const y = ((row + 1) / (rows + 1)) * (height - 80) + 40;
+    const x = 360 + col * 180;
+    const y = ((row + 1) / (rows + 1)) * (height - 100) + 50;
     posMap[rtr.id] = { x, y };
   });
 
@@ -2590,40 +2591,28 @@ function renderTransitMap(nodes, edges) {
     const col = idx % 2;
     const row = Math.floor(idx / 2);
     const rows = Math.ceil(sedCount / 2);
-    const x = Math.min(width - 160, 680) + col * 90;
-    const y = ((row + 1) / (rows + 1)) * (height - 80) + 40;
+    const x = Math.min(width - 150, 720) + col * 110;
+    const y = ((row + 1) / (rows + 1)) * (height - 100) + 50;
     posMap[sed.id] = { x, y };
   });
 
   nodes.forEach((n, idx) => {
     if (!posMap[n.id]) {
-      posMap[n.id] = { x: 220 + (idx * 45) % (width - 300), y: 80 + (idx * 35) % (height - 120) };
+      posMap[n.id] = { x: 220 + (idx * 50) % (width - 300), y: 90 + (idx * 40) % (height - 140) };
     }
   });
 
-  // Draw 45°/90° Metro Track Lines
+  // Track Line Elements & Redraw Logic
+  const lineEntries = [];
   edges.forEach((e) => {
     const sId = typeof e.source === "object" ? e.source.id : e.source;
     const tId = typeof e.target === "object" ? e.target.id : e.target;
-    const p1 = posMap[sId];
-    const p2 = posMap[tId];
-    if (!p1 || !p2) return;
+    if (!posMap[sId] || !posMap[tId]) return;
 
     const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: "#38bdf8" };
     const lineColor = aff.color || "#0284c7";
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    let d = "";
-    if (Math.abs(dx) > Math.abs(dy)) {
-      const midX = p1.x + (dx - dy);
-      d = `M ${p1.x} ${p1.y} L ${midX} ${p1.y} L ${p2.x} ${p2.y}`;
-    } else {
-      const midY = p1.y + (dy - dx);
-      d = `M ${p1.x} ${p1.y} L ${p1.x} ${midY} L ${p2.x} ${p2.y}`;
-    }
-    path.setAttribute("d", d);
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", lineColor);
     path.setAttribute("stroke-width", "5");
@@ -2631,13 +2620,40 @@ function renderTransitMap(nodes, edges) {
     path.setAttribute("stroke-linejoin", "round");
     path.setAttribute("stroke-opacity", "0.85");
     linesG.appendChild(path);
+
+    lineEntries.push({ path, sId, tId });
   });
 
-  // Draw Stations
+  const getMetroPathD = (p1, p2) => {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const midX = p1.x + (dx - dy);
+      return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L ${midX.toFixed(1)} ${p1.y.toFixed(1)} L ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    } else {
+      const midY = p1.y + (dy - dx);
+      return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L ${p1.x.toFixed(1)} ${midY.toFixed(1)} L ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+    }
+  };
+
+  const redrawMetroLines = () => {
+    lineEntries.forEach(entry => {
+      const p1 = posMap[entry.sId];
+      const p2 = posMap[entry.tId];
+      if (p1 && p2) {
+        entry.path.setAttribute("d", getMetroPathD(p1, p2));
+      }
+    });
+  };
+
+  redrawMetroLines();
+
+  // Draw Stations with Dragging & Pointer Capture
   nodes.forEach((n) => {
     const pos = posMap[n.id];
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.style.cursor = "pointer";
+    g.setAttribute("class", "metro-station");
+    g.style.cursor = "grab";
     g.setAttribute("transform", `translate(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`);
 
     const isTbr = n.type === "border_router";
@@ -2678,19 +2694,111 @@ function renderTransitMap(nodes, edges) {
     lbl.setAttribute("font-size", isTbr ? "12" : "11");
     lbl.setAttribute("font-weight", isTbr ? "700" : "600");
     lbl.setAttribute("text-anchor", isTbr ? "end" : "start");
+    lbl.setAttribute("pointer-events", "none");
     lbl.textContent = n.label || `Node #${n.node_id}`;
     g.appendChild(lbl);
 
-    g.addEventListener("click", () => showNodeInspector(n));
+    let isStationDragging = false;
+    let stationMoved = false;
+
+    g.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+      isStationDragging = true;
+      stationMoved = false;
+      g.style.cursor = "grabbing";
+      try {
+        g.setPointerCapture(ev.pointerId);
+      } catch (_) {}
+    });
+
+    g.addEventListener("pointermove", (ev) => {
+      if (!isStationDragging) return;
+      stationMoved = true;
+      const svgRect = svg.getBoundingClientRect();
+      const mouseX = (ev.clientX - svgRect.left - topologyPhysicsState.panX) / topologyPhysicsState.zoom;
+      const mouseY = (ev.clientY - svgRect.top - topologyPhysicsState.panY) / topologyPhysicsState.zoom;
+      pos.x = mouseX;
+      pos.y = mouseY;
+      g.setAttribute("transform", `translate(${mouseX.toFixed(1)}, ${mouseY.toFixed(1)})`);
+      redrawMetroLines();
+    });
+
+    const endStationDrag = (ev) => {
+      if (!isStationDragging) return;
+      isStationDragging = false;
+      g.style.cursor = "grab";
+      try {
+        g.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      if (!stationMoved) {
+        showNodeInspector(n);
+      }
+    };
+
+    g.addEventListener("pointerup", endStationDrag);
+    g.addEventListener("pointercancel", endStationDrag);
+
     stationsG.appendChild(g);
     n.elem = g;
   });
 
+  // Viewport Pan & Zoom Handling
+  const updateViewportTransform = () => {
+    viewportG.setAttribute(
+      "transform",
+      `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
+    );
+  };
+  updateViewportTransform();
+
+  let isCanvasPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  svg.style.cursor = "grab";
+
+  svg.onpointerdown = (ev) => {
+    if (ev.target && ev.target.closest && ev.target.closest(".metro-station")) return;
+    isCanvasPanning = true;
+    panStartX = ev.clientX - topologyPhysicsState.panX;
+    panStartY = ev.clientY - topologyPhysicsState.panY;
+    svg.style.cursor = "grabbing";
+  };
+
+  const onWindowPointerMove = (ev) => {
+    if (!isCanvasPanning) return;
+    topologyPhysicsState.panX = ev.clientX - panStartX;
+    topologyPhysicsState.panY = ev.clientY - panStartY;
+    updateViewportTransform();
+  };
+
+  const onWindowPointerUp = () => {
+    if (isCanvasPanning) {
+      isCanvasPanning = false;
+      svg.style.cursor = "grab";
+    }
+  };
+
+  window.addEventListener("pointermove", onWindowPointerMove);
+  window.addEventListener("pointerup", onWindowPointerUp);
+
+  svg.onwheel = (ev) => {
+    ev.preventDefault();
+    const scaleFactor = ev.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.35, Math.min(3.0, topologyPhysicsState.zoom * scaleFactor));
+    const svgRect = svg.getBoundingClientRect();
+    const mx = ev.clientX - svgRect.left;
+    const my = ev.clientY - svgRect.top;
+    topologyPhysicsState.panX = mx - ((mx - topologyPhysicsState.panX) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.panY = my - ((my - topologyPhysicsState.panY) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.zoom = newZoom;
+    updateViewportTransform();
+  };
+
   const headerG = document.createElementNS("http://www.w3.org/2000/svg", "g");
   headerG.setAttribute("transform", "translate(20, 30)");
   headerG.innerHTML = `
-    <rect width="185" height="26" rx="6" fill="#0f172acc" stroke="#334155" />
-    <text x="12" y="17" fill="#38bdf8" font-size="11" font-weight="700">🚇 THREAD METRO TRANSIT</text>
+    <rect width="260" height="26" rx="6" fill="#0f172acc" stroke="#334155" />
+    <text x="12" y="17" fill="#38bdf8" font-size="11" font-weight="700">🚇 THREAD METRO (DRAGGABLE & ZOOMABLE)</text>
   `;
   svg.appendChild(headerG);
   updateTopologyLegend();
@@ -2821,7 +2929,7 @@ function renderSignalMatrix(container, nodes, edges) {
 }
 
 /* ==========================================================================
-   VISUAL PERSPECTIVE 3: Sankey / Alluvial Routing Flow
+   VISUAL PERSPECTIVE 3: Sankey / Alluvial Routing Flow (Zoomable & Draggable)
    ========================================================================== */
 function renderSankeyFlow(nodes, edges) {
   const svg = document.getElementById("mesh-svg");
@@ -2838,6 +2946,10 @@ function renderSankeyFlow(nodes, edges) {
 
   const affinity = resolveBorderRouterAffinity(nodes, edges);
   topologyPhysicsState.affinityData = affinity;
+
+  const viewportG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.setAttribute("id", "topology-viewport-g");
+  svg.appendChild(viewportG);
 
   const tbrs = nodes.filter(n => n.type === "border_router");
   const routers = nodes.filter(n => n.type === "router");
@@ -2868,12 +2980,7 @@ function renderSankeyFlow(nodes, edges) {
     }
   });
 
-  const ribbonsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  const nodesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  svg.appendChild(ribbonsG);
-  svg.appendChild(nodesG);
-
-  // Column Headers
+  // Column Headers inside viewport
   const cols = [
     { label: "1. BORDER ROUTERS (GATEWAYS)", x: colX.tbr + 75 },
     { label: "2. ROUTERS (MESH BACKBONE)", x: colX.router + 75 },
@@ -2888,31 +2995,25 @@ function renderSankeyFlow(nodes, edges) {
     t.setAttribute("font-weight", "700");
     t.setAttribute("text-anchor", "middle");
     t.textContent = c.label;
-    svg.appendChild(t);
+    viewportG.appendChild(t);
   });
 
-  // Flow Ribbons
+  const ribbonsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const nodesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  viewportG.appendChild(ribbonsG);
+  viewportG.appendChild(nodesG);
+
+  // Flow Ribbon Elements & Redraw Logic
+  const ribbonEntries = [];
   edges.forEach((e) => {
     const sId = typeof e.source === "object" ? e.source.id : e.source;
     const tId = typeof e.target === "object" ? e.target.id : e.target;
-    let p1 = nodePos[sId];
-    let p2 = nodePos[tId];
-    if (!p1 || !p2) return;
-
-    // Direct ribbons from left to right
-    if (p1.x > p2.x) { const tmp = p1; p1 = p2; p2 = tmp; }
+    if (!nodePos[sId] || !nodePos[tId]) return;
 
     const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: "#38bdf8" };
     const strokeColor = aff.color || "#0284c7";
 
-    const x1 = p1.x + 155;
-    const y1 = p1.y + 17;
-    const x2 = p2.x;
-    const y2 = p2.y + 17;
-    const cX = x1 + (x2 - x1) * 0.5;
-
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", `M ${x1} ${y1} C ${cX} ${y1}, ${cX} ${y2}, ${x2} ${y2}`);
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", strokeColor);
     path.setAttribute("stroke-width", "3.5");
@@ -2929,14 +3030,40 @@ function renderSankeyFlow(nodes, edges) {
     });
 
     ribbonsG.appendChild(path);
+    ribbonEntries.push({ path, sId, tId });
   });
 
-  // Node Pill Cards
+  const getRibbonD = (p1Raw, p2Raw) => {
+    let p1 = p1Raw;
+    let p2 = p2Raw;
+    if (p1.x > p2.x) { const tmp = p1; p1 = p2; p2 = tmp; }
+    const x1 = p1.x + 155;
+    const y1 = p1.y + 17;
+    const x2 = p2.x;
+    const y2 = p2.y + 17;
+    const cX = x1 + (x2 - x1) * 0.5;
+    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${cX.toFixed(1)} ${y1.toFixed(1)}, ${cX.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  };
+
+  const redrawRibbons = () => {
+    ribbonEntries.forEach(entry => {
+      const p1 = nodePos[entry.sId];
+      const p2 = nodePos[entry.tId];
+      if (p1 && p2) {
+        entry.path.setAttribute("d", getRibbonD(p1, p2));
+      }
+    });
+  };
+
+  redrawRibbons();
+
+  // Node Pill Cards with Dragging
   nodes.forEach((n) => {
     const pos = nodePos[n.id];
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.style.cursor = "pointer";
-    g.setAttribute("transform", `translate(${pos.x}, ${pos.y})`);
+    g.setAttribute("class", "sankey-node-card");
+    g.style.cursor = "grab";
+    g.setAttribute("transform", `translate(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`);
 
     const isTbr = n.type === "border_router";
     const isRouter = n.type === "router";
@@ -2955,6 +3082,7 @@ function renderSankeyFlow(nodes, edges) {
     iconText.setAttribute("x", "12");
     iconText.setAttribute("y", "21");
     iconText.setAttribute("font-size", "12");
+    iconText.setAttribute("pointer-events", "none");
     iconText.textContent = isTbr ? "📡" : (isRouter ? "🔁" : "🔋");
     g.appendChild(iconText);
 
@@ -2964,6 +3092,7 @@ function renderSankeyFlow(nodes, edges) {
     nameText.setAttribute("fill", "#f8fafc");
     nameText.setAttribute("font-size", "11");
     nameText.setAttribute("font-weight", "600");
+    nameText.setAttribute("pointer-events", "none");
     nameText.textContent = (n.label || `Node ${n.node_id}`).substring(0, 16);
     g.appendChild(nameText);
 
@@ -2975,454 +3104,106 @@ function renderSankeyFlow(nodes, edges) {
       rssiBadge.setAttribute("font-size", "9");
       rssiBadge.setAttribute("font-weight", "700");
       rssiBadge.setAttribute("text-anchor", "end");
+      rssiBadge.setAttribute("pointer-events", "none");
       rssiBadge.textContent = `${n.rssi}`;
       g.appendChild(rssiBadge);
     }
 
-    g.addEventListener("click", () => showNodeInspector(n));
+    let isCardDragging = false;
+    let cardMoved = false;
+
+    g.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+      isCardDragging = true;
+      cardMoved = false;
+      g.style.cursor = "grabbing";
+      try {
+        g.setPointerCapture(ev.pointerId);
+      } catch (_) {}
+    });
+
+    g.addEventListener("pointermove", (ev) => {
+      if (!isCardDragging) return;
+      cardMoved = true;
+      const svgRect = svg.getBoundingClientRect();
+      const mouseX = (ev.clientX - svgRect.left - topologyPhysicsState.panX) / topologyPhysicsState.zoom;
+      const mouseY = (ev.clientY - svgRect.top - topologyPhysicsState.panY) / topologyPhysicsState.zoom;
+      pos.x = mouseX;
+      pos.y = mouseY;
+      g.setAttribute("transform", `translate(${mouseX.toFixed(1)}, ${mouseY.toFixed(1)})`);
+      redrawRibbons();
+    });
+
+    const endCardDrag = (ev) => {
+      if (!isCardDragging) return;
+      isCardDragging = false;
+      g.style.cursor = "grab";
+      try {
+        g.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      if (!cardMoved) {
+        showNodeInspector(n);
+      }
+    };
+
+    g.addEventListener("pointerup", endCardDrag);
+    g.addEventListener("pointercancel", endCardDrag);
+
     nodesG.appendChild(g);
     n.elem = g;
   });
 
-  updateTopologyLegend();
-}
+  // Viewport Pan & Zoom Handling
+  const updateViewportTransform = () => {
+    viewportG.setAttribute(
+      "transform",
+      `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
+    );
+  };
+  updateViewportTransform();
 
-/* ==========================================================================
-   VISUAL PERSPECTIVE 4: Tactical Sonar / Radar Scope
-   ========================================================================== */
-function renderRadarScope(nodes, edges) {
-  const svg = document.getElementById("mesh-svg");
-  if (!svg) return;
-  svg.innerHTML = "";
-  const rect = svg.getBoundingClientRect();
-  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
-  const height = Math.max(rect.height || 540, 500);
+  let isCanvasPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  svg.style.cursor = "grab";
 
-  if (!nodes || nodes.length === 0) {
-    renderEmptyTopology(svg, width, height);
-    return;
-  }
-
-  const cx = width / 2;
-  const cy = height / 2;
-  const R = Math.min(cx, cy) - 35;
-
-  // Radar Base Scope Circle
-  const scopeBg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  scopeBg.setAttribute("cx", cx);
-  scopeBg.setAttribute("cy", cy);
-  scopeBg.setAttribute("r", R);
-  scopeBg.setAttribute("fill", "#030712");
-  scopeBg.setAttribute("stroke", "#0284c7");
-  scopeBg.setAttribute("stroke-width", "2");
-  svg.appendChild(scopeBg);
-
-  // Concentric Range Rings
-  const rings = [
-    { pct: 0.25, label: "-40 dBm (Point-Blank)" },
-    { pct: 0.50, label: "-60 dBm (Strong)" },
-    { pct: 0.75, label: "-75 dBm (Good)" },
-    { pct: 1.00, label: "-90 dBm (Fringe)" },
-  ];
-
-  rings.forEach((r) => {
-    const ringCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    ringCircle.setAttribute("cx", cx);
-    ringCircle.setAttribute("cy", cy);
-    ringCircle.setAttribute("r", R * r.pct);
-    ringCircle.setAttribute("fill", "none");
-    ringCircle.setAttribute("stroke", "#0369a1");
-    ringCircle.setAttribute("stroke-width", "1");
-    ringCircle.setAttribute("stroke-dasharray", "4,4");
-    svg.appendChild(ringCircle);
-
-    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    lbl.setAttribute("x", cx + 8);
-    lbl.setAttribute("y", cy - R * r.pct + 12);
-    lbl.setAttribute("fill", "#38bdf8");
-    lbl.setAttribute("font-size", "10");
-    lbl.setAttribute("font-family", "monospace");
-    lbl.textContent = r.label;
-    svg.appendChild(lbl);
-  });
-
-  // Crosshair Axes
-  const axesG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  axesG.setAttribute("stroke", "#0c4a6e");
-  axesG.setAttribute("stroke-width", "1");
-  axesG.innerHTML = `
-    <line x1="${cx - R}" y1="${cy}" x2="${cx + R}" y2="${cy}" />
-    <line x1="${cx}" y1="${cy - R}" x2="${cx}" y2="${cy + R}" />
-    <line x1="${cx - R * 0.7}" y1="${cy - R * 0.7}" x2="${cx + R * 0.7}" y2="${cy + R * 0.7}" stroke-dasharray="2,4" />
-    <line x1="${cx - R * 0.7}" y1="${cy + R * 0.7}" x2="${cx + R * 0.7}" y2="${cy - R * 0.7}" stroke-dasharray="2,4" />
-  `;
-  svg.appendChild(axesG);
-
-  // Animated Rotating Sweep Beam
-  const sweepG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  sweepG.setAttribute("class", "radar-sweep-beam");
-  sweepG.style.transformOrigin = `${cx}px ${cy}px`;
-  sweepG.innerHTML = `
-    <defs>
-      <linearGradient id="sweepGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.4" />
-        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
-      </linearGradient>
-    </defs>
-    <path d="M ${cx} ${cy} L ${cx + R} ${cy} A ${R} ${R} 0 0 1 ${cx + R * 0.707} ${cy + R * 0.707} Z" fill="url(#sweepGrad)" />
-    <line x1="${cx}" y1="${cy}" x2="${cx + R}" y2="${cy}" stroke="#38bdf8" stroke-width="2" />
-  `;
-  svg.appendChild(sweepG);
-
-  // Plot Target Blips
-  const blipsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  svg.appendChild(blipsG);
-
-  const N = Math.max(nodes.length, 1);
-  nodes.forEach((n, idx) => {
-    let r = R * 0.55;
-    if (n.type === "border_router") {
-      r = R * 0.18;
-    } else if (n.rssi !== null && n.rssi !== undefined) {
-      const norm = Math.max(0.12, Math.min(0.95, (-30 - Number(n.rssi)) / 65));
-      r = R * norm;
-    } else if (n.type === "end_device") {
-      r = R * 0.78;
-    }
-
-    const angle = (2 * Math.PI * idx) / N - Math.PI / 2;
-    const x = cx + Math.cos(angle) * r;
-    const y = cy + Math.sin(angle) * r;
-
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.style.cursor = "pointer";
-    g.setAttribute("transform", `translate(${x}, ${y})`);
-
-    const isWeak = n.status === "weak" || (n.rssi !== null && Number(n.rssi) < -80);
-    const blipColor = n.type === "border_router" ? "#38bdf8" : (isWeak ? "#f59e0b" : "#22c55e");
-
-    if (isWeak || n.status === "offline") {
-      const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      halo.setAttribute("r", "14");
-      halo.setAttribute("fill", "none");
-      halo.setAttribute("stroke", blipColor);
-      halo.setAttribute("stroke-width", "1.5");
-      halo.setAttribute("stroke-dasharray", "3,2");
-      g.appendChild(halo);
-    }
-
-    const blip = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    blip.setAttribute("r", n.type === "border_router" ? "8" : "5.5");
-    blip.setAttribute("fill", blipColor);
-    blip.setAttribute("stroke", "#ffffff");
-    blip.setAttribute("stroke-width", "1.5");
-    g.appendChild(blip);
-
-    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    lbl.setAttribute("x", "10");
-    lbl.setAttribute("y", "4");
-    lbl.setAttribute("fill", "#f8fafc");
-    lbl.setAttribute("font-size", "10");
-    lbl.setAttribute("font-family", "monospace");
-    lbl.setAttribute("font-weight", "600");
-    lbl.textContent = `${n.label || `Node ${n.node_id}`}${n.rssi ? ` (${n.rssi}dBm)` : ''}`;
-    g.appendChild(lbl);
-
-    g.addEventListener("click", () => showNodeInspector(n));
-    blipsG.appendChild(g);
-    n.elem = g;
-  });
-
-  // Tactical Corner Header
-  const head = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  head.setAttribute("x", "20");
-  head.setAttribute("y", "30");
-  head.setAttribute("fill", "#22c55e");
-  head.setAttribute("font-size", "11");
-  head.setAttribute("font-family", "monospace");
-  head.setAttribute("font-weight", "700");
-  head.textContent = `🎯 SONAR SWEEP: ${nodes.length} TARGETS ACQUIRED`;
-  svg.appendChild(head);
-
-  updateTopologyLegend();
-}
-
-/* ==========================================================================
-   VISUAL PERSPECTIVE 5: Radial Sunburst Partition View
-   ========================================================================== */
-function renderSunburst(nodes, edges) {
-  const svg = document.getElementById("mesh-svg");
-  if (!svg) return;
-  svg.innerHTML = "";
-  const rect = svg.getBoundingClientRect();
-  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
-  const height = Math.max(rect.height || 540, 500);
-
-  if (!nodes || nodes.length === 0) {
-    renderEmptyTopology(svg, width, height);
-    return;
-  }
-
-  const cx = width / 2;
-  const cy = height / 2;
-  const affinity = resolveBorderRouterAffinity(nodes, edges);
-  topologyPhysicsState.affinityData = affinity;
-
-  const tbrs = nodes.filter(n => n.type === "border_router");
-  const nonTbrs = nodes.filter(n => n.type !== "border_router");
-
-  const sunburstG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  svg.appendChild(sunburstG);
-
-  // Center Core Circle (Thread Network PAN)
-  const coreCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  coreCircle.setAttribute("cx", cx);
-  coreCircle.setAttribute("cy", cy);
-  coreCircle.setAttribute("r", "52");
-  coreCircle.setAttribute("fill", "#0f172a");
-  coreCircle.setAttribute("stroke", "#38bdf8");
-  coreCircle.setAttribute("stroke-width", "2.5");
-  sunburstG.appendChild(coreCircle);
-
-  const coreText1 = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  coreText1.setAttribute("x", cx);
-  coreText1.setAttribute("y", cy - 6);
-  coreText1.setAttribute("fill", "#38bdf8");
-  coreText1.setAttribute("font-size", "11");
-  coreText1.setAttribute("font-weight", "700");
-  coreText1.setAttribute("text-anchor", "middle");
-  coreText1.textContent = "THREAD PAN";
-  sunburstG.appendChild(coreText1);
-
-  const coreText2 = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  coreText2.setAttribute("x", cx);
-  coreText2.setAttribute("y", cy + 12);
-  coreText2.setAttribute("fill", "#94a3b8");
-  coreText2.setAttribute("font-size", "10");
-  coreText2.setAttribute("font-weight", "600");
-  coreText2.setAttribute("text-anchor", "middle");
-  coreText2.textContent = `${nodes.length} Devices`;
-  sunburstG.appendChild(coreText2);
-
-  // SVG Donut Arc Helper
-  const describeArc = (x, y, r1, r2, startAngle, endAngle) => {
-    const p1 = { x: x + r2 * Math.cos(startAngle), y: y + r2 * Math.sin(startAngle) };
-    const p2 = { x: x + r2 * Math.cos(endAngle), y: y + r2 * Math.sin(endAngle) };
-    const p3 = { x: x + r1 * Math.cos(endAngle), y: y + r1 * Math.sin(endAngle) };
-    const p4 = { x: x + r1 * Math.cos(startAngle), y: y + r1 * Math.sin(startAngle) };
-    const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
-    return `M ${p1.x} ${p1.y} A ${r2} ${r2} 0 ${largeArc} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${r1} ${r1} 0 ${largeArc} 0 ${p4.x} ${p4.y} Z`;
+  svg.onpointerdown = (ev) => {
+    if (ev.target && ev.target.closest && ev.target.closest(".sankey-node-card")) return;
+    isCanvasPanning = true;
+    panStartX = ev.clientX - topologyPhysicsState.panX;
+    panStartY = ev.clientY - topologyPhysicsState.panY;
+    svg.style.cursor = "grabbing";
   };
 
-  // Ring 1: Border Routers (r: 60 -> 135)
-  const tbrCount = Math.max(tbrs.length, 1);
-  const tbrAngleSpan = (2 * Math.PI) / tbrCount;
+  const onWindowPointerMove = (ev) => {
+    if (!isCanvasPanning) return;
+    topologyPhysicsState.panX = ev.clientX - panStartX;
+    topologyPhysicsState.panY = ev.clientY - panStartY;
+    updateViewportTransform();
+  };
 
-  tbrs.forEach((tbr, idx) => {
-    const a1 = idx * tbrAngleSpan - Math.PI / 2;
-    const a2 = a1 + tbrAngleSpan - 0.04;
-    const aff = affinity.brMap[tbr.id] || { color: "#0284c7" };
+  const onWindowPointerUp = () => {
+    if (isCanvasPanning) {
+      isCanvasPanning = false;
+      svg.style.cursor = "grab";
+    }
+  };
 
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", describeArc(cx, cy, 60, 135, a1, a2));
-    path.setAttribute("fill", aff.color || "#0284c7");
-    path.setAttribute("fill-opacity", "0.85");
-    path.setAttribute("stroke", "#0f172a");
-    path.setAttribute("stroke-width", "2");
-    path.style.cursor = "pointer";
+  window.addEventListener("pointermove", onWindowPointerMove);
+  window.addEventListener("pointerup", onWindowPointerUp);
 
-    path.addEventListener("click", () => showNodeInspector(tbr));
-    sunburstG.appendChild(path);
-    tbr.elem = path;
-
-    const midAngle = (a1 + a2) / 2;
-    const midR = 98;
-    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    lbl.setAttribute("x", cx + midR * Math.cos(midAngle));
-    lbl.setAttribute("y", cy + midR * Math.sin(midAngle) + 4);
-    lbl.setAttribute("fill", "#ffffff");
-    lbl.setAttribute("font-size", "10");
-    lbl.setAttribute("font-weight", "700");
-    lbl.setAttribute("text-anchor", "middle");
-    lbl.textContent = (tbr.label || `TBR ${idx + 1}`).substring(0, 12);
-    sunburstG.appendChild(lbl);
-  });
-
-  // Ring 2: Member Devices (r: 142 -> 235)
-  const nonTbrCount = Math.max(nonTbrs.length, 1);
-  const nonTbrAngleSpan = (2 * Math.PI) / nonTbrCount;
-
-  nonTbrs.forEach((n, idx) => {
-    const a1 = idx * nonTbrAngleSpan - Math.PI / 2;
-    const a2 = a1 + nonTbrAngleSpan - 0.03;
-    const isRouter = n.type === "router";
-    const sliceColor = isRouter ? "#10b981" : "#8b5cf6";
-
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", describeArc(cx, cy, 142, 235, a1, a2));
-    path.setAttribute("fill", sliceColor);
-    path.setAttribute("fill-opacity", "0.78");
-    path.setAttribute("stroke", "#0f172a");
-    path.setAttribute("stroke-width", "1.5");
-    path.style.cursor = "pointer";
-
-    path.addEventListener("click", () => showNodeInspector(n));
-    sunburstG.appendChild(path);
-    n.elem = path;
-
-    const midAngle = (a1 + a2) / 2;
-    const midR = 188;
-    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    lbl.setAttribute("x", cx + midR * Math.cos(midAngle));
-    lbl.setAttribute("y", cy + midR * Math.sin(midAngle) + 3);
-    lbl.setAttribute("fill", "#ffffff");
-    lbl.setAttribute("font-size", "9");
-    lbl.setAttribute("font-weight", "600");
-    lbl.setAttribute("text-anchor", "middle");
-    lbl.textContent = (n.label || `Node ${n.node_id}`).substring(0, 10);
-    sunburstG.appendChild(lbl);
-  });
-
-  const header = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  header.setAttribute("x", "20");
-  header.setAttribute("y", "30");
-  header.setAttribute("fill", "#38bdf8");
-  header.setAttribute("font-size", "11");
-  header.setAttribute("font-weight", "700");
-  header.textContent = "🍩 RADIAL SUNBURST PARTITION HIERARCHY";
-  svg.appendChild(header);
-
-  updateTopologyLegend();
-}
-
-/* ==========================================================================
-   VISUAL PERSPECTIVE 6: Circular Chord / Routing Ribbon Bundle
-   ========================================================================== */
-function renderChordBundle(nodes, edges) {
-  const svg = document.getElementById("mesh-svg");
-  if (!svg) return;
-  svg.innerHTML = "";
-  const rect = svg.getBoundingClientRect();
-  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
-  const height = Math.max(rect.height || 540, 500);
-
-  if (!nodes || nodes.length === 0) {
-    renderEmptyTopology(svg, width, height);
-    return;
-  }
-
-  const cx = width / 2;
-  const cy = height / 2;
-  const R = Math.min(cx, cy) - 75;
-
-  const chordsG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  const perimeterG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  svg.appendChild(chordsG);
-  svg.appendChild(perimeterG);
-
-  const N = Math.max(nodes.length, 1);
-  const posMap = {};
-
-  nodes.forEach((n, idx) => {
-    const angle = (2 * Math.PI * idx) / N - Math.PI / 2;
-    posMap[n.id] = {
-      x: cx + R * Math.cos(angle),
-      y: cy + R * Math.sin(angle),
-      angle,
-    };
-  });
-
-  const chordElemsByNode = {};
-  nodes.forEach(n => { chordElemsByNode[n.id] = []; });
-
-  // Interior Curved Chords
-  edges.forEach((e) => {
-    const sId = typeof e.source === "object" ? e.source.id : e.source;
-    const tId = typeof e.target === "object" ? e.target.id : e.target;
-    const p1 = posMap[sId];
-    const p2 = posMap[tId];
-    if (!p1 || !p2) return;
-
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "#38bdf8");
-    path.setAttribute("stroke-width", "2.2");
-    path.setAttribute("stroke-opacity", "0.5");
-    path.style.transition = "stroke 0.2s, stroke-width 0.2s, stroke-opacity 0.2s";
-
-    chordsG.appendChild(path);
-    if (chordElemsByNode[sId]) chordElemsByNode[sId].push(path);
-    if (chordElemsByNode[tId]) chordElemsByNode[tId].push(path);
-  });
-
-  // Perimeter Node Badges
-  nodes.forEach((n) => {
-    const pos = posMap[n.id];
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.style.cursor = "pointer";
-
-    const isTbr = n.type === "border_router";
-    const isRouter = n.type === "router";
-    const color = isTbr ? "#38bdf8" : (isRouter ? "#10b981" : "#8b5cf6");
-
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", pos.x);
-    circle.setAttribute("cy", pos.y);
-    circle.setAttribute("r", isTbr ? "9" : "7");
-    circle.setAttribute("fill", color);
-    circle.setAttribute("stroke", "#0f172a");
-    circle.setAttribute("stroke-width", "2");
-    g.appendChild(circle);
-
-    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    const isRight = Math.cos(pos.angle) >= 0;
-    const lx = pos.x + (isRight ? 12 : -12);
-    const ly = pos.y + 4;
-    lbl.setAttribute("x", lx);
-    lbl.setAttribute("y", ly);
-    lbl.setAttribute("fill", "#f8fafc");
-    lbl.setAttribute("font-size", "10");
-    lbl.setAttribute("font-weight", isTbr ? "700" : "600");
-    lbl.setAttribute("text-anchor", isRight ? "start" : "end");
-    lbl.textContent = (n.label || `Node ${n.node_id}`).substring(0, 14);
-    g.appendChild(lbl);
-
-    // Hover isolate interaction
-    g.addEventListener("mouseenter", () => {
-      const activeSet = new Set(chordElemsByNode[n.id] || []);
-      chordsG.childNodes.forEach((ch) => {
-        if (activeSet.has(ch)) {
-          ch.setAttribute("stroke", "#10b981");
-          ch.setAttribute("stroke-width", "4");
-          ch.setAttribute("stroke-opacity", "1.0");
-        } else {
-          ch.setAttribute("stroke-opacity", "0.06");
-        }
-      });
-    });
-
-    g.addEventListener("mouseleave", () => {
-      chordsG.childNodes.forEach((ch) => {
-        ch.setAttribute("stroke", "#38bdf8");
-        ch.setAttribute("stroke-width", "2.2");
-        ch.setAttribute("stroke-opacity", "0.5");
-      });
-    });
-
-    g.addEventListener("click", () => showNodeInspector(n));
-    perimeterG.appendChild(g);
-    n.elem = g;
-  });
-
-  const header = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  header.setAttribute("x", "20");
-  header.setAttribute("y", "30");
-  header.setAttribute("fill", "#38bdf8");
-  header.setAttribute("font-size", "11");
-  header.setAttribute("font-weight", "700");
-  header.textContent = "🕸️ CIRCULAR CHORD / ROUTING RIBBON BUNDLE";
-  svg.appendChild(header);
+  svg.onwheel = (ev) => {
+    ev.preventDefault();
+    const scaleFactor = ev.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.35, Math.min(3.0, topologyPhysicsState.zoom * scaleFactor));
+    const svgRect = svg.getBoundingClientRect();
+    const mx = ev.clientX - svgRect.left;
+    const my = ev.clientY - svgRect.top;
+    topologyPhysicsState.panX = mx - ((mx - topologyPhysicsState.panX) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.panY = my - ((my - topologyPhysicsState.panY) * newZoom) / topologyPhysicsState.zoom;
+    topologyPhysicsState.zoom = newZoom;
+    updateViewportTransform();
+  };
 
   updateTopologyLegend();
 }

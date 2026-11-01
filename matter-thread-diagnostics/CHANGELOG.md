@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.5.1] - 2026-11-01
+
+### Changed & Improved: Topology Visuals & Canvas Navigation
+- **Restored Core Node Visualizations**:
+  - **Force / RF Mesh**: Restored standard organic RF signal-strength physics simulation as the default mode.
+  - **Tree / Hierarchy**: Restored top-down hierarchical layout mode (TBR gateways at Top $\rightarrow$ Routing backbone $\rightarrow$ End devices) with collision repulsion, node circles, and halos.
+- **Upgraded Transit Map Navigation**:
+  - **Canvas Background Drag & Pan**: Drag anywhere on the background canvas to smoothly pan across large networks without clipping.
+  - **Mouse / Trackpad Wheel Zoom**: Continuous smooth zooming from 0.35x to 3.0x with pointer focus.
+  - **Draggable Metro Stations**: Stations can be grabbed and dragged to custom positions with real-time recalculation of 45°/90° rectilinear metro track lines (`redrawMetroLines()`).
+  - **1-Click Reset Zoom**: "Reset Zoom" button restores canvas transformation cleanly.
+- **Upgraded Routing Flow (Sankey)**:
+  - Enabled canvas background panning and wheel zoom so large routing trees remain easily navigable.
+  - Enabled node card dragging for custom alignment.
+- **Removed Unwanted Visual Modes**:
+  - Removed **Radar Scope**, **Sunburst**, and **Chord Bundle** views and their associated CSS animations to keep the interface clean and focused.
+
 ## [2.5.0] - 2026-11-01
 
 ### Added: 2.4 GHz Network Coexistence Analyzer & Live Overlap Graph

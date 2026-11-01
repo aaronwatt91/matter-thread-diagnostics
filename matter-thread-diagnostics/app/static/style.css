@@ -634,22 +634,6 @@ body {
   font-weight: 600;
 }
 
-/* Radar Sweep Keyframe for Tactical Sonar Scope */
-@keyframes radarSweep {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.radar-sweep-beam {
-  transform-origin: center center;
-  animation: radarSweep 6s linear infinite;
-  pointer-events: none;
-}
-
 /* Signal Matrix 2D Table */
 .matrix-table {
   width: 100%;
