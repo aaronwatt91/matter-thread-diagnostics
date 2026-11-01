@@ -4505,6 +4505,12 @@ const house3DState = {
   nodeObjects: new Map(),
   edgeObjects: [],
   pulseObjects: [],
+  linkDataList: [],
+  isDraggingNode: false,
+  draggedGroup: null,
+  dragPlane: null,
+  dragOffset: null,
+  dragIntersect: null,
   floorCutawayMode: "all",
   wallOpacity: 0.80,
   raycaster: null,
@@ -4515,6 +4521,35 @@ const house3DState = {
   animFrameId: null,
   resizeObserver: null
 };
+
+function getStoredCustom3DPositions() {
+  try {
+    const raw = localStorage.getItem("ha_matter_custom_3d_positions");
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function setStoredCustom3DPosition(devKey, pos) {
+  try {
+    const positions = getStoredCustom3DPositions();
+    positions[String(devKey)] = {
+      x: Number(pos.x.toFixed(3)),
+      y: Number(pos.y.toFixed(3)),
+      z: Number(pos.z.toFixed(3))
+    };
+    localStorage.setItem("ha_matter_custom_3d_positions", JSON.stringify(positions));
+  } catch (err) {
+    console.warn("Failed to persist custom 3D position:", err);
+  }
+}
+
+function resetStoredCustom3DPositions() {
+  try {
+    localStorage.removeItem("ha_matter_custom_3d_positions");
+  } catch (_) {}
+}
 
 function getStoredRoomAssignments() {
   try {
@@ -4923,11 +4958,14 @@ function initHouse3DViewer() {
   gridHelper.position.y = -0.22;
   scene.add(gridHelper);
 
-  // 7. Raycaster & Pointer interactions
+  // 7. Raycaster, Drag Controls & Pointer interactions
   const raycaster = new THREE.Raycaster();
   const mouse = new THREE.Vector2();
   house3DState.raycaster = raycaster;
   house3DState.mouse = mouse;
+  house3DState.dragPlane = new THREE.Plane();
+  house3DState.dragOffset = new THREE.Vector3();
+  house3DState.dragIntersect = new THREE.Vector3();
 
   let isPointerDragging = false;
   let downX = 0;
@@ -4937,18 +4975,76 @@ function initHouse3DViewer() {
     isPointerDragging = false;
     downX = e.clientX;
     downY = e.clientY;
-  });
 
-  canvas.addEventListener("pointermove", (e) => {
-    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) {
-      isPointerDragging = true;
-    }
+    if (e.button !== 0) return; // Only primary button for node dragging
+
     const rect = canvas.getBoundingClientRect();
     mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-    // Hover tooltip detection
     raycaster.setFromCamera(mouse, camera);
+    const candidateSpheres = [];
+    for (const grp of house3DState.nodeObjects.values()) {
+      const sp = grp.getObjectByName("deviceSphere");
+      if (sp) candidateSpheres.push(sp);
+    }
+    const intersects = raycaster.intersectObjects(candidateSpheres, false);
+    if (intersects.length > 0) {
+      const hitSphere = intersects[0].object;
+      const targetGroup = hitSphere.parent;
+      if (targetGroup) {
+        house3DState.isDraggingNode = true;
+        house3DState.draggedGroup = targetGroup;
+        controls.enabled = false; // Disable orbit rotation so mouse moves the node!
+
+        // Plane perpendicular to camera direction passing through node position
+        const camDir = camera.getWorldDirection(new THREE.Vector3()).negate();
+        house3DState.dragPlane.setFromNormalAndCoplanarPoint(camDir, targetGroup.position);
+
+        if (raycaster.ray.intersectPlane(house3DState.dragPlane, house3DState.dragIntersect)) {
+          house3DState.dragOffset.copy(house3DState.dragIntersect).sub(targetGroup.position);
+        }
+
+        canvas.style.cursor = "grabbing";
+      }
+    }
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) {
+      isPointerDragging = true;
+    }
+
+    raycaster.setFromCamera(mouse, camera);
+
+    // Active 3D Node Dragging
+    if (house3DState.isDraggingNode && house3DState.draggedGroup) {
+      if (raycaster.ray.intersectPlane(house3DState.dragPlane, house3DState.dragIntersect)) {
+        const newPos = house3DState.dragIntersect.clone().sub(house3DState.dragOffset);
+        house3DState.draggedGroup.position.copy(newPos);
+        update3DLinksForNode(house3DState.draggedGroup);
+
+        const tooltip = document.getElementById("topology-3d-tooltip");
+        const nData = (house3DState.draggedGroup.userData && house3DState.draggedGroup.userData.nodeData) || {};
+        if (tooltip) {
+          tooltip.innerHTML = `
+            <div style="font-weight: 700; color: #38bdf8;">Moving: ${escapeHtml(nData.label || 'Device')}</div>
+            <div style="font-size: 11px; color: #10b981; margin-top: 3px;">📍 Position: (${newPos.x.toFixed(2)}, ${newPos.y.toFixed(2)}, ${newPos.z.toFixed(2)})</div>
+            <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;"><i class="fa-solid fa-floppy-disk"></i> Release to save placement</div>
+          `;
+          tooltip.style.left = `${Math.min(e.clientX - rect.left + 16, rect.width - 240)}px`;
+          tooltip.style.top = `${Math.max(10, e.clientY - rect.top - 20)}px`;
+          tooltip.style.display = "block";
+        }
+      }
+      return;
+    }
+
+    // Hover tooltip detection
     const candidateSpheres = [];
     for (const grp of house3DState.nodeObjects.values()) {
       const sp = grp.getObjectByName("deviceSphere");
@@ -4960,9 +5056,8 @@ function initHouse3DViewer() {
     if (intersects.length > 0) {
       const hit = intersects[0].object;
       const nData = hit.userData.nodeData;
-      canvas.style.cursor = "pointer";
+      canvas.style.cursor = "grab";
       if (tooltip && nData) {
-        const isZb = currentNetworkProtocol === "zigbee";
         const roomName = (BLAIR_ROOMS[hit.userData.roomId] || {}).name || hit.userData.roomId;
         tooltip.innerHTML = `
           <div style="font-weight: 700; color: #38bdf8; margin-bottom: 2px;">${escapeHtml(nData.label || 'Device')}</div>
@@ -4970,20 +5065,49 @@ function initHouse3DViewer() {
           <div style="font-size: 11px; margin-top: 4px;">📍 Room: <strong style="color: #f8fafc;">${escapeHtml(roomName)}</strong></div>
           ${nData.rssi !== null && nData.rssi !== undefined ? `<div style="font-size: 11px;">📶 RSSI: <strong>${escapeHtml(String(nData.rssi))} dBm</strong></div>` : ''}
           ${nData.lqi !== null && nData.lqi !== undefined ? `<div style="font-size: 11px;">📊 LQI: <strong>${escapeHtml(String(nData.lqi))} / 255</strong></div>` : ''}
-          <div style="font-size: 10px; color: #38bdf8; margin-top: 6px;"><i class="fa-solid fa-hand-pointer"></i> Click to inspect</div>
+          <div style="font-size: 10px; color: #38bdf8; margin-top: 6px;"><i class="fa-solid fa-arrows-up-down-left-right"></i> Drag to move anywhere • Click to inspect</div>
         `;
         tooltip.style.left = `${Math.min(e.clientX - rect.left + 14, rect.width - 240)}px`;
         tooltip.style.top = `${Math.max(10, e.clientY - rect.top - 20)}px`;
         tooltip.style.display = "block";
       }
     } else {
-      canvas.style.cursor = "grab";
+      canvas.style.cursor = "default";
       if (tooltip) tooltip.style.display = "none";
     }
   });
 
   canvas.addEventListener("pointerup", (e) => {
+    // If user was dragging a node, save its position
+    if (house3DState.isDraggingNode && house3DState.draggedGroup) {
+      const movedGrp = house3DState.draggedGroup;
+      const nData = (movedGrp.userData && movedGrp.userData.nodeData) || {};
+      const devKey = nData.id !== undefined && nData.id !== null ? String(nData.id) : (nData.ext_address || nData.label || "");
+
+      if (isPointerDragging) {
+        setStoredCustom3DPosition(devKey, movedGrp.position);
+        const lastScanElem = document.getElementById("topology-last-scan");
+        if (lastScanElem) {
+          lastScanElem.innerText = `✓ Position saved for ${nData.label || 'Device'}`;
+        }
+      } else {
+        // Quick click without moving
+        showNodeInspector(nData);
+        focus3DDevice(devKey);
+      }
+
+      house3DState.isDraggingNode = false;
+      house3DState.draggedGroup = null;
+      controls.enabled = true;
+      canvas.style.cursor = "grab";
+      const tooltip = document.getElementById("topology-3d-tooltip");
+      if (tooltip) tooltip.style.display = "none";
+      return;
+    }
+
     if (isPointerDragging) return;
+
+    // Background or click on sphere
     const rect = canvas.getBoundingClientRect();
     mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -5152,6 +5276,20 @@ function initHouse3DViewer() {
     });
   }
 
+  const btnResetPositions = document.getElementById("btn-reset-node-positions");
+  if (btnResetPositions) {
+    btnResetPositions.addEventListener("click", () => {
+      resetStoredCustom3DPositions();
+      btnResetPositions.innerHTML = `<i class="fa-solid fa-check"></i> Reset!`;
+      setTimeout(() => {
+        btnResetPositions.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Reset Positions`;
+      }, 1500);
+      if (lastTopologyData && lastTopologyData.nodes) {
+        renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+      }
+    });
+  }
+
   // 11. Render Animation Loop
   function animateHouse3D() {
     house3DState.animFrameId = requestAnimationFrame(animateHouse3D);
@@ -5176,15 +5314,12 @@ function initHouse3DViewer() {
       controls.update();
     }
 
-    // Outer beacon disks pulsing
-    const pulseFactor = 1.0 + Math.sin(performance.now() * 0.004) * 0.12;
-    const pulseAlpha = 0.55 + Math.sin(performance.now() * 0.004) * 0.25;
-
+    // Clean breathing glow on device spheres (pure spheres, no saturn rings)
+    const emissiveGlow = 0.55 + Math.sin(performance.now() * 0.0035) * 0.22;
     for (const grp of house3DState.nodeObjects.values()) {
-      const ring = grp.getObjectByName("pulseHalo");
-      if (ring) {
-        ring.scale.set(pulseFactor, pulseFactor, 1.0);
-        if (ring.material) ring.material.opacity = pulseAlpha;
+      const sp = grp.getObjectByName("deviceSphere");
+      if (sp && sp.material && !house3DState.isDraggingNode) {
+        sp.material.emissiveIntensity = emissiveGlow;
       }
     }
 
@@ -5221,6 +5356,7 @@ function renderHouse3DTopology(nodes, edges) {
     scene.remove(edgeObj);
   }
   house3DState.edgeObjects = [];
+  house3DState.linkDataList = [];
 
   for (const pulse of house3DState.pulseObjects) {
     scene.remove(pulse.mesh);
@@ -5256,21 +5392,34 @@ function renderHouse3DTopology(nodes, edges) {
     roomGroups[rId].push({ node, isCustom: res.isCustom });
   });
 
-  // Build 3D Device Nodes
+  const customPositions = getStoredCustom3DPositions();
+
+  // Build 3D Device Nodes (Pure glowing spheres, no Saturn rings)
   for (const [roomId, list] of Object.entries(roomGroups)) {
     const room = BLAIR_ROOMS[roomId] || BLAIR_ROOMS.living_room;
     const count = list.length;
 
     list.forEach((item, idx) => {
       const n = item.node;
-      const angle = (idx / count) * 2 * Math.PI;
-      const radius = count > 1 ? Math.min(0.25 + count * 0.08, 0.75) : 0;
-      const x = room.coords.x + (radius ? Math.cos(angle) * radius : 0);
-      const z = room.coords.z + (radius ? Math.sin(angle) * radius : 0);
-      const y = room.coords.y + (count > 2 && idx % 2 === 1 ? 0.22 : 0);
+      const devKey = n.id !== undefined && n.id !== null ? String(n.id) : (n.ext_address || n.label || "");
+      const savedPos = customPositions[devKey] || (n.ext_address && customPositions[n.ext_address]) || (n.label && customPositions[n.label]);
+
+      let x, y, z;
+      if (savedPos && typeof savedPos.x === "number") {
+        x = savedPos.x;
+        y = savedPos.y;
+        z = savedPos.z;
+      } else {
+        const angle = (idx / count) * 2 * Math.PI;
+        const radius = count > 1 ? Math.min(0.25 + count * 0.08, 0.75) : 0;
+        x = room.coords.x + (radius ? Math.cos(angle) * radius : 0);
+        z = room.coords.z + (radius ? Math.sin(angle) * radius : 0);
+        y = room.coords.y + (count > 2 && idx % 2 === 1 ? 0.22 : 0);
+      }
 
       const group = new THREE.Group();
       group.position.set(x, y, z);
+      group.userData = { isNode: true, nodeData: n, roomId, devKey };
 
       // Determine color
       let colorHex = "#10b981"; // default green
@@ -5291,8 +5440,8 @@ function renderHouse3DTopology(nodes, edges) {
 
       const threeColor = new THREE.Color(colorHex);
 
-      // 1. Core Sphere
-      const sphereGeo = new THREE.SphereGeometry(0.18, 24, 24);
+      // 1. Core Glowing Sphere (No Saturn rings)
+      const sphereGeo = new THREE.SphereGeometry(0.20, 32, 32);
       const sphereMat = new THREE.MeshStandardMaterial({
         color: threeColor,
         emissive: threeColor,
@@ -5302,25 +5451,12 @@ function renderHouse3DTopology(nodes, edges) {
       });
       const sphere = new THREE.Mesh(sphereGeo, sphereMat);
       sphere.name = "deviceSphere";
-      sphere.userData = { isNode: true, nodeData: n, roomId };
+      sphere.userData = { isNode: true, nodeData: n, roomId, devKey };
       group.add(sphere);
 
-      // 2. Pulsing Halo Ring
-      const ringGeo = new THREE.RingGeometry(0.24, 0.32, 32);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: threeColor,
-        transparent: true,
-        opacity: 0.7,
-        side: THREE.DoubleSide
-      });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.name = "pulseHalo";
-      ring.rotation.x = Math.PI / 2;
-      group.add(ring);
-
-      // 3. Floating Text Sprite Billboard
+      // 2. Floating Text Sprite Billboard
       const sprite = createCanvasTextSprite(n.label || "Device", colorHex);
-      sprite.position.set(0, 0.36, 0);
+      sprite.position.set(0, 0.38, 0);
       group.add(sprite);
 
       scene.add(group);
@@ -5376,11 +5512,21 @@ function renderHouse3DTopology(nodes, edges) {
       const pulseMesh = new THREE.Mesh(pulseGeo, pulseMat);
       scene.add(pulseMesh);
 
-      house3DState.pulseObjects.push({
+      const pulseObj = {
         mesh: pulseMesh,
         curve,
         t: Math.random(),
         speed: 0.007 + Math.random() * 0.005
+      };
+      house3DState.pulseObjects.push(pulseObj);
+
+      house3DState.linkDataList.push({
+        line,
+        pulseMesh,
+        pulseObj,
+        srcGroup,
+        tgtGroup,
+        edge: e
       });
     }
   });
@@ -5389,11 +5535,32 @@ function renderHouse3DTopology(nodes, edges) {
   const lastScanElem = document.getElementById("topology-last-scan");
   const countElem = document.getElementById("topology-router-count");
   if (lastScanElem) {
-    lastScanElem.innerText = `3D Twin Active: ${filteredNodes.length} devices mapped in Blair 4 TK house`;
+    lastScanElem.innerText = `3D Twin Active: ${filteredNodes.length} devices mapped in Blair 4 TK house (drag any sphere to position & auto-save)`;
   }
   if (countElem) {
     const isZb = currentNetworkProtocol === "zigbee";
     countElem.innerText = isZb ? "Zigbee 3D Twin Mode" : "Thread & Matter 3D Twin Mode";
+  }
+}
+
+function update3DLinksForNode(movedGroup) {
+  if (!house3DState.linkDataList) return;
+  for (const item of house3DState.linkDataList) {
+    if (item.srcGroup === movedGroup || item.tgtGroup === movedGroup) {
+      const p1 = item.srcGroup.position.clone();
+      const p2 = item.tgtGroup.position.clone();
+      const dist = p1.distanceTo(p2);
+      const mid = p1.clone().add(p2).multiplyScalar(0.5);
+      mid.y += Math.min(0.35 + dist * 0.08, 1.2);
+
+      const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
+      const points = curve.getPoints(24);
+      item.line.geometry.setFromPoints(points);
+      item.line.geometry.attributes.position.needsUpdate = true;
+      if (item.pulseObj) {
+        item.pulseObj.curve = curve;
+      }
+    }
   }
 }
 
@@ -5564,7 +5731,6 @@ function updateTopologySearchHighlight() {
   if (house3dState.nodeObjects) {
     for (const [id, grp] of house3dState.nodeObjects.entries()) {
       const sp = grp.getObjectByName("deviceSphere");
-      const halo = grp.getObjectByName("pulseHalo");
       const nData = (sp && sp.userData && sp.userData.nodeData) || {};
       if (!q) {
         if (sp && sp.material) sp.material.emissiveIntensity = 0.65;

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.8.2] - 2026-11-01
+
+### Added: Free-Hand 3D Node Dragging & Persistence, Clean Spheres, and Updated Blair House Model
+- **Updated 'The Blair 4 TK' 3D Architectural Model**:
+  - Replaced `Taylor_Wimpey_Blair.glb` with the updated architectural revision featuring a clean straight staircase, open timber banister, fitted wardrobe recess in the master bedroom, sealed upper void removed, level floor plates, vertical planar party wall, curved kitchen counter radius, and pitched bargeboards.
+- **Pure Glowing Sphere Geometry**:
+  - Replaced the previous "Saturn-like" outer orbiting rings on nodes with clean, glowing spheres (`SphereGeometry(0.20)` with PBR roughness/metalness).
+  - Subtle rhythmic emissive pulse animation reflecting real-time wireless heartbeat without distracting visual rings.
+- **Free-Hand 3D Node Dragging & Coordinate Saving**:
+  - Interactive click-and-drag directly in the 3D viewport on any Thread/Matter or Zigbee node.
+  - OrbitControls automatically lock during drag operations.
+  - Device ray projects against a camera-facing drag plane for intuitive 1-to-1 mouse/touch movement at any camera angle.
+  - Real-time dynamic updates: connected wireless RF link beams and animated pulse packets bend and follow the dragged node in real time.
+  - Custom `(x, y, z)` spatial coordinates are automatically committed to `localStorage['ha_matter_custom_3d_positions']` on release.
+  - Persisted custom placements survive page reloads, tab navigation, and network scans.
+- **Reset Node Positions Action**:
+  - Added "Reset Positions" toolbar button in the 3D twin controls to revert custom-dragged devices back to their room anchor defaults at any time.
+
 ## [2.8.1] - 2026-11-01
 
 ### Fixed: Home Assistant Ingress Asset Routing & 3D House Twin Discovery

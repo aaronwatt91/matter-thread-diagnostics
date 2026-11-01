@@ -70,12 +70,18 @@ class MeshGroup:
         self.faces.append([base_v, base_v+1, base_v+2])
 
     def add_box(self, x0, y0, z0, x1, y1, z1):
-        self.add_quad((x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), normal=(0, 0, -1))
-        self.add_quad((x0, y0, z1), (x0, y1, z1), (x1, y1, z1), (x1, y0, z1), normal=(0, 0, 1))
-        self.add_quad((x0, y0, z0), (x0, y0, z1), (x1, y0, z1), (x1, y0, z0), normal=(0, -1, 0))
-        self.add_quad((x1, y1, z0), (x1, y1, z1), (x0, y1, z1), (x0, y1, z0), normal=(0, 1, 0))
-        self.add_quad((x0, y1, z0), (x0, y1, z1), (x0, y0, z1), (x0, y0, z0), normal=(-1, 0, 0))
-        self.add_quad((x1, y0, z0), (x1, y0, z1), (x1, y1, z1), (x1, y0, z0), normal=(1, 0, 0))
+        # Bottom (-Z)
+        self.add_quad((x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0), normal=(0, 0, -1))
+        # Top (+Z)
+        self.add_quad((x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1), normal=(0, 0, 1))
+        # Front (-Y)
+        self.add_quad((x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1), normal=(0, -1, 0))
+        # Rear (+Y)
+        self.add_quad((x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1), normal=(0, 1, 0))
+        # Left (-X)
+        self.add_quad((x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1), normal=(-1, 0, 0))
+        # Right (+X)
+        self.add_quad((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1), normal=(1, 0, 0))
 
     def add_cylinder(self, x, y, z0, z1, radius, segments=12):
         for i in range(segments):
@@ -270,13 +276,13 @@ class ModelBuilder:
         ext.add_box(0.0, 0.0, 0.0, 1.05, t_front, 0.85)
         ext.add_box(1.05, 0.0, 0.0, 2.86, t_front, 0.85)  # under lounge window
         ext.add_box(2.86, 0.0, 0.0, 4.05, t_front, h_g)   # pier between window and door
-        ext.add_box(4.96, 0.0, 0.0, W, t_front, h_g)      # right pier (where EV charger mounts)
+        ext.add_box(4.96, 0.0, 0.0, W - t_right, t_front, h_g)      # right pier (where EV charger mounts)
         ext.add_box(0.0, 0.0, 0.85, 1.05, t_front, h_g)   # left corner pier
         ext.add_box(1.05, 0.0, 2.20, 2.86, t_front, h_g)  # lintel above lounge window
         ext.add_box(4.05, 0.0, 2.15, 4.96, t_front, h_g)  # lintel above front door
 
         # Intermediate floor band on front wall:
-        ext.add_box(0.0, 0.0, h_g, W, t_front, h_f1)
+        ext.add_box(0.0, 0.0, h_g, W - t_right, t_front, h_f1)
 
         # First floor front:
         ext.add_box(0.0, 0.0, h_f1, 1.25, t_front, h_eaves)
@@ -285,7 +291,7 @@ class ModelBuilder:
         ext.add_box(2.70, 0.0, h_f1, 4.05, t_front, h_eaves) # middle pier
         ext.add_box(4.05, 0.0, h_f1, 4.96, t_front, 3.70) # under en-suite window W4
         ext.add_box(4.05, 0.0, 4.60, 4.96, t_front, h_eaves) # above en-suite window W4
-        ext.add_box(4.96, 0.0, h_f1, W, t_front, h_eaves) # right corner pier
+        ext.add_box(4.96, 0.0, h_f1, W - t_right, t_front, h_eaves) # right corner pier
 
         # --- REAR WALL (Y = D-t_rear to D, X = 0 to W, Z = 0 to 5.10) ---
         ext.add_box(0.0, D-t_rear, 0.0, 0.90, D, h_g)      # left corner
@@ -293,10 +299,10 @@ class ModelBuilder:
         ext.add_box(0.90, D-t_rear, 2.10, 2.15, D, h_g)    # above kitchen window W2
         ext.add_box(2.15, D-t_rear, 0.0, 3.30, D, h_g)    # middle pier
         ext.add_box(3.30, D-t_rear, 2.15, 4.80, D, h_g)    # above French doors
-        ext.add_box(4.80, D-t_rear, 0.0, W, D, h_g)       # right corner pier
+        ext.add_box(4.80, D-t_rear, 0.0, W - t_right, D, h_g)       # right corner pier
 
         # Intermediate floor band on rear wall:
-        ext.add_box(0.0, D-t_rear, h_g, W, D, h_f1)
+        ext.add_box(0.0, D-t_rear, h_g, W - t_right, D, h_f1)
 
         # First floor rear:
         ext.add_box(0.0, D-t_rear, h_f1, 1.10, D, h_eaves)
@@ -305,7 +311,7 @@ class ModelBuilder:
         ext.add_box(2.45, D-t_rear, h_f1, 3.80, D, h_eaves)# middle pier
         ext.add_box(3.80, D-t_rear, h_f1, 4.75, D, 3.55)   # below Bed 3 window W8
         ext.add_box(3.80, D-t_rear, 4.75, 4.75, D, h_eaves)# above Bed 3 window
-        ext.add_box(4.75, D-t_rear, h_f1, W, D, h_eaves)  # right corner pier
+        ext.add_box(4.75, D-t_rear, h_f1, W - t_right, D, h_eaves)  # right corner pier
 
         # --- LEFT SIDE WALL (EXPOSED GABLE WALL) ---
         # Ground Floor: Window for Downstairs WC (Y in [5.10, 5.80], Z in [1.10, 1.95])
@@ -324,23 +330,35 @@ class ModelBuilder:
         p_l_front_eave = (0.0, 0.0, h_eaves)
         p_l_rear_eave  = (0.0, D, h_eaves)
         p_l_ridge      = (0.0, y_ridge, h_ridge)
-        ext.add_triangle(p_l_front_eave, p_l_rear_eave, p_l_ridge, normal=(-1, 0, 0))
+        ext.add_triangle(p_l_rear_eave, p_l_front_eave, p_l_ridge, normal=(-1, 0, 0))
         p_l_front_eave_in = (t_left, t_front, h_eaves)
         p_l_rear_eave_in  = (t_left, D-t_rear, h_eaves)
         p_l_ridge_in      = (t_left, y_ridge, h_ridge)
-        ext.add_triangle(p_l_rear_eave_in, p_l_front_eave_in, p_l_ridge_in, normal=(1, 0, 0))
+        ext.add_triangle(p_l_front_eave_in, p_l_rear_eave_in, p_l_ridge_in, normal=(1, 0, 0))
 
-        # --- RIGHT SIDE WALL (SEPARATING / PARTY WALL) ---
+        # --- RIGHT SIDE WALL (SEPARATING / PARTY WALL - NORMAL STRAIGHT BRICK WALL) ---
         party_wall = self.create_group("Separating_Party_Wall", "M_Party_Wall")
-        party_wall.add_box(W-t_right, t_front, 0.0, W, D-t_rear, h_eaves)
+        # Solid brick party wall spanning the full depth of the house (Y = 0.0 to D):
+        party_wall.add_box(W - t_right, 0.0, 0.0, W, D, h_eaves)
+
+        # Gable Triangle at right side (X in [W - t_right, W], Z from h_eaves to h_ridge at y_ridge)
         p_r_front_eave = (W, 0.0, h_eaves)
         p_r_rear_eave  = (W, D, h_eaves)
         p_r_ridge      = (W, y_ridge, h_ridge)
-        party_wall.add_triangle(p_r_rear_eave, p_r_front_eave, p_r_ridge, normal=(1, 0, 0))
-        p_r_front_eave_in = (W-t_right, t_front, h_eaves)
-        p_r_rear_eave_in  = (W-t_right, D-t_rear, h_eaves)
-        p_r_ridge_in      = (W-t_right, y_ridge, h_ridge)
-        party_wall.add_triangle(p_r_front_eave_in, p_r_rear_eave_in, p_r_ridge_in, normal=(-1, 0, 0))
+        # Outer Face at X = W (Normal pointing outwards +X):
+        party_wall.add_triangle(p_r_front_eave, p_r_rear_eave, p_r_ridge, normal=(1, 0, 0))
+
+        p_r_front_eave_in = (W - t_right, 0.0, h_eaves)
+        p_r_rear_eave_in  = (W - t_right, D, h_eaves)
+        p_r_ridge_in      = (W - t_right, y_ridge, h_ridge)
+        # Inner Face at X = W - t_right (Normal pointing inwards -X):
+        party_wall.add_triangle(p_r_rear_eave_in, p_r_front_eave_in, p_r_ridge_in, normal=(-1, 0, 0))
+
+        # Top sloped roof pitch caps closing the gable triangle under the roof tiles:
+        # Front pitch cap (sloping from front eave to ridge):
+        party_wall.add_quad(p_r_front_eave_in, p_r_front_eave, p_r_ridge, p_r_ridge_in)
+        # Rear pitch cap (sloping from ridge to rear eave):
+        party_wall.add_quad(p_r_ridge_in, p_r_ridge, p_r_rear_eave, p_r_rear_eave_in)
 
         # -------------------------------------------------------------
         # 3. INTERIOR PARTITION WALLS - GROUND FLOOR
@@ -410,22 +428,22 @@ class ModelBuilder:
         # -------------------------------------------------------------
         f_struct = self.create_group("First_Floor_Structure", "M_Wood_Structure")
         # Floor joists and deck covering the entire house except the stair flight opening
-        f_struct.add_box(t_left, t_front, h_g, 3.50, 3.90, h_f1)           # Under Master Bed 1
-        f_struct.add_box(3.50, t_front, h_g, W-t_right, 2.15, h_f1)        # Under En-Suite
-        f_struct.add_box(3.50, 2.15, h_g, 4.45, 4.00, h_f1)               # Under boxed wall beside bedroom
-        f_struct.add_box(t_left, 3.90, h_g, 4.45, 4.40, h_f1)             # Under Landing walkway
-        f_struct.add_box(t_left, 4.40, h_g, W-t_right, D-t_rear, h_f1)    # Under rear Bedrooms 2 & 3
+        f_struct.add_box(t_left, t_front, h_g, 3.45, 3.85, h_f1)           # Under Master Bed 1 front
+        f_struct.add_box(3.45, 2.15, h_g, 4.35, 3.85, h_f1)               # Under Master Bed 1 wardrobe recess
+        f_struct.add_box(3.45, t_front, h_g, W-t_right, 2.15, h_f1)        # Under En-Suite
+        f_struct.add_box(t_left, 3.85, h_g, 4.45, 4.30, h_f1)             # Under Landing walkway
+        f_struct.add_box(t_left, 4.30, h_g, W-t_right, D-t_rear, h_f1)    # Under rear Bedrooms 2 & 3
 
         # -------------------------------------------------------------
         # 4B. FIRST FLOOR BEDROOM CARPETS & LABELS
         # -------------------------------------------------------------
-        # Dedicated carpet groups labeled by bedroom:
+        # Dedicated carpet groups labeled by bedroom (STRICTLY LEVEL at Z = h_f1 to h_f1+0.015):
         c_landing = self.create_group("Landing_Carpet", "M_Flooring_Carpet")
-        c_landing.add_box(2.14, 3.90, h_f1, 4.45, 6.05, h_f1+0.015)
-        c_landing.add_box(2.14, 3.85, h_f1, 3.50, 3.90, h_f1+0.015) # D8 doorway entry
+        c_landing.add_box(2.14, 3.85, h_f1, 4.45, 6.05, h_f1+0.015)
 
         c_master = self.create_group("Carpet_Master_Bedroom_Largest", "M_Flooring_Carpet")
-        c_master.add_box(t_left, t_front, h_f1, 3.50, 3.90, h_f1+0.015)
+        c_master.add_box(t_left, t_front, h_f1, 3.45, 3.85, h_f1+0.015)
+        c_master.add_box(3.45, 2.15, h_f1, 4.35, 3.85, h_f1+0.015) # Wardrobe recess
 
         c_guest = self.create_group("Carpet_Guestroom_Bed2_Second_Smallest", "M_Flooring_Carpet")
         c_guest.add_box(t_left, 6.05, h_f1, 3.20, D-t_rear, h_f1+0.015)
@@ -446,10 +464,10 @@ class ModelBuilder:
         self.add_3d_text_plaque(lbl_base, lbl_text, "NURSERY (SMALLEST)",
                                 cx=4.30, cy=7.30, z_base=h_f1+0.015, plaque_w=1.15, plaque_d=0.28, scale=0.030)
 
-        # Tiles for Bathrooms:
+        # Tiles for Bathrooms (STRICTLY LEVEL at Z = h_f1 to h_f1+0.015):
         f_tiles = self.create_group("First_Floor_Tiles", "M_Flooring_Tiles")
-        f_tiles.add_box(3.50, t_front, h_f1, W-t_right, 2.15, h_f1+0.015) # En-Suite
-        f_tiles.add_box(t_left, 3.90, h_f1, 2.14, 6.05, h_f1+0.015)       # Family Bathroom
+        f_tiles.add_box(3.45, t_front, h_f1, W-t_right, 2.15, h_f1+0.015) # En-Suite
+        f_tiles.add_box(t_left, 3.85, h_f1, 2.14, 6.05, h_f1+0.015)       # Family Bathroom
 
         # Top Ceiling
         ceiling = self.create_group("First_Floor_Ceiling", "M_Interior_Ceiling")
@@ -469,21 +487,16 @@ class ModelBuilder:
         # 2. Back wall of En-Suite (Y = 2.05 to 2.15, X in [3.45, W-t_right]) floor to ceiling:
         int_f.add_box(3.45, 2.05, h_f1, W-t_right, 2.15, h_eaves)
 
-        # 3. BOXED-IN TOP OF STAIRS & SOLID WALL BESIDE BEDROOM (BLOCKS OFF THE DROP!):
-        # A. Solid partition wall along the stair flight boxing in the top of the stairs to ceiling:
-        # Runs along X = 4.35 to 4.45 from Y = 2.15 to Y = 4.00, extending floor-to-ceiling (h_f1 to h_eaves)!
-        int_f.add_box(4.35, 2.15, h_f1, 4.45, 4.00, h_eaves)
+        # 3. SOLID WALL BESIDE BEDROOM (BLOCKS OFF THE DROP DOWN STAIRS! NO GIANT CUBE):
+        # A. Solid partition wall separating Master Bed 1 from the stairwell:
+        # Runs along X = 4.35 to 4.45 from Y = 2.15 to Y = 3.85, extending floor-to-ceiling (h_f1 to h_eaves)!
+        int_f.add_box(4.35, 2.15, h_f1, 4.45, 3.85, h_eaves)
 
-        # B. "A bit of wall beside the bedroom that blocks off the drop":
-        # Solid wall segment from Master Bedroom 1 wall (X = 3.45) to the stair boxing (X = 4.45) at Y = 3.85 to 3.95,
-        # extending from floor h_f1 all the way to ceiling h_eaves!
-        int_f.add_box(3.45, 3.85, h_f1, 4.45, 3.95, h_eaves)
-
-        # C. Transverse wall dividing Master Bed 1 from Landing (Y = 3.85 to 3.95, X in [t_left, 3.45]):
+        # B. Transverse wall dividing Master Bed 1 from Landing (Y = 3.85 to 3.95, X in [t_left, 4.45]):
         # Door D8 into Master Bedroom: X in [2.30, 3.14], Z in [h_f1, h_f1+2.10]
         int_f.add_box(t_left, 3.85, h_f1, 2.30, 3.95, h_eaves)
         int_f.add_box(2.30, 3.85, h_f1+2.10, 3.14, 3.95, h_eaves) # D8 lintel
-        int_f.add_box(3.14, 3.85, h_f1, 3.45, 3.95, h_eaves)
+        int_f.add_box(3.14, 3.85, h_f1, 4.45, 3.95, h_eaves)
 
         # 4. Family Bathroom Inner Wall (Facing Landing Hallway at X = 2.09 to 2.19, Y in [3.85, 6.05]):
         # Door D9 opens directly from the Landing hallway:
@@ -505,33 +518,26 @@ class ModelBuilder:
         # -------------------------------------------------------------
         # 6. STAIRCASE & REALISTIC OPEN TIMBER BANISTER
         # -------------------------------------------------------------
+        # 6. STAIRCASE & REALISTIC OPEN TIMBER BANISTER (CLEAN STRAIGHT FLIGHT)
+        # -------------------------------------------------------------
         stairs = self.create_group("Staircase", "M_Staircase_Timber")
-        num_straight = 9
+        num_risers = 13
         stair_x0 = 4.45
         stair_x1 = W - t_right
         stair_y0 = 1.60
-        stair_y1 = 3.80
-        run_straight = (stair_y1 - stair_y0) / num_straight
-        rise = (h_f1 - 0.0) / 13
+        stair_y1 = 4.30
+        run_step = (stair_y1 - stair_y0) / num_risers
+        rise_step = (h_f1 - 0.0) / num_risers
 
-        # Straight flight (Steps 1 to 9)
-        for i in range(num_straight):
-            s_z0 = i * rise
-            s_z1 = (i + 1) * rise
-            sy0 = stair_y0 + i * run_straight
-            sy1 = stair_y0 + (i + 1) * run_straight
+        # 13 clean, plumb and level steps ascending straight to first floor landing:
+        for i in range(num_risers):
+            s_z0 = i * rise_step
+            s_z1 = (i + 1) * rise_step
+            sy0 = stair_y0 + i * run_step
+            sy1 = stair_y0 + (i + 1) * run_step
             # Tread nosing and step
             stairs.add_box(stair_x0, sy0, s_z1 - 0.03, stair_x1, sy1 + 0.02, s_z1)
             stairs.add_box(stair_x0, sy0, s_z0, stair_x1, sy0 + 0.03, s_z1)
-
-        # Winders (Steps 10, 11, 12, 13 turning out onto open Landing):
-        stairs.add_box(stair_x0 - 0.20, 3.80, 10*rise - 0.03, stair_x1, 4.10, 10*rise)
-        stairs.add_box(stair_x0 - 0.20, 3.80, 9*rise, stair_x1, 3.83, 10*rise)
-        stairs.add_box(stair_x0 - 0.45, 3.95, 11*rise - 0.03, stair_x1, 4.25, 11*rise)
-        stairs.add_box(stair_x0 - 0.45, 3.95, 10*rise, stair_x1, 3.98, 11*rise)
-        stairs.add_box(stair_x0 - 0.65, 4.10, 12*rise - 0.03, stair_x1 - 0.10, 4.40, 12*rise)
-        stairs.add_box(stair_x0 - 0.65, 4.10, 11*rise, stair_x1 - 0.10, 4.13, 12*rise)
-        stairs.add_box(3.50, 4.10, h_f1 - 0.03, 4.45, 4.40, h_f1) # Step 13 arrival flush with landing
 
         # REALISTIC OPEN TIMBER BANISTER ON FLIGHT:
         # 1. Bottom newel post (at foot of stairs in ground floor hallway):
@@ -539,34 +545,36 @@ class ModelBuilder:
         stairs.add_box(stair_x0 - 0.04, stair_y0 - 0.04, 0.0, stair_x0 + 0.04, stair_y0 + 0.04, 1.02)
         stairs.add_box(stair_x0 - 0.048, stair_y0 - 0.048, 1.02, stair_x0 + 0.048, stair_y0 + 0.048, 1.06)
 
-        # 2. Top flight newel post (at turn of flight, meeting the boxed-in wall):
-        z_top_flight = 9 * rise
-        stairs.add_box(stair_x0 - 0.04, stair_y1 - 0.04, z_top_flight, stair_x0 + 0.04, stair_y1 + 0.04, z_top_flight + 1.02)
-        stairs.add_box(stair_x0 - 0.048, stair_y1 - 0.048, z_top_flight + 1.02, stair_x0 + 0.048, stair_y1 + 0.048, z_top_flight + 1.06)
+        # 2. Top flight newel post (at top of stairs on first floor landing):
+        stairs.add_box(stair_x0 - 0.04, stair_y1 - 0.04, h_f1, stair_x0 + 0.04, stair_y1 + 0.04, h_f1 + 1.02)
+        stairs.add_box(stair_x0 - 0.048, stair_y1 - 0.048, h_f1 + 1.02, stair_x0 + 0.048, stair_y1 + 0.048, h_f1 + 1.06)
 
         # 3. Sloping Handrail (True angled beam along the pitch connecting bottom and top newel posts):
         handrail_h = 0.90
         p_hr_start = (stair_x0, stair_y0, handrail_h)
-        p_hr_end = (stair_x0, stair_y1, z_top_flight + handrail_h)
+        p_hr_end = (stair_x0, stair_y1, h_f1 + handrail_h)
         stairs.add_angled_beam(p_hr_start, p_hr_end, width=0.055, thickness=0.045)
 
         # 4. Sloping Base Rail (True angled beam along stringer):
         p_br_start = (stair_x0, stair_y0, 0.06)
-        p_br_end = (stair_x0, stair_y1, z_top_flight + 0.06)
+        p_br_end = (stair_x0, stair_y1, h_f1 + 0.06)
         stairs.add_angled_beam(p_br_start, p_br_end, width=0.045, thickness=0.025)
 
-        # 5. Clean baluster spindles (Square 30mm x 30mm upright timber spindles):
+        # 5. Clean baluster spindles (Square 30mm x 30mm upright timber spindles along flight):
         num_spindles = 14
         for s in range(num_spindles):
             t = (s + 0.5) / float(num_spindles)
             spy = stair_y0 + t * (stair_y1 - stair_y0)
-            sp_pitch_z = t * z_top_flight
+            sp_pitch_z = t * h_f1
             sp_bottom_z = sp_pitch_z + 0.06 + 0.02
             sp_top_z = sp_pitch_z + handrail_h - 0.025
             stairs.add_box(stair_x0 - 0.015, spy - 0.015, sp_bottom_z, stair_x0 + 0.015, spy + 0.015, sp_top_z)
 
-        # Note: At the top of the flight, the stairs turn onto the landing where the area beside
-        # the bedroom is solid boxed-in wall from floor to ceiling (no drop-off down the stairs).
+        # 6. Horizontal Landing Balustrade Guarding the Stairwell (between Bedroom 1 wall at Y=3.85 and top newel at Y=4.30):
+        stairs.add_box(stair_x0 - 0.025, 3.85, h_f1 + 0.86, stair_x0 + 0.025, 4.30, h_f1 + 0.91) # horizontal handrail
+        stairs.add_box(stair_x0 - 0.020, 3.85, h_f1 + 0.04, stair_x0 + 0.020, 4.30, h_f1 + 0.07) # horizontal baserail
+        for ly in [3.96, 4.07, 4.18]:
+            stairs.add_box(stair_x0 - 0.015, ly - 0.015, h_f1 + 0.07, stair_x0 + 0.015, ly + 0.015, h_f1 + 0.86)
 
         # -------------------------------------------------------------
         # 7. ROOF STRUCTURE & 5 SOLAR PANELS ON REAR ROOF
@@ -599,10 +607,20 @@ class ModelBuilder:
 
         # Fascia Boards, Soffits & Verge Bargeboards
         fascia = self.create_group("Fascia_and_Soffits", "M_PVC_White")
-        fascia.add_box(-overhang_x_left, -overhang_y - 0.03, h_eaves - 0.18, W, -overhang_y, h_eaves + 0.05)
-        fascia.add_box(-overhang_x_left, D + overhang_y, h_eaves - 0.18, W, D + overhang_y + 0.03, h_eaves + 0.05)
-        fascia.add_box(-overhang_x_left - 0.03, -overhang_y, h_eaves - 0.15, -overhang_x_left, y_ridge, h_ridge + 0.06)
-        fascia.add_box(-overhang_x_left - 0.03, y_ridge, h_ridge + 0.06, -overhang_x_left, D + overhang_y, h_eaves - 0.15)
+        # 1. Horizontal eaves fascia boards along front and rear:
+        fascia.add_box(-overhang_x_left - 0.03, -overhang_y - 0.025, h_eaves - 0.18, W, -overhang_y, h_eaves + 0.04)
+        fascia.add_box(-overhang_x_left - 0.03, D + overhang_y, h_eaves - 0.18, W, D + overhang_y + 0.025, h_eaves + 0.04)
+
+        # 2. Sloping pitched verge bargeboards along left gable (FOLLOWS ROOF PITCH! NO FLAT RECTANGLES):
+        p_bb_front = (-overhang_x_left - 0.015, -overhang_y, h_eaves - 0.05)
+        p_bb_ridge = (-overhang_x_left - 0.015, y_ridge, h_ridge + 0.05)
+        p_bb_rear  = (-overhang_x_left - 0.015, D + overhang_y, h_eaves - 0.05)
+        fascia.add_angled_beam(p_bb_front, p_bb_ridge, width=0.03, thickness=0.18)
+        fascia.add_angled_beam(p_bb_ridge, p_bb_rear, width=0.03, thickness=0.18)
+
+        # 3. Horizontal soffits under eaves overhangs:
+        fascia.add_box(-overhang_x_left, -overhang_y, h_eaves - 0.18, W, 0.00, h_eaves - 0.16)
+        fascia.add_box(-overhang_x_left, D, h_eaves - 0.18, W, D + overhang_y, h_eaves - 0.16)
 
         # Gutters & Downpipes
         gutters = self.create_group("Rainwater_Gutters", "M_Gutters")
@@ -811,9 +829,55 @@ class ModelBuilder:
         k_top  = self.create_group("Kitchen_Worktop", "M_Kitchen_Worktop")
         k_sink = self.create_group("Kitchen_Sink_Hob", "M_Chrome")
 
-        # Run 1: Along REAR WALL under Kitchen Window W2:
-        k_base.add_box(t_left, D-t_rear-0.60, 0.0, 2.65, D-t_rear, 0.87)
-        k_top.add_box(t_left, D-t_rear-0.62, 0.87, 2.67, D-t_rear, 0.91)
+        # Run 1: Along REAR WALL under Kitchen Window W2 (Curved non-square end unit):
+        y_rear_wall = D - t_rear
+        y_front_edge = y_rear_wall - 0.60
+        r_end = 0.28   # 280mm radius curved radius corner
+        x_end_base = 2.65
+        xc_base = x_end_base - r_end
+        yc_base = y_front_edge + r_end
+
+        # Straight counter base run from gable wall to start of curve:
+        k_base.add_box(t_left, y_front_edge, 0.0, xc_base, y_rear_wall, 0.87)
+        # Rear rectangular portion of end unit behind the curve:
+        k_base.add_box(xc_base, yc_base, 0.0, x_end_base, y_rear_wall, 0.87)
+
+        # Smooth curved radius front-outer corner for base cabinet:
+        segs = 8
+        for i in range(segs):
+            th0 = -math.pi/2.0 + (math.pi/2.0) * (i / float(segs))
+            th1 = -math.pi/2.0 + (math.pi/2.0) * ((i + 1) / float(segs))
+            p0 = (xc_base + r_end * math.cos(th0), yc_base + r_end * math.sin(th0))
+            p1 = (xc_base + r_end * math.cos(th1), yc_base + r_end * math.sin(th1))
+            # Curved vertical door/plinth panel
+            k_base.add_quad((p0[0], p0[1], 0.0), (p1[0], p1[1], 0.0), (p1[0], p1[1], 0.87), (p0[0], p0[1], 0.87))
+            # Top cap
+            k_base.add_triangle((xc_base, yc_base, 0.87), (p0[0], p0[1], 0.87), (p1[0], p1[1], 0.87))
+            # Bottom cap
+            k_base.add_triangle((xc_base, yc_base, 0.0), (p1[0], p1[1], 0.0), (p0[0], p0[1], 0.0))
+
+        # Matching Post-Formed Bullnose Worktop (with 20mm overhang and matching curved radius):
+        r_top = r_end + 0.02
+        y_front_top = y_front_edge - 0.02
+        x_end_top = x_end_base + 0.02
+        xc_top = xc_base
+        yc_top = yc_base
+
+        k_top.add_box(t_left, y_front_top, 0.87, xc_top, y_rear_wall, 0.91)
+        k_top.add_box(xc_top, yc_top, 0.87, x_end_top, y_rear_wall, 0.91)
+
+        for i in range(segs):
+            th0 = -math.pi/2.0 + (math.pi/2.0) * (i / float(segs))
+            th1 = -math.pi/2.0 + (math.pi/2.0) * ((i + 1) / float(segs))
+            p0_top = (xc_top + r_top * math.cos(th0), yc_top + r_top * math.sin(th0))
+            p1_top = (xc_top + r_top * math.cos(th1), yc_top + r_top * math.sin(th1))
+            # Curved vertical bullnose worktop rim
+            k_top.add_quad((p0_top[0], p0_top[1], 0.87), (p1_top[0], p1_top[1], 0.87),
+                           (p1_top[0], p1_top[1], 0.91), (p0_top[0], p0_top[1], 0.91))
+            # Top surface of worktop
+            k_top.add_triangle((xc_top, yc_top, 0.91), (p0_top[0], p0_top[1], 0.91), (p1_top[0], p1_top[1], 0.91))
+            # Underside of worktop
+            k_top.add_triangle((xc_top, yc_top, 0.87), (p1_top[0], p1_top[1], 0.87), (p0_top[0], p0_top[1], 0.87))
 
         # Run 2: Return along LEFT GABLE WALL from partition to rear counter:
         k_base.add_box(t_left, 6.30, 0.0, t_left+0.60, D-t_rear-0.60, 0.87)
@@ -1060,7 +1124,7 @@ class ModelBuilder:
             materials = {
                 "M_Concrete": {"Kd": (0.60, 0.60, 0.60), "Ks": (0.1, 0.1, 0.1), "Ns": 10},
                 "M_Exterior_BrickRender": {"Kd": (0.75, 0.48, 0.38), "Ks": (0.15, 0.12, 0.10), "Ns": 15},
-                "M_Party_Wall": {"Kd": (0.78, 0.77, 0.75), "Ks": (0.05, 0.05, 0.05), "Ns": 5},
+                "M_Party_Wall": {"Kd": (0.75, 0.48, 0.38), "Ks": (0.15, 0.12, 0.10), "Ns": 15},
                 "M_Roof_Tiles": {"Kd": (0.22, 0.23, 0.25), "Ks": (0.2, 0.2, 0.2), "Ns": 30},
                 "M_Ridge_Tiles": {"Kd": (0.18, 0.19, 0.20), "Ks": (0.2, 0.2, 0.2), "Ns": 35},
                 "M_Solar_Panels": {"Kd": (0.08, 0.10, 0.15), "Ks": (0.9, 0.9, 0.95), "Ns": 100},
@@ -1147,7 +1211,7 @@ class ModelBuilder:
         materials_pbr = {
             "M_Concrete": {"baseColor": [0.60, 0.60, 0.60, 1.0], "roughness": 0.8, "metallic": 0.0},
             "M_Exterior_BrickRender": {"baseColor": [0.75, 0.48, 0.38, 1.0], "roughness": 0.85, "metallic": 0.0},
-            "M_Party_Wall": {"baseColor": [0.78, 0.77, 0.75, 1.0], "roughness": 0.90, "metallic": 0.0},
+            "M_Party_Wall": {"baseColor": [0.75, 0.48, 0.38, 1.0], "roughness": 0.85, "metallic": 0.0},
             "M_Roof_Tiles": {"baseColor": [0.22, 0.23, 0.25, 1.0], "roughness": 0.75, "metallic": 0.0},
             "M_Ridge_Tiles": {"baseColor": [0.18, 0.19, 0.20, 1.0], "roughness": 0.70, "metallic": 0.0},
             "M_Solar_Panels": {"baseColor": [0.08, 0.10, 0.15, 1.0], "roughness": 0.15, "metallic": 0.85},
