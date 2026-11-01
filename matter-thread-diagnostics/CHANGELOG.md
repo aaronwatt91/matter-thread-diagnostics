@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.7.1] - 2026-11-01
+
+### Fixed: Strict Protocol Isolation & Zigbee Channel / View Desynchronization
+- **Strict Protocol Isolation across All Tabs**:
+  - `activateTab(tabId)` now strictly checks `currentNetworkProtocol`:
+    - Switching to **Topology** (`tab-topology`) in Zigbee mode loads `currentZigbeeTelemetry.topology` and never overwrites it with Thread topology.
+    - Switching to **Channel** (`tab-channel`) in Zigbee mode renders Zigbee Radio Coordinator info and never invokes `fetchOtbrChannelInfo()`, preventing Thread channel/PAN ID from overwriting the radio card.
+    - Switching to **Live Scan** (`tab-rules`) renders Zigbee tables and never falls back to Thread Border Routers or Cluster 0x0035 tables.
+- **Topology Perspective Resynchronization**:
+  - `dispatchTopologyRender()` locks `lastTopologyData` to `currentZigbeeTelemetry.topology` in Zigbee mode and `currentTelemetry.topology` in Thread mode, ensuring clicking **Force / RF Mesh**, **Tree / Hierarchy**, **Transit Map**, **Routing Flow (Sankey)**, or **Signal Matrix** stays 100% Zigbee.
+  - Nodes in Zigbee topology labeled `★ COORD` or `COORD`, `RTR`, and `DEV` with real LQI metrics (removing Thread `TBR` and `SED` labels).
+  - Subway / Transit map and Signal Matrix adapted with gold Zigbee coordinator themes and LQI link budgets.
+- **Zigbee Radio Channel & Frequency Guide**:
+  - Tab 3 radio hardware card locked to detected Zigbee Coordinator channel, frequency (MHz), and IEEE address.
+  - Hides Thread-specific PAN join card, Thread migration strategy card, and countdown banner in Zigbee mode.
+  - Channel picker grid displays 16-channel Zigbee interference evaluation with custom ZHA/Z2M configuration guidance.
+- **Backend ZHA Network Settings Extraction**:
+  - `ha_client.py` enhanced to extract Zigbee channel, PAN ID, and Extended PAN ID from both root level and nested `network_info` / `radio` payloads in Home Assistant's `zha/network/settings` API.
+
 ## [2.7.0] - 2026-11-01
 
 ### Added: Complete End-to-End Zigbee Protocol Transformation

@@ -775,9 +775,12 @@ class HAClient:
 
         if zha_settings_res.get("success") and isinstance(zha_settings_res.get("result"), dict):
             zha_res = zha_settings_res["result"]
-            if "channel" in zha_res:
+            net_info = zha_res.get("network_info") if isinstance(zha_res.get("network_info"), dict) else {}
+            radio_info = zha_res.get("radio") if isinstance(zha_res.get("radio"), dict) else {}
+            ch_cand = zha_res.get("channel") or net_info.get("channel") or radio_info.get("channel")
+            if ch_cand is not None:
                 try:
-                    zigbee_channel = int(zha_res["channel"])
+                    zigbee_channel = int(ch_cand)
                     zigbee_detected = True
                     zigbee_source = "ZHA (Zigbee Home Automation Settings)"
                 except (ValueError, TypeError):
@@ -1034,9 +1037,11 @@ class HAClient:
 
             if zha_settings_res.get("success") and isinstance(zha_settings_res.get("result"), dict):
                 z_res = zha_settings_res["result"]
-                channel = z_res.get("channel")
-                pan_id = z_res.get("pan_id")
-                extended_pan_id = z_res.get("extended_pan_id")
+                net_info = z_res.get("network_info") if isinstance(z_res.get("network_info"), dict) else {}
+                radio_info = z_res.get("radio") if isinstance(z_res.get("radio"), dict) else {}
+                channel = z_res.get("channel") or net_info.get("channel") or radio_info.get("channel")
+                pan_id = z_res.get("pan_id") or net_info.get("pan_id") or radio_info.get("pan_id")
+                extended_pan_id = z_res.get("extended_pan_id") or net_info.get("extended_pan_id") or radio_info.get("extended_pan_id")
                 integration_source = "ZHA"
 
             # Check coexistence scan for channel if not found

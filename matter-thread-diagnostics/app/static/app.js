@@ -427,15 +427,46 @@ function activateTab(tabId) {
   if (targetContent) targetContent.classList.add("active");
 
   if (tabId === "tab-topology") {
-    if (currentTelemetry && currentTelemetry.topology) {
-      renderTopologyData(currentTelemetry.topology);
+    if (currentNetworkProtocol === "zigbee") {
+      if (currentZigbeeTelemetry && currentZigbeeTelemetry.topology) {
+        renderTopologyData(currentZigbeeTelemetry.topology);
+      } else {
+        fetchZigbeeDiagnostics(false);
+      }
     } else {
-      fetchAndRenderTopology();
+      if (currentTelemetry && currentTelemetry.topology) {
+        renderTopologyData(currentTelemetry.topology);
+      } else {
+        fetchAndRenderTopology();
+      }
     }
   } else if (tabId === "tab-channel") {
-    fetchOtbrChannelInfo();
-    fetchJoinableNetworks();
-    fetchCoexistenceSpectrum();
+    if (currentNetworkProtocol === "zigbee") {
+      if (currentZigbeeTelemetry) {
+        renderZigbeeChannelInfo(currentZigbeeTelemetry);
+      } else {
+        fetchZigbeeDiagnostics(false);
+      }
+      fetchCoexistenceSpectrum();
+    } else {
+      fetchOtbrChannelInfo();
+      fetchJoinableNetworks();
+      fetchCoexistenceSpectrum();
+    }
+  } else if (tabId === "tab-rules") {
+    if (currentNetworkProtocol === "zigbee") {
+      if (currentZigbeeTelemetry) {
+        renderZigbeeView(currentZigbeeTelemetry);
+      } else {
+        fetchZigbeeDiagnostics(false);
+      }
+    } else {
+      if (currentTelemetry) {
+        renderThreadView(currentTelemetry);
+      } else {
+        scanSelectedNetwork();
+      }
+    }
   }
 }
 
@@ -1102,6 +1133,36 @@ function setNetworkProtocol(proto, triggerScan = false) {
       descManual.innerHTML = `Inspect and download the complete raw Zigbee JSON telemetry bundle, device list, LQI matrix, and 2.4 GHz RF coexistence data.`;
     }
 
+    // Toggle Zigbee-specific UI controls across all tabs
+    const btnPurgeOffline = document.getElementById("btn-purge-offline-nodes");
+    if (btnPurgeOffline) btnPurgeOffline.style.display = "none";
+    const migCard = document.getElementById("thread-migration-strategy-container");
+    if (migCard) migCard.style.display = "none";
+    const zbInfoBox = document.getElementById("zigbee-channel-info-box");
+    if (zbInfoBox) zbInfoBox.style.display = "block";
+    const faqCard = document.getElementById("card-channel-faq");
+    if (faqCard) faqCard.style.display = "none";
+    const lblPicker = document.getElementById("lbl-channel-picker-title");
+    if (lblPicker) lblPicker.innerText = "Zigbee 802.15.4 Channels & Interference Assessment (11–26):";
+
+    const colorSel = document.getElementById("topology-color-mode");
+    if (colorSel) {
+      colorSel.innerHTML = `
+        <option value="role">Device Role (Coordinator / Router / End Device)</option>
+        <option value="rssi">Signal Quality (LQI / RSSI Heatmap)</option>
+        <option value="affinity">Coordinator / Parent Affinity</option>
+        <option value="power">Power Source (Mains vs Battery)</option>
+      `;
+    }
+    updateTopologyLegend();
+
+    const btnRunAi = document.getElementById("btn-run-ai");
+    if (btnRunAi) btnRunAi.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Run Zigbee AI Network Diagnosis`;
+    const btnLoadRaw = document.getElementById("btn-load-raw-scan");
+    if (btnLoadRaw) btnLoadRaw.innerHTML = `<i class="fa-solid fa-bolt"></i> Load Latest Zigbee Telemetry JSON`;
+    const btnDownRaw = document.getElementById("btn-download-logs-manual");
+    if (btnDownRaw) btnDownRaw.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> Download Zigbee JSON (.json)`;
+
     if (currentZigbeeTelemetry && !triggerScan) {
       renderZigbeeView(currentZigbeeTelemetry);
     } else {
@@ -1151,6 +1212,33 @@ function setNetworkProtocol(proto, triggerScan = false) {
     if (joinCard) {
       joinCard.style.display = "";
     }
+    const migCard = document.getElementById("thread-migration-strategy-container");
+    if (migCard) migCard.style.display = "block";
+    const zbInfoBox = document.getElementById("zigbee-channel-info-box");
+    if (zbInfoBox) zbInfoBox.style.display = "none";
+    const faqCard = document.getElementById("card-channel-faq");
+    if (faqCard) faqCard.style.display = "block";
+    const lblPicker = document.getElementById("lbl-channel-picker-title");
+    if (lblPicker) lblPicker.innerText = "Select Target Operating Channel (11–26):";
+
+    const colorSel = document.getElementById("topology-color-mode");
+    if (colorSel) {
+      colorSel.innerHTML = `
+        <option value="role">Device Role (TBR / Router / SED)</option>
+        <option value="rssi">Signal Quality (RSSI Heatmap)</option>
+        <option value="affinity">Border Router / Parent Affinity</option>
+        <option value="power">Power Source (Mains vs Battery)</option>
+      `;
+    }
+    updateTopologyLegend();
+
+    const btnRunAi = document.getElementById("btn-run-ai");
+    if (btnRunAi) btnRunAi.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Run AI Diagnosis on Live Scan`;
+    const btnLoadRaw = document.getElementById("btn-load-raw-scan");
+    if (btnLoadRaw) btnLoadRaw.innerHTML = `<i class="fa-solid fa-eye"></i> Load Logs &amp; Scan into Box`;
+    const btnDownRaw = document.getElementById("btn-download-logs-manual");
+    if (btnDownRaw) btnDownRaw.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> Download Log Bundle (.log)`;
+
     if (headingAi) {
       headingAi.innerHTML = `<i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine`;
     }
@@ -1665,6 +1753,9 @@ function renderZigbeeChannelInfo(data) {
   const coord = data.coordinator || {};
 
   // 1. Hardware card details
+  const lblAdapter = document.getElementById("lbl-radio-adapter");
+  if (lblAdapter) lblAdapter.innerText = "Zigbee Radio Coordinator";
+
   const nameEl = document.getElementById("zbt1-hardware-name");
   const modelEl = document.getElementById("zbt1-hardware-model");
   const stateBadge = document.getElementById("zbt1-radio-state");
@@ -1677,7 +1768,7 @@ function renderZigbeeChannelInfo(data) {
     stateBadge.className = `badge badge-success`;
   }
   if (otbrBadge) {
-    otbrBadge.innerText = `${data.total_devices || 0} Nodes Online`;
+    otbrBadge.innerText = `${data.total_devices || 0} Nodes Connected`;
     otbrBadge.className = `badge badge-info`;
   }
 
@@ -1686,32 +1777,127 @@ function renderZigbeeChannelInfo(data) {
   const freqEl = document.getElementById("zbt1-current-freq");
   const rfBadgeContainer = document.getElementById("zbt1-current-rf-badge");
 
-  if (chNumEl) chNumEl.innerText = `Ch ${data.channel || 15}`;
-  if (freqEl) freqEl.innerText = `(${data.frequency_mhz || 2425} MHz)`;
+  const zbCh = data.channel || 15;
+  const zbFreq = data.frequency_mhz || (2405 + 5 * (zbCh - 11));
+
+  if (chNumEl) {
+    chNumEl.innerText = `Ch ${zbCh}`;
+    chNumEl.style.color = "#facc15";
+  }
+  if (freqEl) freqEl.innerText = `(${zbFreq} MHz)`;
   if (rfBadgeContainer) {
-    const ch = data.channel || 15;
-    if (ch === 15 || ch === 20 || ch === 25 || ch === 26) {
-      rfBadgeContainer.innerHTML = `<span class="badge badge-success" style="font-size:11px;"><i class="fa-solid fa-shield-check"></i> Channel ${ch} — Clean Guard Band</span>`;
+    if (zbCh === 15 || zbCh === 20 || zbCh === 25 || zbCh === 26) {
+      rfBadgeContainer.innerHTML = `<span class="badge badge-success" style="font-size:11px;"><i class="fa-solid fa-shield-check"></i> Channel ${zbCh} — Clean Guard Band</span>`;
     } else {
-      rfBadgeContainer.innerHTML = `<span class="badge badge-warning" style="font-size:11px;"><i class="fa-solid fa-triangle-exclamation"></i> Channel ${ch} — Moderate Wi-Fi Overlap</span>`;
+      rfBadgeContainer.innerHTML = `<span class="badge badge-warning" style="font-size:11px;"><i class="fa-solid fa-triangle-exclamation"></i> Channel ${zbCh} — Moderate Wi-Fi Overlap</span>`;
     }
   }
 
   // 3. Network Identity
+  const lblMesh = document.getElementById("lbl-mesh-identity");
+  if (lblMesh) lblMesh.innerText = "Zigbee Mesh Identity";
+
   const netNameEl = document.getElementById("zbt1-network-name");
   const xpanEl = document.getElementById("zbt1-xpan");
   const panidEl = document.getElementById("zbt1-panid");
   const rloc16El = document.getElementById("zbt1-rloc16");
 
   if (netNameEl) netNameEl.innerText = `Zigbee Mesh (${data.integration || "ZHA"})`;
-  if (xpanEl) xpanEl.innerText = data.extended_pan_id || "--";
+  if (xpanEl) {
+    xpanEl.innerText = data.extended_pan_id || "--";
+    xpanEl.style.color = "#facc15";
+  }
   if (panidEl) panidEl.innerText = String(data.pan_id || "--");
   if (rloc16El) rloc16El.innerText = `IEEE: ${coord.ieee || "--"}`;
 
-  // Hide Thread PAN join card
+  // Hide Thread PAN join card & Thread migration card
   const joinCard = document.getElementById("select-target-join-network")?.closest(".card");
   if (joinCard) joinCard.style.display = "none";
+  const migCard = document.getElementById("thread-migration-strategy-container");
+  if (migCard) migCard.style.display = "none";
+  const zbInfoBox = document.getElementById("zigbee-channel-info-box");
+  if (zbInfoBox) zbInfoBox.style.display = "block";
+  const faqCard = document.getElementById("card-channel-faq");
+  if (faqCard) faqCard.style.display = "none";
+  const lblPicker = document.getElementById("lbl-channel-picker-title");
+  if (lblPicker) lblPicker.innerText = "Zigbee 802.15.4 Channels & Interference Assessment (11–26):";
+
+  renderZigbeeChannelPickerGrid(zbCh);
 }
+
+function renderZigbeeChannelPickerGrid(activeCh) {
+  const grid = document.getElementById("channel-picker-grid");
+  if (!grid) return;
+
+  const zbChannels = [
+    { channel: 11, frequency_mhz: 2405, wifi_overlap: "Wi-Fi 1", is_guard: false },
+    { channel: 12, frequency_mhz: 2410, wifi_overlap: "Wi-Fi 1", is_guard: false },
+    { channel: 13, frequency_mhz: 2415, wifi_overlap: "Wi-Fi 1", is_guard: false },
+    { channel: 14, frequency_mhz: 2420, wifi_overlap: "Wi-Fi 1", is_guard: false },
+    { channel: 15, frequency_mhz: 2425, wifi_overlap: null, is_guard: true, label: "★ Best Guard" },
+    { channel: 16, frequency_mhz: 2430, wifi_overlap: "Wi-Fi 6", is_guard: false },
+    { channel: 17, frequency_mhz: 2435, wifi_overlap: "Wi-Fi 6", is_guard: false },
+    { channel: 18, frequency_mhz: 2440, wifi_overlap: "Wi-Fi 6", is_guard: false },
+    { channel: 19, frequency_mhz: 2445, wifi_overlap: "Wi-Fi 6", is_guard: false },
+    { channel: 20, frequency_mhz: 2450, wifi_overlap: null, is_guard: true, label: "★ Guard Band" },
+    { channel: 21, frequency_mhz: 2455, wifi_overlap: "Wi-Fi 11", is_guard: false },
+    { channel: 22, frequency_mhz: 2460, wifi_overlap: "Wi-Fi 11", is_guard: false },
+    { channel: 23, frequency_mhz: 2465, wifi_overlap: "Wi-Fi 11", is_guard: false },
+    { channel: 24, frequency_mhz: 2470, wifi_overlap: "Wi-Fi 11", is_guard: false },
+    { channel: 25, frequency_mhz: 2475, wifi_overlap: null, is_guard: true, label: "★ Clean Zone" },
+    { channel: 26, frequency_mhz: 2480, wifi_overlap: null, is_guard: true, label: "Low Power" },
+  ];
+
+  grid.innerHTML = zbChannels.map(ch => {
+    const isCur = ch.channel === activeCh;
+    let borderCol = isCur ? "#facc15" : (ch.is_guard ? "#10b98155" : "#334155");
+    let bgCol = isCur ? "#854d0e44" : (ch.is_guard ? "#064e3b22" : "#1e293b");
+    let badgeHtml = "";
+
+    if (isCur) {
+      badgeHtml = `<span class="badge" style="background:#ca8a04; color:#fff; font-size:9px; padding:1px 5px;">🐝 Active Zigbee</span>`;
+    } else if (ch.label) {
+      badgeHtml = `<span class="badge badge-success" style="font-size:9px; padding:1px 5px;">${ch.label}</span>`;
+    } else if (ch.wifi_overlap) {
+      badgeHtml = `<span class="badge badge-danger" style="font-size:9px; padding:1px 5px;">${ch.wifi_overlap}</span>`;
+    }
+
+    return `
+      <div
+        class="channel-tile"
+        data-channel="${ch.channel}"
+        data-freq="${ch.frequency_mhz}"
+        style="
+          background: ${bgCol};
+          border: 2px solid ${borderCol};
+          padding: 10px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        "
+        onclick="onSelectZigbeeChannelTile(${ch.channel}, ${ch.frequency_mhz}, '${ch.is_guard ? 'Clean Guard Band' : 'Wi-Fi 20MHz Overlap'}')"
+      >
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="color:${isCur ? '#facc15' : '#f8fafc'}; font-size:13px;">Ch ${ch.channel}</strong>
+          <span style="font-size:10px; color:var(--text-muted);">${ch.frequency_mhz} MHz</span>
+        </div>
+        <div style="margin-top:2px;">${badgeHtml}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function onSelectZigbeeChannelTile(ch, freq, rec) {
+  const lbl = document.getElementById("selected-target-channel-label");
+  if (lbl) {
+    lbl.innerText = `Zigbee Channel ${ch} (${freq} MHz) — ${rec}`;
+    lbl.style.color = "#facc15";
+  }
+}
+window.onSelectZigbeeChannelTile = onSelectZigbeeChannelTile;
 
 function inspectZigbeeDevice(ieee) {
   if (!currentZigbeeTelemetry || !currentZigbeeTelemetry.devices) return;
@@ -2489,11 +2675,24 @@ function renderTopologyData(data) {
   }
   if (countElem) {
     const brNames = brs.map(b => b.label).join(", ");
-    countElem.innerText = `Discovered Border Routers (${brs.length}): ${brNames || 'None detected yet'}`;
+    if (currentNetworkProtocol === "zigbee") {
+      countElem.innerText = `Discovered Zigbee Coordinator: ${brNames || 'None detected yet'}`;
+    } else {
+      countElem.innerText = `Discovered Border Routers (${brs.length}): ${brNames || 'None detected yet'}`;
+    }
   }
 }
 
 function dispatchTopologyRender() {
+  if (currentNetworkProtocol === "zigbee") {
+    if (currentZigbeeTelemetry && currentZigbeeTelemetry.topology) {
+      lastTopologyData = currentZigbeeTelemetry.topology;
+    }
+  } else {
+    if (currentTelemetry && currentTelemetry.topology) {
+      lastTopologyData = currentTelemetry.topology;
+    }
+  }
   if (!lastTopologyData) return;
   const nodes = lastTopologyData.nodes || [];
   const edges = lastTopologyData.edges || [];
@@ -2577,13 +2776,14 @@ function renderEmptyTopology(svg, width, height) {
   const cy = height / 2;
   const textGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
 
+  const isZigbee = currentNetworkProtocol === "zigbee";
   const icon = document.createElementNS("http://www.w3.org/2000/svg", "text");
   icon.setAttribute("x", cx);
   icon.setAttribute("y", cy - 15);
-  icon.setAttribute("fill", "#64748b");
+  icon.setAttribute("fill", isZigbee ? "#facc15" : "#64748b");
   icon.setAttribute("font-size", "36");
   icon.setAttribute("text-anchor", "middle");
-  icon.textContent = "📡";
+  icon.textContent = isZigbee ? "🐝" : "📡";
   textGroup.appendChild(icon);
 
   const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -2593,7 +2793,7 @@ function renderEmptyTopology(svg, width, height) {
   title.setAttribute("font-size", "15");
   title.setAttribute("font-weight", "600");
   title.setAttribute("text-anchor", "middle");
-  title.textContent = "No Live Thread Border Routers or Matter Devices Discovered Yet";
+  title.textContent = isZigbee ? "No Zigbee Coordinator or Devices Discovered Yet" : "No Live Thread Border Routers or Matter Devices Discovered Yet";
   textGroup.appendChild(title);
 
   const subtitle = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -2602,7 +2802,7 @@ function renderEmptyTopology(svg, width, height) {
   subtitle.setAttribute("fill", "#94a3b8");
   subtitle.setAttribute("font-size", "12");
   subtitle.setAttribute("text-anchor", "middle");
-  subtitle.textContent = "Click '2. Scan Selected Network' above to probe mDNS (_meshcop._udp), OTBR, and Matter Server.";
+  subtitle.textContent = isZigbee ? "Click '2. Scan Zigbee Network' above to probe your ZHA or Zigbee2MQTT coordinator." : "Click '2. Scan Selected Network' above to probe mDNS (_meshcop._udp), OTBR, and Matter Server.";
   textGroup.appendChild(subtitle);
 
   svg.appendChild(textGroup);
@@ -2779,6 +2979,7 @@ function renderSvgTopology(nodes, edges) {
     g.appendChild(circle);
 
     // Role / Preferred icon badge inside circle
+    const isZigbee = currentNetworkProtocol === "zigbee" || (n.routing_role && n.routing_role.toLowerCase().includes("zigbee")) || String(n.id).startsWith("zb_");
     const badgeText = document.createElementNS("http://www.w3.org/2000/svg", "text");
     badgeText.setAttribute("y", "4");
     badgeText.setAttribute("fill", "#ffffff");
@@ -2786,7 +2987,9 @@ function renderSvgTopology(nodes, edges) {
     badgeText.setAttribute("font-weight", "700");
     badgeText.setAttribute("text-anchor", "middle");
     badgeText.style.pointerEvents = "none";
-    badgeText.textContent = n.type === "border_router" ? (n.preferred ? "★ TBR" : "TBR") : (n.type === "router" ? "RTR" : "SED");
+    badgeText.textContent = n.type === "border_router"
+      ? (isZigbee ? (n.preferred ? "★ COORD" : "COORD") : (n.preferred ? "★ TBR" : "TBR"))
+      : (n.type === "router" ? "RTR" : (isZigbee ? "DEV" : "SED"));
     g.appendChild(badgeText);
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -2799,15 +3002,21 @@ function renderSvgTopology(nodes, edges) {
     text.textContent = n.label;
     g.appendChild(text);
 
-    // Sub-label showing RLOC16 or signal RSSI / RTT
+    // Sub-label showing NWK/RLOC16 or signal LQI / RSSI
     const subParts = [];
-    if (n.rloc16) subParts.push(n.rloc16);
-    if (n.rssi !== null && n.rssi !== undefined) subParts.push(`${n.rssi} dBm`);
-    else if (n.rtt_ms !== null && n.rtt_ms !== undefined) subParts.push(`${n.rtt_ms} ms`);
+    if (isZigbee) {
+      if (n.rloc16) subParts.push(n.rloc16);
+      if (n.lqi !== null && n.lqi !== undefined) subParts.push(`LQI ${n.lqi}`);
+      else if (n.rssi !== null && n.rssi !== undefined) subParts.push(`${n.rssi} dBm`);
+    } else {
+      if (n.rloc16) subParts.push(n.rloc16);
+      if (n.rssi !== null && n.rssi !== undefined) subParts.push(`${n.rssi} dBm`);
+      else if (n.rtt_ms !== null && n.rtt_ms !== undefined) subParts.push(`${n.rtt_ms} ms`);
+    }
     if (subParts.length > 0) {
       const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
       subText.setAttribute("y", n.radius + 28);
-      subText.setAttribute("fill", "#38bdf8");
+      subText.setAttribute("fill", isZigbee ? "#facc15" : "#38bdf8");
       subText.setAttribute("font-size", "10");
       subText.setAttribute("text-anchor", "middle");
       subText.style.pointerEvents = "none";
@@ -3456,13 +3665,14 @@ function renderTransitMap(nodes, edges) {
 
   // Track Line Elements & Redraw Logic
   const lineEntries = [];
+  const isZigbee = currentNetworkProtocol === "zigbee";
   edges.forEach((e) => {
     const sId = typeof e.source === "object" ? e.source.id : e.source;
     const tId = typeof e.target === "object" ? e.target.id : e.target;
     if (!posMap[sId] || !posMap[tId]) return;
 
-    const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: "#38bdf8" };
-    const lineColor = aff.color || "#0284c7";
+    const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: isZigbee ? "#eab308" : "#38bdf8" };
+    const lineColor = isZigbee ? "#ca8a04" : (aff.color || "#0284c7");
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("fill", "none");
@@ -3510,18 +3720,19 @@ function renderTransitMap(nodes, edges) {
 
     const isTbr = n.type === "border_router";
     const isRouter = n.type === "router";
+    const isNodeZigbee = isZigbee || (n.routing_role && n.routing_role.toLowerCase().includes("zigbee")) || String(n.id).startsWith("zb_");
 
     if (isTbr) {
       const outerRing = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       outerRing.setAttribute("r", "16");
       outerRing.setAttribute("fill", "#0f172a");
-      outerRing.setAttribute("stroke", "#f8fafc");
+      outerRing.setAttribute("stroke", isNodeZigbee ? "#facc15" : "#f8fafc");
       outerRing.setAttribute("stroke-width", "3");
       g.appendChild(outerRing);
 
       const innerCore = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       innerCore.setAttribute("r", "9");
-      innerCore.setAttribute("fill", n.vendor === "nest" ? "#4285F4" : (n.vendor === "apple" ? "#94a3b8" : "#03A9F4"));
+      innerCore.setAttribute("fill", isNodeZigbee ? "#eab308" : (n.vendor === "nest" ? "#4285F4" : (n.vendor === "apple" ? "#94a3b8" : "#03A9F4")));
       g.appendChild(innerCore);
     } else if (isRouter) {
       const disc = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -3547,7 +3758,7 @@ function renderTransitMap(nodes, edges) {
     lbl.setAttribute("font-weight", isTbr ? "700" : "600");
     lbl.setAttribute("text-anchor", isTbr ? "end" : "start");
     lbl.setAttribute("pointer-events", "none");
-    lbl.textContent = n.label || `Node #${n.node_id}`;
+    lbl.textContent = n.label || (isNodeZigbee ? 'Zigbee Device' : `Node #${n.node_id}`);
     g.appendChild(lbl);
 
     let isStationDragging = false;
@@ -3663,8 +3874,9 @@ function renderSignalMatrix(container, nodes, edges) {
   if (!container) return;
   container.innerHTML = "";
 
+  const isZigbee = currentNetworkProtocol === "zigbee";
   if (!nodes || nodes.length === 0) {
-    container.innerHTML = `<div style="padding: 40px; text-align: center; color: #64748b;"><i class="fa-solid fa-satellite-dish" style="font-size: 32px; margin-bottom: 8px;"></i><p>No Thread nodes discovered yet. Click '2. Scan Selected Network' above.</p></div>`;
+    container.innerHTML = `<div style="padding: 40px; text-align: center; color: #64748b;"><i class="fa-solid fa-satellite-dish" style="font-size: 32px; margin-bottom: 8px;"></i><p>${isZigbee ? "No Zigbee nodes discovered yet. Click '2. Scan Zigbee Network' above." : "No Thread nodes discovered yet. Click '2. Scan Selected Network' above."}</p></div>`;
     return;
   }
 
@@ -3703,17 +3915,17 @@ function renderSignalMatrix(container, nodes, edges) {
         <div style="font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 2px;">${nodes.length}</div>
       </div>
       <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
-        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Direct RF Links</div>
-        <div style="font-size: 18px; font-weight: 700; color: #38bdf8; margin-top: 2px;">${directLinkCount}</div>
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Direct ${isZigbee ? 'Zigbee' : 'RF'} Links</div>
+        <div style="font-size: 18px; font-weight: 700; color: ${isZigbee ? '#facc15' : '#38bdf8'}; margin-top: 2px;">${directLinkCount}</div>
       </div>
       <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
         <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Mesh Density</div>
         <div style="font-size: 18px; font-weight: 700; color: #10b981; margin-top: 2px;">${densityPct}%</div>
       </div>
       <div style="background: #0f172a; padding: 10px 14px; border-radius: 6px; border: 1px solid #334155;">
-        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">Avg Link Signal</div>
-        <div style="font-size: 18px; font-weight: 700; color: ${avgRssi && Number(avgRssi) > -70 ? '#34d399' : '#f59e0b'}; margin-top: 2px;">
-          ${avgRssi ? `${avgRssi} dBm` : 'N/A'}
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase;">${isZigbee ? 'Avg Link Quality' : 'Avg Link Signal'}</div>
+        <div style="font-size: 18px; font-weight: 700; color: ${isZigbee ? '#facc15' : (avgRssi && Number(avgRssi) > -70 ? '#34d399' : '#f59e0b')}; margin-top: 2px;">
+          ${isZigbee && currentZigbeeTelemetry?.avg_lqi ? `${currentZigbeeTelemetry.avg_lqi} / 255` : (avgRssi ? `${avgRssi} dBm` : 'N/A')}
         </div>
       </div>
     </div>
@@ -3732,12 +3944,14 @@ function renderSignalMatrix(container, nodes, edges) {
   html += `</tr></thead><tbody>`;
 
   nodes.forEach((rowNode) => {
-    const roleIcon = rowNode.type === "border_router" ? "📡" : (rowNode.type === "router" ? "🔁" : "🔋");
+    const roleIcon = isZigbee
+      ? (rowNode.type === "border_router" ? "🐝" : (rowNode.type === "router" ? "🔁" : "🔋"))
+      : (rowNode.type === "border_router" ? "📡" : (rowNode.type === "router" ? "🔁" : "🔋"));
     html += `
       <tr>
         <td class="sticky-col" style="cursor: pointer;" title="Click to inspect device" onclick="showNodeInspector(lastTopologyData.nodes.find(x => x.id === '${rowNode.id}'))">
           <span style="margin-right: 6px;">${roleIcon}</span>
-          <strong>${escapeHtml(rowNode.label || `Node ${rowNode.node_id}`)}</strong>
+          <strong>${escapeHtml(rowNode.label || (isZigbee ? 'Zigbee Device' : `Node ${rowNode.node_id}`))}</strong>
           ${rowNode.ha_area ? `<span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">📍 ${escapeHtml(rowNode.ha_area)}</span>` : ''}
         </td>
     `;
@@ -3757,7 +3971,14 @@ function renderSignalMatrix(container, nodes, edges) {
         let textCol = "#38bdf8";
         let badge = "LINK";
 
-        if (rssi !== null) {
+        if (isZigbee && link.lqi !== null && link.lqi !== undefined) {
+          const lqi = Number(link.lqi);
+          badge = `LQI ${lqi}`;
+          if (lqi >= 140) { bg = "#064e3b"; textCol = "#6ee7b7"; }
+          else if (lqi >= 80) { bg = "#14532d"; textCol = "#a3e635"; }
+          else if (lqi >= 50) { bg = "#713f12"; textCol = "#fde047"; }
+          else { bg = "#7f1d1d"; textCol = "#fca5a5"; }
+        } else if (rssi !== null) {
           badge = `${rssi} dBm`;
           if (rssi >= -60) { bg = "#064e3b"; textCol = "#6ee7b7"; }
           else if (rssi >= -70) { bg = "#14532d"; textCol = "#a3e635"; }
@@ -4099,19 +4320,25 @@ async function downloadDiagnosticLogs(btnElem) {
 
   try {
     let bundleText = "";
-    const res = await fetch(apiPath("/api/diagnostics/logs"));
-    if (res.ok) {
-      const data = await res.json();
-      bundleText = data.bundle_text || "";
-    }
-    if (!bundleText) {
-      bundleText = JSON.stringify(currentTelemetry || { status: "No telemetry cached yet" }, null, 2);
-    }
-
+    let filename = "";
     const now = new Date();
     const pad2 = (n) => String(n).padStart(2, "0");
     const ts = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
-    const filename = `matter-thread-diagnostics-${ts}.log`;
+
+    if (currentNetworkProtocol === "zigbee") {
+      filename = `zigbee-network-diagnostics-${ts}.json`;
+      bundleText = JSON.stringify(currentZigbeeTelemetry || { protocol: "zigbee", status: "No Zigbee telemetry scanned yet" }, null, 2);
+    } else {
+      filename = `matter-thread-diagnostics-${ts}.log`;
+      const res = await fetch(apiPath("/api/diagnostics/logs"));
+      if (res.ok) {
+        const data = await res.json();
+        bundleText = data.bundle_text || "";
+      }
+      if (!bundleText) {
+        bundleText = JSON.stringify(currentTelemetry || { status: "No telemetry cached yet" }, null, 2);
+      }
+    }
 
     const blob = new Blob([bundleText], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -4160,6 +4387,11 @@ let selectedTargetChannel = 25;
 let channelMigrationInterval = null;
 
 async function fetchOtbrChannelInfo(showSpinner = false) {
+  if (currentNetworkProtocol === "zigbee") {
+    if (currentZigbeeTelemetry) renderZigbeeChannelInfo(currentZigbeeTelemetry);
+    return;
+  }
+
   const refreshBtn = document.getElementById("btn-refresh-channel-status");
   const origHtml = refreshBtn ? refreshBtn.innerHTML : "";
   if (showSpinner && refreshBtn) {
@@ -4189,6 +4421,22 @@ async function fetchOtbrChannelInfo(showSpinner = false) {
 
 function renderChannelTab(data) {
   if (!data) return;
+  if (currentNetworkProtocol === "zigbee") return;
+
+  const lblAdapter = document.getElementById("lbl-radio-adapter");
+  if (lblAdapter) lblAdapter.innerText = "Thread Radio Adapter";
+  const lblMesh = document.getElementById("lbl-mesh-identity");
+  if (lblMesh) lblMesh.innerText = "Active Mesh Identity";
+  const joinCard = document.getElementById("select-target-join-network")?.closest(".card");
+  if (joinCard) joinCard.style.display = "";
+  const migCard = document.getElementById("thread-migration-strategy-container");
+  if (migCard) migCard.style.display = "block";
+  const zbInfoBox = document.getElementById("zigbee-channel-info-box");
+  if (zbInfoBox) zbInfoBox.style.display = "none";
+  const faqCard = document.getElementById("card-channel-faq");
+  if (faqCard) faqCard.style.display = "block";
+  const lblPicker = document.getElementById("lbl-channel-picker-title");
+  if (lblPicker) lblPicker.innerText = "Select Target Operating Channel (11–26):";
 
   const hw = data.hardware || {};
   const otbr = data.otbr || {};
@@ -4337,6 +4585,13 @@ function renderChannelPickerGrid(channels, curCh) {
 }
 
 function onSelectTargetMigrationChannel(ch) {
+  if (currentNetworkProtocol === "zigbee") {
+    const freq = 2405 + (ch - 11) * 5;
+    const isGuard = ch === 15 || ch === 20 || ch === 25 || ch === 26;
+    onSelectZigbeeChannelTile(ch, freq, isGuard ? 'Clean Guard Band' : 'Wi-Fi 20MHz Overlap');
+    return;
+  }
+
   selectedTargetChannel = ch;
   const freq = 2405 + (ch - 11) * 5;
   const curTargetInfo = (currentOtbrChannelData?.channels_matrix || []).find(c => c.channel === ch) || {};
@@ -4645,8 +4900,11 @@ function renderCoexistenceSpectrumGraph(data) {
 
   // 5. Active Zigbee Channel (if detected)
   const isZigbeeMode = currentNetworkProtocol === "zigbee";
-  if (zb.channel && zb.frequency_mhz) {
-    const fZb = zb.frequency_mhz;
+  const zbCh = zb.channel || (isZigbeeMode && currentZigbeeTelemetry?.channel ? currentZigbeeTelemetry.channel : null);
+  const zbFreq = zb.frequency_mhz || (isZigbeeMode && currentZigbeeTelemetry?.frequency_mhz ? currentZigbeeTelemetry.frequency_mhz : (zbCh ? 2405 + 5 * (zbCh - 11) : null));
+
+  if (zbCh && zbFreq) {
+    const fZb = zbFreq;
     const xZb = X(fZb);
     const peakZb = isZigbeeMode ? GH * 0.95 : GH * 0.80;
 
@@ -4663,7 +4921,7 @@ function renderCoexistenceSpectrumGraph(data) {
     const badgeW = isZigbeeMode ? 140 : 120;
     zbBadgeG.innerHTML = `
       <rect x="${xZb - badgeW / 2}" y="${Y_base - peakZb - 24}" width="${badgeW}" height="20" rx="4" fill="${isZigbeeMode ? '#ca8a04' : '#854d0e'}" stroke="#facc15" stroke-width="${isZigbeeMode ? '2' : '1'}" />
-      <text x="${xZb}" y="${Y_base - peakZb - 10}" fill="#ffffff" font-size="${isZigbeeMode ? '10' : '9'}" font-weight="${isZigbeeMode ? '800' : '600'}" text-anchor="middle">${isZigbeeMode ? '🐝 ACTIVE ZIGBEE Ch ' + zb.channel : '🐝 Zigbee Ch ' + zb.channel}</text>
+      <text x="${xZb}" y="${Y_base - peakZb - 10}" fill="#ffffff" font-size="${isZigbeeMode ? '10' : '9'}" font-weight="${isZigbeeMode ? '800' : '600'}" text-anchor="middle">${isZigbeeMode ? '🐝 ACTIVE ZIGBEE Ch ' + zbCh : '🐝 Zigbee Ch ' + zbCh}</text>
     `;
     svg.appendChild(zbBadgeG);
   }
@@ -4869,6 +5127,8 @@ async function completeChannelMigrationSuccess(targetCh) {
 let currentJoinableNetworksData = null;
 
 async function fetchJoinableNetworks(showSpinner = false) {
+  if (currentNetworkProtocol === "zigbee") return;
+
   const refreshBtn = document.getElementById("btn-refresh-joinable-networks");
   const origHtml = refreshBtn ? refreshBtn.innerHTML : "";
   if (showSpinner && refreshBtn) {

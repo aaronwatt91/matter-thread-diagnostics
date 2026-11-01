@@ -412,7 +412,7 @@
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 14px;">
           <!-- Radio Identity -->
           <div style="background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155;">
-            <div style="font-size: 11px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Thread Radio Adapter</div>
+            <div id="lbl-radio-adapter" style="font-size: 11px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Thread Radio Adapter</div>
             <div id="zbt1-hardware-name" style="font-size: 15px; font-weight: 700; color: #f8fafc; margin-top: 4px;">Home Assistant Connect ZBT-1</div>
             <div id="zbt1-hardware-model" style="font-size: 12px; color: #38bdf8; margin-top: 2px;">Silicon Labs EFR32MG21 (Nabu Casa)</div>
             <div style="margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
@@ -435,12 +435,12 @@
 
           <!-- Network Identity -->
           <div style="background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155;">
-            <div style="font-size: 11px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Active Mesh Identity</div>
+            <div id="lbl-mesh-identity" style="font-size: 11px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Active Mesh Identity</div>
             <div id="zbt1-network-name" style="font-size: 14px; font-weight: 700; color: #f8fafc; margin-top: 4px;">--</div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+            <div id="row-zbt1-xpan" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
               XPAN: <code id="zbt1-xpan" style="color: #38bdf8;">--</code>
             </div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+            <div id="row-zbt1-pan-rloc" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
               PAN ID: <code id="zbt1-panid">--</code> • RLOC16: <code id="zbt1-rloc16">--</code>
             </div>
           </div>
@@ -610,18 +610,31 @@
 
         <!-- 16-Channel Selection Grid -->
         <div style="margin-top: 18px;">
-          <label style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 8px;">
+          <label id="lbl-channel-picker-title" style="display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #38bdf8; margin-bottom: 8px;">
             Select Target Operating Channel (11–26):
-          </label>
           </label>
           <div id="channel-picker-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;">
             <!-- Rendered dynamically by app.js -->
             <div style="padding: 12px; text-align: center; color: var(--text-muted);">Loading channels...</div>
           </div>
+
+          <!-- Zigbee Channel Management Guide (displayed in Zigbee mode) -->
+          <div id="zigbee-channel-info-box" style="display: none; margin-top: 14px; background: #0f172a; padding: 14px 18px; border-radius: 8px; border: 1px solid rgba(234, 179, 8, 0.45); color: #fef08a; font-size: 12px; line-height: 1.6;">
+            <div style="font-weight: 700; color: #facc15; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-lightbulb"></i> Zigbee Channel Management &amp; Migration Guide
+            </div>
+            <div>
+              In Zigbee (ZHA / Zigbee2MQTT), operating channels are configured directly in your coordinator integration settings rather than dynamic OTA broadcasts:
+              <div style="margin: 8px 0; padding: 8px 12px; background: #1e293b; border-radius: 6px; font-family: monospace; font-size: 11px; color: #e2e8f0; border-left: 3px solid #facc15;">
+                Settings &rarr; Devices &amp; Services &rarr; Zigbee Home Automation (ZHA) &rarr; Configure &rarr; Network &rarr; Change Channel
+              </div>
+              <strong>Recommended Guard Bands:</strong> <strong>Channel 15</strong>, <strong>Channel 20</strong>, and <strong>Channel 25</strong> operate in the quiet null gaps between standard 20 MHz Wi-Fi channels (1, 6, 11) for maximum reliability and sensor battery life.
+            </div>
+          </div>
         </div>
 
-        <!-- Migration Execution & Safety Options -->
-        <div style="margin-top: 20px; background: #0f172a; padding: 18px; border-radius: 8px; border: 1px solid #334155;">
+        <!-- Migration Execution & Safety Options (Thread mode only) -->
+        <div id="thread-migration-strategy-container" style="margin-top: 20px; background: #0f172a; padding: 18px; border-radius: 8px; border: 1px solid #334155;">
           <h4 style="font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
             <i class="fa-solid fa-sliders" style="color: #38bdf8;"></i> Mesh Migration Strategy
           </h4>
@@ -680,9 +693,9 @@
       </div>
 
       <!-- Best Practices Card -->
-      <div class="card">
-        <h4 style="font-size: 14px; margin-bottom: 8px;"><i class="fa-solid fa-circle-question" style="color: #38bdf8;"></i> Thread RF Channel Migration FAQ</h4>
-        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
+      <div id="card-channel-faq" class="card">
+        <h4 id="heading-channel-faq" style="font-size: 14px; margin-bottom: 8px;"><i class="fa-solid fa-circle-question" style="color: #38bdf8;"></i> Thread RF Channel Migration FAQ</h4>
+        <div id="body-channel-faq" style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
           <p style="margin-bottom: 8px;">
             <strong style="color: #f8fafc;">Why migrate to Channel 25 or 26?</strong> Standard 20 MHz Wi-Fi access points on channels 1, 6, and 11 flood the 2.4 GHz spectrum with high transmit power (100–1000 mW), while Thread devices transmit at 1–10 mW. Channel 25 sits in the guard band above Wi-Fi Channel 11, and Channel 26 sits completely outside standard 2.4 GHz Wi-Fi channels, drastically reducing packet collisions and battery drain on sleepy end devices.
           </p>
