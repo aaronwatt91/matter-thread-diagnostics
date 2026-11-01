@@ -705,6 +705,32 @@ def test_zigbee_defensive_types_and_resilience():
     assert len(topo["edges"]) >= 2
 
 
+def test_zigbee_ai_engine_streamline_and_prompt():
+    engine = AIDiagnosticEngine(provider="gemini", model="gemini-2.5-flash", gemini_key="AIzaSyDummyKeyTest")
+    zigbee_telemetry = {
+        "protocol": "zigbee",
+        "channel": 15,
+        "coordinator": {"name": "ZBT-1 Coordinator", "channel": 15, "pan_id": "0x1234", "ieee": "00:12:4b:00:1c:a2:b3:c4"},
+        "devices": [
+            {"name": "Kitchen Bulb", "device_type": "router", "lqi": 180, "rssi": -60, "power_source": "Mains", "available": True},
+            {"name": "Door Sensor", "device_type": "end_device", "lqi": 40, "rssi": -85, "power_source": "Battery", "battery": 15, "available": False},
+        ],
+        "mesh_health": {"total_devices": 2, "routers_count": 1, "end_devices_count": 1, "offline_count": 1, "weak_lqi_count": 1},
+        "coexistence": {"channel": 15, "assessment": "Good channel"},
+    }
+    streamlined = engine._streamline_telemetry(zigbee_telemetry)
+    assert streamlined["protocol"] == "zigbee"
+    assert streamlined["channel"] == 15
+    assert len(streamlined["devices"]) == 2
+
+    prompt = engine._build_prompt(zigbee_telemetry, "Some Zigbee lights dropping offline")
+    assert "Zigbee network" in prompt
+    assert "Coordinator health" in prompt
+    assert "Some Zigbee lights dropping offline" in prompt
+
+
+
+
 
 
 

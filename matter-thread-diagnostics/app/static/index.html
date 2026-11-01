@@ -221,10 +221,10 @@
         <!-- Split Network Card -->
         <div class="card rule-card">
           <div class="rule-card-header">
-            <i class="fa-solid fa-arrows-split-up-and-left rule-icon"></i>
+            <i id="rule-icon-1" class="fa-solid fa-arrows-split-up-and-left rule-icon"></i>
             <div>
-              <h4>1. Multi-Border Router Synchronization</h4>
-              <p class="rule-subtitle">Thread 1.3/1.4 Extended PAN ID &amp; Dataset Verification</p>
+              <h4 id="rule-title-1">1. Multi-Border Router Synchronization</h4>
+              <p id="rule-sub-1" class="rule-subtitle">Thread 1.3/1.4 Extended PAN ID &amp; Dataset Verification</p>
             </div>
             <span id="rule-badge-split" class="badge">--</span>
           </div>
@@ -235,14 +235,15 @@
         <!-- RF Interference Card -->
         <div class="card rule-card">
           <div class="rule-card-header">
-            <i class="fa-solid fa-tower-broadcast rule-icon"></i>
+            <i id="rule-icon-2" class="fa-solid fa-tower-broadcast rule-icon"></i>
             <div>
-              <h4>2. 2.4 GHz RF Coexistence</h4>
-              <p class="rule-subtitle">Thread 802.15.4 Channel vs 20MHz Wi-Fi (1, 6, 11)</p>
+              <h4 id="rule-title-2">2. 2.4 GHz RF Coexistence</h4>
+              <p id="rule-sub-2" class="rule-subtitle">Thread 802.15.4 Channel vs 20MHz Wi-Fi (1, 6, 11)</p>
             </div>
             <span id="rule-badge-rf" class="badge">--</span>
           </div>
           <p id="rule-text-rf" class="rule-text">Evaluating RF spectral overlap...</p>
+          <div id="rf-coexistence-detail" class="detail-box" style="display: none;"></div>
           <div class="rf-visual-scale">
             <div class="rf-bar">
               <span class="rf-zone z1">Wi-Fi Ch 1 (Thread 11-14)</span>
@@ -256,10 +257,10 @@
         <!-- IPv6 ULA Routing Card -->
         <div class="card rule-card">
           <div class="rule-card-header">
-            <i class="fa-solid fa-globe rule-icon"></i>
+            <i id="rule-icon-3" class="fa-solid fa-globe rule-icon"></i>
             <div>
-              <h4>3. Host Kernel IPv6 ULA Routes &amp; ICMPv6 Pings</h4>
-              <p class="rule-subtitle">Kernel Route Table (<code>ip -6 route</code>) &amp; Active Reachability</p>
+              <h4 id="rule-title-3">3. Host Kernel IPv6 ULA Routes &amp; ICMPv6 Pings</h4>
+              <p id="rule-sub-3" class="rule-subtitle">Kernel Route Table (<code>ip -6 route</code>) &amp; Active Reachability</p>
             </div>
             <span id="rule-badge-ipv6" class="badge">--</span>
           </div>
@@ -270,10 +271,10 @@
         <!-- Node Quality & Logs Card -->
         <div class="card rule-card">
           <div class="rule-card-header">
-            <i class="fa-solid fa-signal rule-icon"></i>
+            <i id="rule-icon-4" class="fa-solid fa-signal rule-icon"></i>
             <div>
-              <h4>4. Node Link Quality &amp; Server Logs</h4>
-              <p class="rule-subtitle">Cluster 0x0035 Attenuation, ICD Health &amp; Add-on Errors</p>
+              <h4 id="rule-title-4">4. Node Link Quality &amp; Server Logs</h4>
+              <p id="rule-sub-4" class="rule-subtitle">Cluster 0x0035 Attenuation, ICD Health &amp; Add-on Errors</p>
             </div>
             <span id="rule-badge-nodes" class="badge">--</span>
           </div>
@@ -288,8 +289,8 @@
       <div class="card">
         <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3><i class="fa-solid fa-diagram-project"></i> Live Force-Directed Thread Mesh Topology (RF Proximity Physics)</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Nodes dynamically position themselves by real RF signal proximity (<code>RSSI dBm</code>, <code>LQI</code> &amp; <code>Ping RTT</code>) — stronger signals pull closer together; weak links stretch further apart. Drag any node to interact!</p>
+            <h3 id="heading-topology"><i class="fa-solid fa-diagram-project"></i> Live Force-Directed Thread Mesh Topology (RF Proximity Physics)</h3>
+            <p id="desc-topology" class="section-desc" style="margin-bottom: 0;">Nodes dynamically position themselves by real RF signal proximity (<code>RSSI dBm</code>, <code>LQI</code> &amp; <code>Ping RTT</code>) — stronger signals pull closer together; weak links stretch further apart. Drag any node to interact!</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <div style="position: relative; display: flex; align-items: center;">
@@ -398,8 +399,8 @@
       <div class="card">
         <div class="card-header-flex" style="flex-wrap: wrap; gap: 12px;">
           <div>
-            <h3><i class="fa-solid fa-tower-broadcast"></i> Home Assistant Connect ZBT-1 / OTBR Radio Channel Management</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Inspect your active 802.15.4 radio channel, evaluate 2.4 GHz Wi-Fi interference, and safely migrate your Thread mesh to clean channels (e.g. Channel 25 or 26) with automatic Pending Dataset propagation across all devices.</p>
+            <h3 id="heading-channel"><i class="fa-solid fa-tower-broadcast"></i> Home Assistant Connect ZBT-1 / OTBR Radio Channel Management</h3>
+            <p id="desc-channel" class="section-desc" style="margin-bottom: 0;">Inspect your active 802.15.4 radio channel, evaluate 2.4 GHz Wi-Fi interference, and safely migrate your Thread mesh to clean channels (e.g. Channel 25 or 26) with automatic Pending Dataset propagation across all devices.</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <button id="btn-refresh-channel-status" type="button" class="btn btn-outline" style="padding: 6px 12px; font-size: 12px;" title="Refresh live ZBT-1 and OTBR channel status">
@@ -701,8 +702,8 @@
         <div class="ai-controls card">
           <div class="card-header-flex">
             <div>
-              <h3><i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine</h3>
-              <p class="section-desc" style="margin-bottom: 0;">Sends your real scanned telemetry (selected Thread network, Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your chosen AI model.</p>
+              <h3 id="heading-ai"><i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine</h3>
+              <p id="desc-ai" class="section-desc" style="margin-bottom: 0;">Sends your real scanned telemetry (selected Thread network, Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your chosen AI model.</p>
             </div>
             <!-- Quick Model Switcher right inside AI Studio -->
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -755,8 +756,8 @@
       <div class="card">
         <div class="card-header-flex" style="flex-wrap: wrap; gap: 10px;">
           <div>
-            <h3><i class="fa-solid fa-file-code"></i> Raw Telemetry Inspector &amp; Log Analyzer</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Load or download the complete log &amp; telemetry bundle (Add-on logs, Matter Server logs, OTBR logs, and Cluster 0x0035 JSON), or paste external logs for AI analysis.</p>
+            <h3 id="heading-manual"><i class="fa-solid fa-file-code"></i> Raw Telemetry Inspector &amp; Log Analyzer</h3>
+            <p id="desc-manual" class="section-desc" style="margin-bottom: 0;">Load or download the complete log &amp; telemetry bundle (Add-on logs, Matter Server logs, OTBR logs, and Cluster 0x0035 JSON), or paste external logs for AI analysis.</p>
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap;">
             <button type="button" id="btn-load-raw-scan" class="btn btn-secondary" style="font-size: 12px;"><i class="fa-solid fa-eye"></i> Load Logs &amp; Scan into Box</button>

@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.7.0] - 2026-11-01
+
+### Added: Complete End-to-End Zigbee Protocol Transformation
+- **Full Tab & View Transformation to Zigbee**:
+  - Selecting `[ 🐝 Zigbee Network ]` transforms every tab, card, graph, frequency channel, and AI diagnosis so the entire add-on becomes Zigbee in essence.
+- **Tab 1: 4 Authentic Zigbee Diagnostic Rule Cards**:
+  - *1. Zigbee Coordinator Identity & Channel*: PAN ID, Extended PAN ID, Channel, MHz frequency, and integration status (ZHA / Zigbee2MQTT).
+  - *2. 2.4 GHz RF Coexistence*: Zigbee channel overlap evaluation against Wi-Fi channels (1, 6, 11) and Thread networks, highlighting recommended guard bands (Channels 15, 20, 25).
+  - *3. Mesh Density & Backbone Routers*: Mains-powered Zigbee routers vs battery-operated end devices ratio, verifying healthy meshing density.
+  - *4. Link Quality & Battery Health*: Evaluates weak LQI links (< 65), fringe RSSI (<-82 dBm), and low battery sensors (< 20%).
+- **Tab 2: Zigbee Topology & Legends**:
+  - Dynamically updates page headings, descriptions, and legend to "Zigbee Mesh Network Topology" (Coordinator, Routers, Battery End Devices).
+  - Rescan topology button fetches live Zigbee telemetry.
+- **Tab 3: Zigbee Radio Channel & 2.4 GHz Spectrum Visualizer**:
+  - Hardware card displays active Zigbee Coordinator dongle details (ZBT-1 / SkyConnect / ConBee / Sonoff), PAN ID, Extended PAN ID, and operating MHz frequency.
+  - Thread-specific "Join Existing PAN / Thread Mesh" card is hidden in Zigbee mode to eliminate confusion.
+  - Active Zigbee network is rendered as the primary glowing column (`🐝 ACTIVE ZIGBEE: Ch X`) on the 2.4 GHz spectrum chart with dedicated Zigbee RF clearance assessment.
+- **Tab 4: Zigbee AI Diagnostic Engine**:
+  - AI engine provides deep Zigbee domain expertise: Coordinator health, router backbone density, 2.4 GHz Wi-Fi/Thread interference, LQI link budget, and battery remediation.
+  - Symptom suggestions and placeholder text dynamically tailored to Zigbee issues.
+- **Tab 5: Log & Raw Telemetry Inspector**:
+  - "Load Logs & Scan" inspects the live Zigbee telemetry payload with full device, neighbor, and RF metrics.
+
 ## [2.6.1] - 2026-11-01
 
 ### Fixed: Tab Isolation & Zigbee Scanner HTTP 500 Error

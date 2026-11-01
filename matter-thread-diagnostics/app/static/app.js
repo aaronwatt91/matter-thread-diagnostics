@@ -98,6 +98,22 @@ document.addEventListener("DOMContentLoaded", () => {
     btnLoadRaw.addEventListener("click", async () => {
       const box = document.getElementById("manual-log-input");
       if (!box) return;
+      if (currentNetworkProtocol === "zigbee") {
+        if (currentZigbeeTelemetry) {
+          box.value = JSON.stringify(currentZigbeeTelemetry, null, 2);
+          return;
+        }
+        box.value = "Loading Zigbee telemetry...";
+        try {
+          const res = await fetch(apiPath("/api/zigbee/scan"));
+          if (res.ok) {
+            const zData = await res.json();
+            currentZigbeeTelemetry = zData;
+            box.value = JSON.stringify(zData, null, 2);
+            return;
+          }
+        } catch (_) {}
+      }
       box.value = "Loading full diagnostic log bundle...";
       try {
         const res = await fetch(apiPath("/api/diagnostics/logs"));
@@ -131,7 +147,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnRefreshChannel = document.getElementById("btn-refresh-channel-status");
   if (btnRefreshChannel) {
     btnRefreshChannel.addEventListener("click", () => {
-      fetchOtbrChannelInfo(true);
+      if (currentNetworkProtocol === "zigbee") {
+        fetchZigbeeDiagnostics(false);
+      } else {
+        fetchOtbrChannelInfo(true);
+      }
       fetchCoexistenceSpectrum(true);
     });
   }
@@ -166,7 +186,11 @@ document.addEventListener("DOMContentLoaded", () => {
     btnRefreshTopo.addEventListener("click", async () => {
       btnRefreshTopo.disabled = true;
       btnRefreshTopo.innerHTML = `<i class="fa-solid fa-arrows-rotate fa-spin"></i> Scanning Mesh...`;
-      await scanSelectedNetwork(false);
+      if (currentNetworkProtocol === "zigbee") {
+        await fetchZigbeeDiagnostics(false);
+      } else {
+        await scanSelectedNetwork(false);
+      }
       btnRefreshTopo.innerHTML = `<i class="fa-solid fa-check"></i> Scanned!`;
       setTimeout(() => {
         btnRefreshTopo.disabled = false;
@@ -1000,7 +1024,21 @@ function setNetworkProtocol(proto, triggerScan = false) {
   const topSelect = document.getElementById("top-thread-network");
   const btnScan = document.getElementById("btn-top-scan");
   const tabRulesBtn = document.getElementById("tab-nav-rules");
+  const tabTopoBtn = document.getElementById("tab-nav-topology");
   const tabChanBtn = document.getElementById("tab-nav-channel");
+  const tabAiBtn = document.getElementById("tab-nav-ai");
+  const tabManualBtn = document.getElementById("tab-nav-manual");
+
+  const headingTopo = document.getElementById("heading-topology");
+  const descTopo = document.getElementById("desc-topology");
+  const headingChan = document.getElementById("heading-channel");
+  const descChan = document.getElementById("desc-channel");
+  const headingAi = document.getElementById("heading-ai");
+  const descAi = document.getElementById("desc-ai");
+  const headingManual = document.getElementById("heading-manual");
+  const descManual = document.getElementById("desc-manual");
+  const symptomsArea = document.getElementById("user-symptoms");
+  const joinCard = document.getElementById("select-target-join-network")?.closest(".card");
 
   if (currentNetworkProtocol === "zigbee") {
     if (scannerCard) {
@@ -1020,8 +1058,48 @@ function setNetworkProtocol(proto, triggerScan = false) {
     if (tabRulesBtn) {
       tabRulesBtn.innerHTML = `<i class="fa-solid fa-cube"></i> Live Scan &amp; Zigbee Devices`;
     }
+    if (tabTopoBtn) {
+      tabTopoBtn.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Zigbee Mesh Topology`;
+    }
     if (tabChanBtn) {
       tabChanBtn.innerHTML = `<i class="fa-solid fa-tower-broadcast"></i> Zigbee Channel &amp; Coexistence`;
+    }
+    if (tabAiBtn) {
+      tabAiBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Zigbee AI Diagnostics`;
+    }
+    if (tabManualBtn) {
+      tabManualBtn.innerHTML = `<i class="fa-solid fa-file-code"></i> Zigbee Logs &amp; Raw JSON`;
+    }
+
+    if (headingTopo) {
+      headingTopo.innerHTML = `<i class="fa-solid fa-diagram-project" style="color: #facc15;"></i> Live Force-Directed Zigbee Mesh Topology (LQI Proximity Physics)`;
+    }
+    if (descTopo) {
+      descTopo.innerHTML = `Zigbee Coordinator, Mains Routers, and End Devices dynamically position themselves by real LQI signal link quality. Stronger LQI links cluster together; weak links stretch further apart. Drag any node to interact!`;
+    }
+    if (headingChan) {
+      headingChan.innerHTML = `<i class="fa-solid fa-tower-broadcast" style="color: #facc15;"></i> Zigbee Radio Adapter &amp; Channel Status`;
+    }
+    if (descChan) {
+      descChan.innerHTML = `Inspect your active 802.15.4 Zigbee radio channel, evaluate 2.4 GHz Wi-Fi and Thread RF interference, and discover clean guard bands.`;
+    }
+    if (joinCard) {
+      joinCard.style.display = "none";
+    }
+    if (headingAi) {
+      headingAi.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles" style="color: #facc15;"></i> Zigbee AI Diagnostic Engine`;
+    }
+    if (descAi) {
+      descAi.innerHTML = `Sends your real scanned Zigbee telemetry (Coordinator, ZHA / Zigbee2MQTT device registry, LQI link qualities, RSSI metrics, 2.4 GHz coexistence, and mesh topology) to your chosen AI model for expert diagnosis and optimization advice.`;
+    }
+    if (symptomsArea) {
+      symptomsArea.placeholder = "e.g. Why are some Zigbee sensors showing weak LQI, are there Wi-Fi channel conflicts on Ch 15, or where should I place additional Zigbee repeaters?";
+    }
+    if (headingManual) {
+      headingManual.innerHTML = `<i class="fa-solid fa-file-code" style="color: #facc15;"></i> Raw Zigbee Telemetry &amp; Log Analyzer`;
+    }
+    if (descManual) {
+      descManual.innerHTML = `Inspect and download the complete raw Zigbee JSON telemetry bundle, device list, LQI matrix, and 2.4 GHz RF coexistence data.`;
     }
 
     if (currentZigbeeTelemetry && !triggerScan) {
@@ -1045,8 +1123,48 @@ function setNetworkProtocol(proto, triggerScan = false) {
     if (tabRulesBtn) {
       tabRulesBtn.innerHTML = `<i class="fa-solid fa-microscope"></i> Live Scan &amp; Nodes (Cluster 0x0035)`;
     }
+    if (tabTopoBtn) {
+      tabTopoBtn.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Live Mesh Topology`;
+    }
     if (tabChanBtn) {
-      tabChanBtn.innerHTML = `<i class="fa-solid fa-tower-broadcast"></i> ZBT-1 / Thread Channel`;
+      tabChanBtn.innerHTML = `<i class="fa-solid fa-tower-broadcast"></i> ZBT-1 / Channel &amp; Coexistence`;
+    }
+    if (tabAiBtn) {
+      tabAiBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> AI Diagnostics Studio`;
+    }
+    if (tabManualBtn) {
+      tabManualBtn.innerHTML = `<i class="fa-solid fa-file-code"></i> Log &amp; Raw JSON Analyzer`;
+    }
+
+    if (headingTopo) {
+      headingTopo.innerHTML = `<i class="fa-solid fa-diagram-project"></i> Live Force-Directed Thread Mesh Topology (RF Proximity Physics)`;
+    }
+    if (descTopo) {
+      descTopo.innerHTML = `Nodes dynamically position themselves by real RF signal proximity (<code>RSSI dBm</code>, <code>LQI</code> &amp; <code>Ping RTT</code>) — stronger signals pull closer together; weak links stretch further apart. Drag any node to interact!`;
+    }
+    if (headingChan) {
+      headingChan.innerHTML = `<i class="fa-solid fa-tower-broadcast"></i> Home Assistant Connect ZBT-1 / OTBR Radio Channel Management`;
+    }
+    if (descChan) {
+      descChan.innerHTML = `Inspect your active 802.15.4 radio channel, evaluate 2.4 GHz Wi-Fi interference, and safely migrate your Thread mesh to clean channels (e.g. Channel 25 or 26) with automatic Pending Dataset propagation across all devices.`;
+    }
+    if (joinCard) {
+      joinCard.style.display = "";
+    }
+    if (headingAi) {
+      headingAi.innerHTML = `<i class="fa-solid fa-robot"></i> AI Root-Cause Diagnostic Engine`;
+    }
+    if (descAi) {
+      descAi.innerHTML = `Sends your real scanned telemetry (selected Thread network, Border Routers, Matter Cluster 0x0035 Neighbor Tables, RLOC16s, RSSI/LQI, kernel IPv6 routes, and ICMPv6 ping results) to your chosen AI model.`;
+    }
+    if (symptomsArea) {
+      symptomsArea.placeholder = "e.g. Node 4 drops offline overnight, my Apple TV and HA ZBT-1 show different PAN IDs, or pings to fd00:: addresses time out...";
+    }
+    if (headingManual) {
+      headingManual.innerHTML = `<i class="fa-solid fa-file-code"></i> Raw Telemetry Inspector &amp; Log Analyzer`;
+    }
+    if (descManual) {
+      descManual.innerHTML = `Load or download the complete log &amp; telemetry bundle (Add-on logs, Matter Server logs, OTBR logs, and Cluster 0x0035 JSON), or paste external logs for AI analysis.`;
     }
 
     if (availableThreadNetworks && availableThreadNetworks.length > 0 && topSelect) {
@@ -1379,10 +1497,14 @@ function renderZigbeeView(data) {
   if (!data) return;
   renderZigbeeKPIs(data);
   renderZigbeeTables(data);
+  renderZigbeeDiagnosticRules(data);
+  renderZigbeeChannelInfo(data);
+
   const rulesGrid = document.querySelector(".rules-grid");
   if (rulesGrid) {
-    rulesGrid.style.display = "none";
+    rulesGrid.style.display = "grid";
   }
+
   if (data.topology) {
     renderTopologyData(data.topology);
   }
@@ -1400,6 +1522,195 @@ function renderZigbeeView(data) {
       ${data.is_demo ? `<span class="badge badge-warning" style="font-size:10px;">Demonstration Network</span>` : ''}
     `;
   }
+}
+
+function renderZigbeeDiagnosticRules(data) {
+  if (!data) return;
+  const coord = data.coordinator || {};
+  const coex = data.coexistence || {};
+
+  // Card 1: Coordinator & Network Identity
+  const t1 = document.getElementById("rule-title-1"); if (t1) t1.innerText = "1. Zigbee Coordinator & Network Identity";
+  const s1 = document.getElementById("rule-sub-1"); if (s1) s1.innerText = "ZHA / Zigbee2MQTT Settings, Channel & PAN ID";
+  const i1 = document.getElementById("rule-icon-1"); if (i1) i1.className = "fa-solid fa-tower-broadcast rule-icon";
+  const b1 = document.getElementById("rule-badge-split");
+  if (b1) {
+    b1.innerText = coord.status || "Online";
+    b1.className = "badge badge-success";
+  }
+  const txt1 = document.getElementById("rule-text-split");
+  if (txt1) {
+    txt1.innerText = `${coord.name || 'Coordinator'} online on Channel ${data.channel} (${data.frequency_mhz} MHz) • PAN ID: ${data.pan_id}`;
+  }
+  const d1 = document.getElementById("split-networks-detail");
+  if (d1) {
+    d1.innerHTML = `
+      <div style="font-size:12px; display:flex; flex-direction:column; gap:6px;">
+        <div><strong>Coordinator Adapter:</strong> <span style="color:#facc15;">${escapeHtml(coord.name || 'Zigbee Coordinator')}</span> (${escapeHtml(coord.model || coord.vendor || 'Zigbee 3.0 Adapter')})</div>
+        <div><strong>Integration Source:</strong> <span class="badge badge-ha">${escapeHtml(data.integration || 'ZHA')}</span></div>
+        <div><strong>Operating Channel:</strong> <span class="badge badge-info">Channel ${data.channel} (${data.frequency_mhz} MHz)</span></div>
+        <div><strong>PAN ID:</strong> <code>${escapeHtml(String(data.pan_id || '0x1A2B'))}</code> • <strong>Extended PAN ID:</strong> <code>${escapeHtml(String(data.extended_pan_id || 'N/A'))}</code></div>
+        <div><strong>IEEE MAC:</strong> <code style="color:#38bdf8;">${escapeHtml(String(coord.ieee || 'N/A'))}</code></div>
+      </div>
+    `;
+  }
+
+  // Card 2: 2.4 GHz RF Coexistence
+  const t2 = document.getElementById("rule-title-2"); if (t2) t2.innerText = "2. 2.4 GHz Zigbee RF Coexistence";
+  const s2 = document.getElementById("rule-sub-2"); if (s2) s2.innerText = `Zigbee Channel ${data.channel} vs 20MHz Wi-Fi (1, 6, 11) & Thread`;
+  const i2 = document.getElementById("rule-icon-2"); if (i2) i2.className = "fa-solid fa-satellite-dish rule-icon";
+  const b2 = document.getElementById("rule-badge-rf");
+  const txt2 = document.getElementById("rule-text-rf");
+  const d2 = document.getElementById("rf-coexistence-detail");
+
+  const isCollision = coex.thread_zigbee_collision;
+  let rfStatus = "CLEAN";
+  let rfBadgeClass = "badge-success";
+  let rfDesc = `Zigbee Channel ${data.channel} has minimal 2.4 GHz interference.`;
+
+  if (isCollision) {
+    rfStatus = "COLLISION";
+    rfBadgeClass = "badge-danger";
+    rfDesc = `Direct collision: Zigbee and Thread share Channel ${data.channel}! Migrate one protocol.`;
+  } else if (data.channel === 15 || data.channel === 20 || data.channel === 25 || data.channel === 26) {
+    rfStatus = "GUARD BAND";
+    rfBadgeClass = "badge-success";
+    rfDesc = `Channel ${data.channel} sits in a safe guard band between 2.4 GHz Wi-Fi channels.`;
+  } else {
+    rfStatus = "MODERATE";
+    rfBadgeClass = "badge-warning";
+    rfDesc = `Channel ${data.channel} operates inside a standard Wi-Fi channel spectrum band.`;
+  }
+
+  if (b2) {
+    b2.innerText = rfStatus;
+    b2.className = `badge ${rfBadgeClass}`;
+  }
+  if (txt2) txt2.innerText = rfDesc;
+  if (d2) {
+    d2.style.display = "block";
+    d2.innerHTML = `
+      <div style="font-size:12px;">
+        <div><strong>Thread Network Status:</strong> ${isCollision ? '<span style="color:#f87171;">Operating on Same Channel</span>' : '<span style="color:#34d399;">Operating on Separate Channel</span>'}</div>
+        <div><strong>Coexistence Recommendation:</strong> ${escapeHtml(coex.recommendation_summary || 'Channels 15, 20, and 25 provide the cleanest 2.4 GHz clearance.')}</div>
+      </div>
+    `;
+  }
+
+  // Card 3: Mesh Density & Routing Backbone
+  const t3 = document.getElementById("rule-title-3"); if (t3) t3.innerText = "3. Zigbee Mesh Density & Routing Backbone";
+  const s3 = document.getElementById("rule-sub-3"); if (s3) s3.innerText = "Mains-Powered Routers vs Battery-Powered End Devices";
+  const i3 = document.getElementById("rule-icon-3"); if (i3) i3.className = "fa-solid fa-sitemap rule-icon";
+  const b3 = document.getElementById("rule-badge-ipv6");
+  const txt3 = document.getElementById("rule-text-ipv6");
+  const d3 = document.getElementById("ipv6-routes-detail");
+
+  const rCount = data.routers_count || 0;
+  const eCount = data.end_devices_count || 0;
+  const isHealthyDensity = rCount >= 2 || (rCount >= 1 && eCount <= 4);
+
+  if (b3) {
+    b3.innerText = isHealthyDensity ? "HEALTHY BACKBONE" : "LOW REPEATERS";
+    b3.className = `badge ${isHealthyDensity ? 'badge-success' : 'badge-warning'}`;
+  }
+  if (txt3) {
+    txt3.innerText = `${rCount} Mains-powered Routers providing mesh repeating for ${eCount} Battery End Devices.`;
+  }
+  if (d3) {
+    const routerList = (data.devices || []).filter(d => (d.device_type || "").toLowerCase() === "router" || d.power_source === "Mains");
+    d3.innerHTML = routerList.length > 0
+      ? `<pre style="margin:0; font-family:var(--font-mono); font-size:11px; color:#cbd5e1;">` + routerList.map(r => `• ${escapeHtml(r.name)} (${escapeHtml(r.model || 'Router')}) — LQI: ${r.lqi || 'N/A'}/255 ${r.ha_area ? '[' + escapeHtml(r.ha_area) + ']' : ''}`).join("\n") + `</pre>`
+      : `<span style="color:#fbbf24; font-size:12px;">No dedicated mains-powered router nodes discovered. Battery sensors are connecting directly to Coordinator. Consider adding Zigbee smart plugs to extend coverage.</span>`;
+  }
+
+  // Card 4: Link Quality (LQI) & Battery Health
+  const t4 = document.getElementById("rule-title-4"); if (t4) t4.innerText = "4. Link Quality (LQI) & Battery Health";
+  const s4 = document.getElementById("rule-sub-4"); if (s4) s4.innerText = "LQI Signal Attenuation & Battery Levels";
+  const i4 = document.getElementById("rule-icon-4"); if (i4) i4.className = "fa-solid fa-signal rule-icon";
+  const b4 = document.getElementById("rule-badge-nodes");
+  const txt4 = document.getElementById("rule-text-nodes");
+  const d4 = document.getElementById("nodes-detail-list");
+
+  const avgLqi = data.avg_lqi || 200;
+  const weakCount = data.weak_count || 0;
+  const offCount = data.offline_count || 0;
+
+  if (b4) {
+    b4.innerText = `Avg LQI: ${avgLqi}/255`;
+    b4.className = `badge ${avgLqi >= 140 ? 'badge-success' : (avgLqi >= 90 ? 'badge-warning' : 'badge-danger')}`;
+  }
+  if (txt4) {
+    txt4.innerText = `${data.total_devices - offCount}/${data.total_devices} devices operational. ${offCount} offline, ${weakCount} weak link(s).`;
+  }
+  if (d4) {
+    const weakDevs = (data.devices || []).filter(d => !d.available || (d.lqi !== null && d.lqi < 65) || (d.battery !== null && d.battery < 20));
+    if (weakDevs.length > 0) {
+      d4.innerHTML = weakDevs.map(d => {
+        const isOff = !d.available;
+        return `
+          <div style="padding:4px 0; border-bottom:1px solid #334155; font-size:12px;">
+            <strong style="color:${isOff ? '#f87171' : '#fbbf24'};">${isOff ? '🔴 OFFLINE' : '⚠️ ATTENTION'}: ${escapeHtml(d.name)}</strong>
+            <span style="color:var(--text-muted); font-size:11px;">(${escapeHtml(d.model || '')}) — LQI: ${d.lqi || 'N/A'}/255 • Battery: ${d.battery !== null && d.battery !== undefined ? d.battery + '%' : 'Mains'}</span>
+          </div>
+        `;
+      }).join("");
+    } else {
+      d4.innerHTML = `<span style="color:#34d399; font-size:12px;">✓ All Zigbee devices have healthy LQI signal strength and adequate battery reserves.</span>`;
+    }
+  }
+}
+
+function renderZigbeeChannelInfo(data) {
+  if (!data) return;
+  const coord = data.coordinator || {};
+
+  // 1. Hardware card details
+  const nameEl = document.getElementById("zbt1-hardware-name");
+  const modelEl = document.getElementById("zbt1-hardware-model");
+  const stateBadge = document.getElementById("zbt1-radio-state");
+  const otbrBadge = document.getElementById("zbt1-otbr-status");
+
+  if (nameEl) nameEl.innerText = coord.name || "Zigbee Coordinator";
+  if (modelEl) modelEl.innerText = `${coord.model || coord.vendor || "Silicon Labs EFR32 / Zigbee Adapter"} (${data.integration || "ZHA"})`;
+  if (stateBadge) {
+    stateBadge.innerText = `ZIGBEE ACTIVE`;
+    stateBadge.className = `badge badge-success`;
+  }
+  if (otbrBadge) {
+    otbrBadge.innerText = `${data.total_devices || 0} Nodes Online`;
+    otbrBadge.className = `badge badge-info`;
+  }
+
+  // 2. Current Channel & Frequency
+  const chNumEl = document.getElementById("zbt1-current-channel-num");
+  const freqEl = document.getElementById("zbt1-current-freq");
+  const rfBadgeContainer = document.getElementById("zbt1-current-rf-badge");
+
+  if (chNumEl) chNumEl.innerText = `Ch ${data.channel || 15}`;
+  if (freqEl) freqEl.innerText = `(${data.frequency_mhz || 2425} MHz)`;
+  if (rfBadgeContainer) {
+    const ch = data.channel || 15;
+    if (ch === 15 || ch === 20 || ch === 25 || ch === 26) {
+      rfBadgeContainer.innerHTML = `<span class="badge badge-success" style="font-size:11px;"><i class="fa-solid fa-shield-check"></i> Channel ${ch} — Clean Guard Band</span>`;
+    } else {
+      rfBadgeContainer.innerHTML = `<span class="badge badge-warning" style="font-size:11px;"><i class="fa-solid fa-triangle-exclamation"></i> Channel ${ch} — Moderate Wi-Fi Overlap</span>`;
+    }
+  }
+
+  // 3. Network Identity
+  const netNameEl = document.getElementById("zbt1-network-name");
+  const xpanEl = document.getElementById("zbt1-xpan");
+  const panidEl = document.getElementById("zbt1-panid");
+  const rloc16El = document.getElementById("zbt1-rloc16");
+
+  if (netNameEl) netNameEl.innerText = `Zigbee Mesh (${data.integration || "ZHA"})`;
+  if (xpanEl) xpanEl.innerText = data.extended_pan_id || "--";
+  if (panidEl) panidEl.innerText = String(data.pan_id || "--");
+  if (rloc16El) rloc16El.innerText = `IEEE: ${coord.ieee || "--"}`;
+
+  // Hide Thread PAN join card
+  const joinCard = document.getElementById("select-target-join-network")?.closest(".card");
+  if (joinCard) joinCard.style.display = "none";
 }
 
 function inspectZigbeeDevice(ieee) {
@@ -4142,28 +4453,50 @@ function renderCoexistenceUI(data) {
   const recEl = document.getElementById("coex-recommendation");
 
   if (alertBox && alertTitle && alertDesc) {
-    if (analysis.thread_zigbee_collision) {
-      alertBox.style.borderColor = "#ef4444";
-      alertBox.style.background = "#450a0a33";
-      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #ef4444;"></i>`;
-      alertTitle.innerHTML = `<span style="color: #f87171;">CRITICAL RF COLLISION: Thread &amp; Zigbee on Same Channel!</span>`;
-      alertDesc.innerHTML = escapeHtml(analysis.thread_zigbee_message || "");
-    } else if (analysis.thread_wifi_overlap) {
-      alertBox.style.borderColor = "#f59e0b";
-      alertBox.style.background = "#451a0333";
-      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b;"></i>`;
-      alertTitle.innerHTML = `<span style="color: #fbbf24;">High Wi-Fi Overlap: Inside Wi-Fi Channel ${analysis.overlapping_wifi_channel || '1/6/11'} Mask</span>`;
-      alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is inside the 20 MHz transmission mask of Wi-Fi Channel ${analysis.overlapping_wifi_channel}. High-bandwidth Wi-Fi traffic (video streaming, downloads) will degrade Thread response times and cause packet retries.`;
+    if (currentNetworkProtocol === "zigbee") {
+      const zbCh = zb.channel || currentZigbeeTelemetry?.channel || 15;
+      const zbFreq = zb.frequency_mhz || currentZigbeeTelemetry?.frequency_mhz || (2405 + 5 * (zbCh - 11));
+      if (analysis.thread_zigbee_collision) {
+        alertBox.style.borderColor = "#ef4444";
+        alertBox.style.background = "#450a0a33";
+        if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #ef4444;"></i>`;
+        alertTitle.innerHTML = `<span style="color: #f87171;">CRITICAL RF COLLISION: Zigbee &amp; Thread on Same Channel ${zbCh}!</span>`;
+        alertDesc.innerHTML = `Both your Zigbee coordinator and Thread network are broadcasting on Channel ${zbCh} (${zbFreq} MHz). This causes 2.4 GHz carrier competition, packet drops, delayed sensor triggers, and battery drain.`;
+      } else {
+        const isGuard = zbCh === 15 || zbCh === 20 || zbCh === 25 || zbCh === 26;
+        alertBox.style.borderColor = isGuard ? "#10b981" : "#f59e0b";
+        alertBox.style.background = isGuard ? "#064e3b33" : "#451a0333";
+        if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid ${isGuard ? 'fa-circle-check' : 'fa-triangle-exclamation'}" style="color: ${isGuard ? '#10b981' : '#f59e0b'};"></i>`;
+        alertTitle.innerHTML = `<span style="color: ${isGuard ? '#34d399' : '#fbbf24'};">${isGuard ? 'Clean RF Environment: Guard Band / Safe Zone' : 'Moderate Wi-Fi Overlap'}</span>`;
+        alertDesc.innerHTML = `Your Zigbee network on Channel ${zbCh} (${zbFreq} MHz) is separated from Thread. ${isGuard ? 'It operates cleanly in a guard band between primary 20 MHz Wi-Fi channels.' : 'It falls inside a standard 2.4 GHz Wi-Fi transmission mask.'}`;
+      }
+      if (recEl) {
+        recEl.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Zigbee Recommendation: Channels 15, 20, and 25 provide the cleanest 2.4 GHz clearance from Wi-Fi and Thread.`;
+      }
     } else {
-      alertBox.style.borderColor = "#10b981";
-      alertBox.style.background = "#064e3b33";
-      if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #10b981;"></i>`;
-      alertTitle.innerHTML = `<span style="color: #34d399;">Clean RF Environment: Guard Band / Safe Zone</span>`;
-      alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is operating cleanly outside of primary Wi-Fi channels and is separated from Zigbee.`;
-    }
+      if (analysis.thread_zigbee_collision) {
+        alertBox.style.borderColor = "#ef4444";
+        alertBox.style.background = "#450a0a33";
+        if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #ef4444;"></i>`;
+        alertTitle.innerHTML = `<span style="color: #f87171;">CRITICAL RF COLLISION: Thread &amp; Zigbee on Same Channel!</span>`;
+        alertDesc.innerHTML = escapeHtml(analysis.thread_zigbee_message || "");
+      } else if (analysis.thread_wifi_overlap) {
+        alertBox.style.borderColor = "#f59e0b";
+        alertBox.style.background = "#451a0333";
+        if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b;"></i>`;
+        alertTitle.innerHTML = `<span style="color: #fbbf24;">High Wi-Fi Overlap: Inside Wi-Fi Channel ${analysis.overlapping_wifi_channel || '1/6/11'} Mask</span>`;
+        alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is inside the 20 MHz transmission mask of Wi-Fi Channel ${analysis.overlapping_wifi_channel}. High-bandwidth Wi-Fi traffic (video streaming, downloads) will degrade Thread response times and cause packet retries.`;
+      } else {
+        alertBox.style.borderColor = "#10b981";
+        alertBox.style.background = "#064e3b33";
+        if (alertIcon) alertIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #10b981;"></i>`;
+        alertTitle.innerHTML = `<span style="color: #34d399;">Clean RF Environment: Guard Band / Safe Zone</span>`;
+        alertDesc.innerHTML = `Your Thread network on Channel ${th.channel} (${th.frequency_mhz} MHz) is operating cleanly outside of primary Wi-Fi channels and is separated from Zigbee.`;
+      }
 
-    if (recEl) {
-      recEl.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Recommendation: ${escapeHtml(analysis.recommendation_summary || '')}`;
+      if (recEl) {
+        recEl.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Recommendation: ${escapeHtml(analysis.recommendation_summary || '')}`;
+      }
     }
   }
 
@@ -4311,25 +4644,26 @@ function renderCoexistenceSpectrumGraph(data) {
   }
 
   // 5. Active Zigbee Channel (if detected)
+  const isZigbeeMode = currentNetworkProtocol === "zigbee";
   if (zb.channel && zb.frequency_mhz) {
     const fZb = zb.frequency_mhz;
     const xZb = X(fZb);
-    const peakZb = GH * 0.85;
+    const peakZb = isZigbeeMode ? GH * 0.95 : GH * 0.80;
 
     const zbPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     const x1 = X(fZb - 1.2);
     const x2 = X(fZb + 1.2);
     zbPath.setAttribute("d", `M ${x1} ${Y_base} L ${x1} ${Y_base - peakZb} L ${x2} ${Y_base - peakZb} L ${x2} ${Y_base} Z`);
-    zbPath.setAttribute("fill", "#eab30855");
+    zbPath.setAttribute("fill", isZigbeeMode ? "#eab30888" : "#eab30844");
     zbPath.setAttribute("stroke", "#facc15");
-    zbPath.setAttribute("stroke-width", "2.2");
+    zbPath.setAttribute("stroke-width", isZigbeeMode ? "3.0" : "1.8");
     svg.appendChild(zbPath);
 
     const zbBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    const badgeW = 125;
+    const badgeW = isZigbeeMode ? 140 : 120;
     zbBadgeG.innerHTML = `
-      <rect x="${xZb - badgeW / 2}" y="${Y_base - peakZb - 22}" width="${badgeW}" height="20" rx="4" fill="#854d0e" stroke="#facc15" stroke-width="1.5" />
-      <text x="${xZb}" y="${Y_base - peakZb - 8}" fill="#ffffff" font-size="10" font-weight="700" text-anchor="middle">🐝 Zigbee Ch ${zb.channel}</text>
+      <rect x="${xZb - badgeW / 2}" y="${Y_base - peakZb - 24}" width="${badgeW}" height="20" rx="4" fill="${isZigbeeMode ? '#ca8a04' : '#854d0e'}" stroke="#facc15" stroke-width="${isZigbeeMode ? '2' : '1'}" />
+      <text x="${xZb}" y="${Y_base - peakZb - 10}" fill="#ffffff" font-size="${isZigbeeMode ? '10' : '9'}" font-weight="${isZigbeeMode ? '800' : '600'}" text-anchor="middle">${isZigbeeMode ? '🐝 ACTIVE ZIGBEE Ch ' + zb.channel : '🐝 Zigbee Ch ' + zb.channel}</text>
     `;
     svg.appendChild(zbBadgeG);
   }
@@ -4338,22 +4672,22 @@ function renderCoexistenceSpectrumGraph(data) {
   if (th.channel && th.frequency_mhz) {
     const fTh = th.frequency_mhz;
     const xTh = X(fTh);
-    const peakTh = GH * 0.95;
+    const peakTh = isZigbeeMode ? GH * 0.78 : GH * 0.95;
 
     const thPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     const x1 = X(fTh - 1.2);
     const x2 = X(fTh + 1.2);
     thPath.setAttribute("d", `M ${x1} ${Y_base} L ${x1} ${Y_base - peakTh} L ${x2} ${Y_base - peakTh} L ${x2} ${Y_base} Z`);
-    thPath.setAttribute("fill", "#0284c766");
+    thPath.setAttribute("fill", isZigbeeMode ? "#0284c744" : "#0284c766");
     thPath.setAttribute("stroke", "#38bdf8");
-    thPath.setAttribute("stroke-width", "2.8");
+    thPath.setAttribute("stroke-width", isZigbeeMode ? "1.8" : "2.8");
     svg.appendChild(thPath);
 
     const thBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    const badgeW = 125;
+    const badgeW = isZigbeeMode ? 125 : 140;
     thBadgeG.innerHTML = `
-      <rect x="${xTh - badgeW / 2}" y="${Y_base - peakTh - 24}" width="${badgeW}" height="20" rx="4" fill="#0369a1" stroke="#38bdf8" stroke-width="1.8" />
-      <text x="${xTh}" y="${Y_base - peakTh - 10}" fill="#ffffff" font-size="10" font-weight="700" text-anchor="middle">🧵 Thread Ch ${th.channel}</text>
+      <rect x="${xTh - badgeW / 2}" y="${Y_base - peakTh - 24}" width="${badgeW}" height="20" rx="4" fill="${isZigbeeMode ? '#075985' : '#0369a1'}" stroke="#38bdf8" stroke-width="${isZigbeeMode ? '1' : '1.8'}" />
+      <text x="${xTh}" y="${Y_base - peakTh - 10}" fill="#ffffff" font-size="${isZigbeeMode ? '9' : '10'}" font-weight="${isZigbeeMode ? '600' : '800'}" text-anchor="middle">${isZigbeeMode ? '🧵 Thread Ch ' + th.channel : '🧵 ACTIVE THREAD Ch ' + th.channel}</text>
     `;
     svg.appendChild(thBadgeG);
 
@@ -4361,15 +4695,16 @@ function renderCoexistenceSpectrumGraph(data) {
     if (zb.channel && th.channel === zb.channel) {
       const hazardG = document.createElementNS("http://www.w3.org/2000/svg", "g");
       hazardG.innerHTML = `
-        <rect x="${xTh - 95}" y="${Y_base - peakTh - 52}" width="190" height="24" rx="5" fill="#ef4444" stroke="#ffffff" stroke-width="2" />
-        <text x="${xTh}" y="${Y_base - peakTh - 36}" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">🚨 DIRECT COLLISION: Ch ${th.channel}</text>
+        <rect x="${xTh - 95}" y="${Y_base - (isZigbeeMode ? peakZb : peakTh) - 54}" width="190" height="24" rx="5" fill="#ef4444" stroke="#ffffff" stroke-width="2" />
+        <text x="${xTh}" y="${Y_base - (isZigbeeMode ? peakZb : peakTh) - 38}" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">🚨 DIRECT COLLISION: Ch ${th.channel}</text>
       `;
       svg.appendChild(hazardG);
     }
   }
 
   // 7. Target Migration Marker (if user selected a new channel)
-  if (selectedTargetChannel && selectedTargetChannel !== th.channel) {
+  const activeChannelRef = isZigbeeMode ? zb.channel : th.channel;
+  if (selectedTargetChannel && selectedTargetChannel !== activeChannelRef) {
     const fTarget = 2405 + 5 * (selectedTargetChannel - 11);
     const xTarget = X(fTarget);
     const targetBadgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");

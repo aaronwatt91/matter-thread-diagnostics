@@ -172,6 +172,44 @@ class AIDiagnosticEngine:
         if "raw_text" in raw_data and "source" in raw_data:
             return raw_data
 
+        if raw_data.get("protocol") == "zigbee":
+            return {
+                "protocol": "zigbee",
+                "integration": raw_data.get("integration", "ZHA / Zigbee2MQTT"),
+                "channel": raw_data.get("channel"),
+                "frequency_mhz": raw_data.get("frequency_mhz"),
+                "pan_id": raw_data.get("pan_id"),
+                "extended_pan_id": raw_data.get("extended_pan_id"),
+                "coordinator": raw_data.get("coordinator"),
+                "health_score": raw_data.get("health_score", 100),
+                "health_status": raw_data.get("health_status"),
+                "total_devices": raw_data.get("total_devices", 0),
+                "routers_count": raw_data.get("routers_count", 0),
+                "end_devices_count": raw_data.get("end_devices_count", 0),
+                "offline_count": raw_data.get("offline_count", 0),
+                "weak_lqi_count": raw_data.get("weak_count", 0),
+                "avg_lqi": raw_data.get("avg_lqi", 200),
+                "coexistence": raw_data.get("coexistence", {}),
+                "devices": [
+                    {
+                        "name": d.get("name"),
+                        "device_type": d.get("device_type"),
+                        "manufacturer": d.get("manufacturer"),
+                        "model": d.get("model"),
+                        "power_source": d.get("power_source"),
+                        "battery": d.get("battery"),
+                        "lqi": d.get("lqi"),
+                        "rssi": d.get("rssi"),
+                        "available": d.get("available"),
+                        "ha_area": d.get("ha_area"),
+                        "nwk": d.get("nwk"),
+                        "ieee": d.get("ieee"),
+                    }
+                    for d in (raw_data.get("devices") or [])[:35]
+                    if isinstance(d, dict)
+                ],
+            }
+
         rules = raw_data.get("rule_evaluations", {})
         split = rules.get("split_network", {})
         rf = rules.get("rf_coexistence", {})
@@ -309,6 +347,21 @@ class AIDiagnosticEngine:
         streamlined = self._streamline_telemetry(data)
         data_json = json.dumps(streamlined, separators=(",", ":"))
         notes_section = f"\nUser Symptoms / Questions:\n{user_notes}\n" if user_notes else ""
+
+        if streamlined.get("protocol") == "zigbee":
+            return (
+                f"Please analyze the following real diagnostic scan collected from the user's Home Assistant Zigbee network ({streamlined.get('integration', 'ZHA / Zigbee2MQTT')}):\n"
+                f"{notes_section}\n"
+                f"```json\n{data_json}\n```\n\n"
+                f"Expert Zigbee knowledge to apply:\n"
+                f"1. Coordinator health, firmware, channel ({streamlined.get('channel')} @ {streamlined.get('frequency_mhz')} MHz), and PAN ID.\n"
+                f"2. Router-to-end-device mesh density (routers should form a robust mains-powered backbone for sleepy battery sensors).\n"
+                f"3. 2.4 GHz RF coexistence: Zigbee channel overlap with Wi-Fi (Channels 1, 6, 11) and Thread.\n"
+                f"4. LQI link budget (LQI < 65 or RSSI < -82 dBm indicates high attenuation; suggest repeater placement).\n"
+                f"5. Low battery (< 20%) or offline device remediation.\n\n"
+                f"Diagnose all Zigbee issues found in this scan and provide a concise, actionable troubleshooting report with markdown formatting (Executive Health Rating, Root Cause Analysis, Step-by-Step Remediation Plan, Node-by-Node Recommendations)."
+            )
+
         return (
             f"Please analyze the following real diagnostic scan collected from the user's Home Assistant Matter & Thread network:\n"
             f"{notes_section}\n"
