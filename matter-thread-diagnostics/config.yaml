@@ -1,6 +1,6 @@
 name: "Matter & Thread AI Diagnostics"
 slug: "matter_thread_ai_diagnostics"
-version: "2.8.0"
+version: "2.8.1"
 description: "Real-time Matter-over-Thread network scanner, Cluster 0x0035 telemetry inspector, mDNS Border Router discovery, IPv6 reachability tester, and AI diagnostic engine for Home Assistant."
 url: "https://github.com/aaronwatt91/matter-thread-diagnostics"
 arch:

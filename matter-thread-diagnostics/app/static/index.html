@@ -309,6 +309,20 @@
           </div>
         </div>
 
+        <!-- 3D Digital Twin Quick Callout Banner -->
+        <div id="banner-3d-callout" style="display: flex; align-items: center; justify-content: space-between; background: linear-gradient(90deg, rgba(2, 132, 199, 0.2), rgba(15, 23, 42, 0.8)); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 8px; padding: 10px 14px; margin-top: 12px; margin-bottom: 2px; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="fa-solid fa-house-laptop" style="font-size: 22px; color: #38bdf8;"></i>
+            <div>
+              <div style="font-weight: 700; color: #f8fafc; font-size: 13px;">3D Digital Twin House Model Active</div>
+              <div style="font-size: 11px; color: #cbd5e1;">Explore your real Blair house in 3D, inspect device room locations, and trace wireless RF links.</div>
+            </div>
+          </div>
+          <button id="btn-quick-switch-3d" type="button" class="btn btn-primary" style="padding: 6px 14px; font-size: 12px; white-space: nowrap;">
+            <i class="fa-solid fa-cube"></i> Open 3D House Twin
+          </button>
+        </div>
+
         <!-- Topology Perspectives & Controls Bar -->
         <div style="margin: 12px 0 10px 0; background: #0f172a; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
           <!-- Left: Layout Modes -->
@@ -317,7 +331,10 @@
               <i class="fa-solid fa-shapes"></i> Layout:
             </span>
             <div class="btn-group" role="group" style="display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid #475569; flex-wrap: wrap;">
-              <button type="button" class="btn btn-layout-mode active" data-layout="force" style="padding: 5px 11px; font-size: 11px;" title="Standard organic RF signal-strength physics simulation">
+              <button type="button" class="btn btn-layout-mode active" data-layout="house3d" style="padding: 5px 11px; font-size: 11px; border-right: 1px solid #0284c7; color: #ffffff; font-weight: 700;" title="Interactive 3D Digital Twin: Explore Blair house, device rooms &amp; 3D wireless RF links">
+                <i class="fa-solid fa-house-laptop"></i> 3D House Twin
+              </button>
+              <button type="button" class="btn btn-layout-mode" data-layout="force" style="padding: 5px 11px; font-size: 11px;" title="Standard organic RF signal-strength physics simulation">
                 <i class="fa-solid fa-atom"></i> Force / RF Mesh
               </button>
               <button type="button" class="btn btn-layout-mode" data-layout="tree" style="padding: 5px 11px; font-size: 11px;" title="Hierarchical Tree: TBR at Top -> Routers -> End Devices">
@@ -331,9 +348,6 @@
               </button>
               <button type="button" class="btn btn-layout-mode" data-layout="matrix" style="padding: 5px 11px; font-size: 11px;" title="2D Signal Cross-Matrix and link budget heatmap">
                 <i class="fa-solid fa-table-cells"></i> Signal Matrix
-              </button>
-              <button type="button" class="btn btn-layout-mode" data-layout="house3d" style="padding: 5px 11px; font-size: 11px; border-left: 1px solid #0284c7; color: #38bdf8; font-weight: 700;" title="Interactive 3D Digital Twin: Explore Blair house, device rooms &amp; 3D wireless RF links">
-                <i class="fa-solid fa-house-laptop"></i> 3D House Twin
               </button>
             </div>
           </div>
@@ -389,6 +403,13 @@
           <div id="topology-3d-container" class="hidden" style="position: relative; width: 100%; height: 640px; min-height: 640px; background: radial-gradient(circle at 50% 50%, #0f172a 0%, #030712 100%);">
             <canvas id="canvas-3d-house" style="width: 100%; height: 100%; display: block; cursor: grab; outline: none;"></canvas>
 
+            <!-- 3D Loading Spinner / Status Overlay -->
+            <div id="topology-3d-loader" style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(10, 15, 29, 0.92); z-index: 15; color: #f8fafc;">
+              <i class="fa-solid fa-spinner fa-spin" style="font-size: 38px; color: #38bdf8; margin-bottom: 12px;"></i>
+              <div id="topology-3d-loader-title" style="font-size: 16px; font-weight: 700;">Loading 3D Digital Twin House Model...</div>
+              <div id="topology-3d-loader-status" style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Initializing Three.js &amp; Taylor Wimpey Blair 4 TK geometry</div>
+            </div>
+
             <!-- Floating 3D HUD / Overlay Toolbar -->
             <div id="topology-3d-toolbar" style="position: absolute; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(15, 23, 42, 0.90); backdrop-filter: blur(10px); padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.25); z-index: 10; pointer-events: auto;">
               <!-- Left: Floor Cutaway Buttons -->
@@ -405,8 +426,8 @@
               <!-- Center-Left: Wall Transparency -->
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase;"><i class="fa-solid fa-ghost"></i> X-Ray:</span>
-                <input type="range" id="slider-3d-opacity" min="5" max="100" value="35" style="width: 75px; cursor: pointer; accent-color: #38bdf8;" title="Adjust wall transparency" />
-                <span id="label-3d-opacity" style="font-size: 11px; color: #94a3b8; min-width: 26px;">35%</span>
+                <input type="range" id="slider-3d-opacity" min="5" max="100" value="80" style="width: 75px; cursor: pointer; accent-color: #38bdf8;" title="Adjust wall transparency" />
+                <span id="label-3d-opacity" style="font-size: 11px; color: #94a3b8; min-width: 26px;">80%</span>
               </div>
 
               <!-- Center-Right: Camera Presets -->
@@ -993,9 +1014,25 @@
     </div>
   </div>
 
+  <!-- Three.js 3D Engine & Loaders (Bundled local files + CDN fallback) -->
   <script src="vendor/three/three.min.js"></script>
+  <script>
+    if (typeof THREE === "undefined") {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+    }
+  </script>
   <script src="vendor/three/OrbitControls.js"></script>
+  <script>
+    if (typeof THREE !== "undefined" && !THREE.OrbitControls) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"><\/script>');
+    }
+  </script>
   <script src="vendor/three/GLTFLoader.js"></script>
-  <script src="app.js?v=2.0.1"></script>
+  <script>
+    if (typeof THREE !== "undefined" && !THREE.GLTFLoader) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"><\/script>');
+    }
+  </script>
+  <script src="app.js?v=2.0.2"></script>
 </body>
 </html>

@@ -66,7 +66,7 @@ class _RingBufferLogHandler(logging.Handler):
 _log_ring_handler = _RingBufferLogHandler(capacity=500)
 logging.getLogger().addHandler(_log_ring_handler)
 
-app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.8.0")
+app = FastAPI(title="Matter & Thread AI Diagnostics", version="2.8.1")
 
 
 @app.middleware("http")
@@ -89,6 +89,12 @@ matter_client = MatterClient(ws_url=config.matter_server_url)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    vendor_dir = os.path.join(STATIC_DIR, "vendor")
+    if os.path.exists(vendor_dir):
+        app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
+    models_dir = os.path.join(STATIC_DIR, "models")
+    if os.path.exists(models_dir):
+        app.mount("/models", StaticFiles(directory=models_dir), name="models")
 
 _last_telemetry_cache: Optional[Dict[str, Any]] = None
 _last_ai_result_cache: Optional[Dict[str, Any]] = None
@@ -863,3 +869,21 @@ async def serve_js():
     if os.path.exists(js_file):
         return FileResponse(js_file, media_type="application/javascript")
     return HTMLResponse("", status_code=404)
+
+
+@app.get("/models/{file_path:path}")
+async def serve_model_file(file_path: str):
+    """Serve 3D GLTF/GLB models for Ingress compatibility."""
+    model_file = os.path.join(STATIC_DIR, "models", file_path)
+    if os.path.exists(model_file):
+        return FileResponse(model_file, media_type="model/gltf-binary")
+    return HTMLResponse(f"Model {file_path} not found", status_code=404)
+
+
+@app.get("/vendor/{file_path:path}")
+async def serve_vendor_file(file_path: str):
+    """Serve bundled vendor scripts (Three.js, OrbitControls, GLTFLoader)."""
+    v_file = os.path.join(STATIC_DIR, "vendor", file_path)
+    if os.path.exists(v_file):
+        return FileResponse(v_file, media_type="application/javascript")
+    return HTMLResponse(f"Vendor file {file_path} not found", status_code=404)

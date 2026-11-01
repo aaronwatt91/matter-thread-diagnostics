@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.8.1] - 2026-11-01
+
+### Fixed: Home Assistant Ingress Asset Routing & 3D House Twin Discovery
+- **Home Assistant Ingress Asset Routing**:
+  - Mounted dedicated StaticFiles and explicit API route handlers in `main.py` for `/vendor` and `/models` (`/models/{file_path:path}` and `/vendor/{file_path:path}`).
+  - Resolves 404 errors caused by Home Assistant Ingress URL prefixes (`/api/hassio_ingress/<token>/`) when loading `vendor/three/three.min.js` and `models/Taylor_Wimpey_Blair.glb`.
+- **Three.js Script Resilience & CDN Fallbacks**:
+  - Added automatic fallback to official CDN mirrors (`cdnjs` & `jsdelivr`) in `index.html` if local vendor script requests are ever blocked or delayed.
+  - Added self-healing retry mechanism in `app.js` (`setTimeout(initHouse3DViewer, 200)`) preventing initialization aborts if WebGL dependencies load asynchronously.
+- **Dynamic Ingress Path Resolver for 3D Model**:
+  - Implemented multi-stage sequential candidate URL loader for `Taylor_Wimpey_Blair.glb` that detects the active Ingress base path dynamically (`window.location.pathname`).
+  - Added loading indicator overlay with live download progress percentage and visual retry button if network fails.
+- **Immediate 3D House Twin Discovery**:
+  - Promoted **3D House Twin** to the default active layout mode in **Live Mesh Topology** (Tab 2).
+  - Added prominent quick-switch banner in Tab 2 with persistent `localStorage` preference memory.
+  - Increased default architectural wall opacity from 35% to 80% so the Blair house geometry is clearly visible and crisp upon first view.
+
 ## [2.8.0] - 2026-11-01
 
 ### Added: Interactive 3D Digital Twin House Model & Spatial Wireless Mesh Viewer

@@ -32,7 +32,7 @@ let topologyPhysicsState = {
   panX: 0,
   panY: 0,
   energy: 1.0,
-  layoutMode: "force",
+  layoutMode: (typeof localStorage !== "undefined" && localStorage.getItem("ha_matter_topology_layout")) || "house3d",
   colorMode: "role",
   filterMode: "all",
   showLinkLabels: true,
@@ -367,16 +367,38 @@ function initDeviceSearchAndTopologyControls() {
     });
   }
 
-  // Topology Layout Mode Switcher (Force, Tree, Transit, Sankey, Matrix)
+  // Topology Layout Mode Switcher (Force, Tree, Transit, Sankey, Matrix, 3D House Twin)
+  const currentMode = topologyPhysicsState.layoutMode || "house3d";
+  document.querySelectorAll(".btn-layout-mode").forEach((b) => {
+    b.classList.toggle("active", b.getAttribute("data-layout") === currentMode);
+  });
+
   document.querySelectorAll(".btn-layout-mode").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".btn-layout-mode").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      const mode = btn.getAttribute("data-layout") || "force";
+      const mode = btn.getAttribute("data-layout") || "house3d";
       topologyPhysicsState.layoutMode = mode;
+      try {
+        localStorage.setItem("ha_matter_topology_layout", mode);
+      } catch (_) {}
       dispatchTopologyRender();
     });
   });
+
+  const btnQuick3D = document.getElementById("btn-quick-switch-3d");
+  if (btnQuick3D) {
+    btnQuick3D.addEventListener("click", () => {
+      document.querySelectorAll(".btn-layout-mode").forEach((b) => b.classList.remove("active"));
+      const btn3D = document.querySelector('.btn-layout-mode[data-layout="house3d"]');
+      if (btn3D) btn3D.classList.add("active");
+      topologyPhysicsState.layoutMode = "house3d";
+      try {
+        localStorage.setItem("ha_matter_topology_layout", "house3d");
+      } catch (_) {}
+      dispatchTopologyRender();
+    });
+  }
 
   // Topology Color By Selector
   const colorSelect = document.getElementById("topology-color-mode");
@@ -4484,7 +4506,7 @@ const house3DState = {
   edgeObjects: [],
   pulseObjects: [],
   floorCutawayMode: "all",
-  wallOpacity: 0.35,
+  wallOpacity: 0.80,
   raycaster: null,
   mouse: null,
   hoveredNode: null,
@@ -4833,7 +4855,8 @@ function onHouse3DResize() {
 function initHouse3DViewer() {
   if (house3DState.isInitialized) return;
   if (typeof THREE === "undefined" || !THREE.GLTFLoader || !THREE.OrbitControls) {
-    console.warn("Three.js or GLTFLoader / OrbitControls not yet available.");
+    console.warn("Three.js or GLTFLoader / OrbitControls not yet available, retrying in 200ms...");
+    setTimeout(initHouse3DViewer, 200);
     return;
   }
 
@@ -4881,18 +4904,18 @@ function initHouse3DViewer() {
   house3DState.controls = controls;
 
   // 5. Lighting
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
   scene.add(ambientLight);
 
-  const sunLight = new THREE.DirectionalLight(0xfff5e6, 0.95);
+  const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.1);
   sunLight.position.set(15, 25, 20);
   scene.add(sunLight);
 
-  const fillLight = new THREE.DirectionalLight(0x93c5fd, 0.45);
+  const fillLight = new THREE.DirectionalLight(0x93c5fd, 0.55);
   fillLight.position.set(-15, 15, -15);
   scene.add(fillLight);
 
-  const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 0.35);
+  const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 0.45);
   scene.add(hemiLight);
 
   // 6. Ground Grid floor helper for visual depth
@@ -4981,49 +5004,98 @@ function initHouse3DViewer() {
     }
   });
 
-  // 8. GLB Model Loading
-  const modelUrl = "/static/models/Taylor_Wimpey_Blair.glb";
+  // 8. Robust GLB Model Loading with Ingress path candidates
+  const curPath = window.location.pathname || "";
+  const ingressBase = curPath.substring(0, curPath.lastIndexOf("/") + 1);
+  const candidateUrls = [
+    ingressBase + "models/Taylor_Wimpey_Blair.glb",
+    "models/Taylor_Wimpey_Blair.glb",
+    ingressBase + "static/models/Taylor_Wimpey_Blair.glb",
+    "static/models/Taylor_Wimpey_Blair.glb",
+    "./models/Taylor_Wimpey_Blair.glb"
+  ];
+
   const loader = new THREE.GLTFLoader();
+  const loaderStatus = document.getElementById("topology-3d-loader-status");
+  const loaderTitle = document.getElementById("topology-3d-loader-title");
+  const loaderOverlay = document.getElementById("topology-3d-loader");
 
-  const handleGlbLoaded = (gltf) => {
-    house3DState.isLoading = false;
-    const model = gltf.scene;
-    house3DState.modelRoot = model;
-    scene.add(model);
-
-    // Classify meshes and clone materials
-    model.traverse((child) => {
-      if (child.isMesh) {
-        const cat = classifyMeshCategory(child.name);
-        house3DState.meshesByCategory[cat].push(child);
-
-        if (child.material) {
-          child.material = child.material.clone();
-          house3DState.originalMaterials.set(child.uuid, child.material.clone());
+  let urlIdx = 0;
+  function tryLoadCandidate() {
+    if (urlIdx >= candidateUrls.length) {
+      console.error("All candidate URLs for 3D model failed to load.");
+      house3DState.isLoading = false;
+      if (loaderTitle) {
+        loaderTitle.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> 3D Model Loading Error</span>`;
+      }
+      if (loaderStatus) {
+        loaderStatus.innerHTML = `
+          <span>Could not locate Taylor_Wimpey_Blair.glb at candidate routes.</span>
+          <div style="margin-top: 10px;">
+            <button id="btn-3d-retry-load" type="button" class="btn btn-primary" style="padding: 5px 12px; font-size: 11px;">
+              <i class="fa-solid fa-rotate-right"></i> Retry Loading Model
+            </button>
+          </div>
+        `;
+        const btnRetry = document.getElementById("btn-3d-retry-load");
+        if (btnRetry) {
+          btnRetry.addEventListener("click", () => {
+            urlIdx = 0;
+            if (loaderTitle) loaderTitle.innerText = "Loading 3D Digital Twin House Model...";
+            tryLoadCandidate();
+          });
         }
       }
-    });
-
-    apply3DCutawayAndTransparency();
-
-    // Re-render nodes if data already available
-    if (lastTopologyData && lastTopologyData.nodes) {
-      renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+      return;
     }
-  };
 
-  loader.load(
-    modelUrl,
-    handleGlbLoaded,
-    undefined,
-    (err) => {
-      console.warn("Failed to load /static/models/... trying fallback models/Taylor_Wimpey_Blair.glb", err);
-      loader.load("models/Taylor_Wimpey_Blair.glb", handleGlbLoaded, undefined, (fallbackErr) => {
-        console.error("3D Blair model failed to load:", fallbackErr);
+    const currentUrl = candidateUrls[urlIdx];
+    urlIdx++;
+    if (loaderStatus) loaderStatus.innerText = `Connecting to 3D model asset (${urlIdx}/${candidateUrls.length})...`;
+
+    loader.load(
+      currentUrl,
+      (gltf) => {
         house3DState.isLoading = false;
-      });
-    }
-  );
+        if (loaderOverlay) loaderOverlay.style.display = "none";
+        const model = gltf.scene;
+        house3DState.modelRoot = model;
+        scene.add(model);
+
+        // Classify meshes and clone materials
+        model.traverse((child) => {
+          if (child.isMesh) {
+            const cat = classifyMeshCategory(child.name);
+            house3DState.meshesByCategory[cat].push(child);
+
+            if (child.material) {
+              child.material = child.material.clone();
+              house3DState.originalMaterials.set(child.uuid, child.material.clone());
+            }
+          }
+        });
+
+        apply3DCutawayAndTransparency();
+
+        // Re-render nodes if data already available
+        if (lastTopologyData && lastTopologyData.nodes) {
+          renderHouse3DTopology(lastTopologyData.nodes, lastTopologyData.edges);
+        }
+      },
+      (progress) => {
+        if (loaderStatus && progress.total > 0) {
+          const pct = Math.round((progress.loaded / progress.total) * 100);
+          loaderStatus.innerText = `Downloading 3D house model: ${pct}%`;
+        }
+      },
+      (err) => {
+        console.warn(`Model candidate URL ${currentUrl} failed, trying next candidate...`, err);
+        tryLoadCandidate();
+      }
+    );
+  }
+
+  tryLoadCandidate();
 
   // 9. Resize Observer
   if (window.ResizeObserver) {
