@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.8.6] - 2026-11-02
+
+### Fixed: SVG Mesh Topology Node Placement & Cache Invalidation
+- **Synchronous Initial Coordinate Pass**:
+  - Immediately assigns SVG `transform="translate(x, y)"` to node `<g>` elements upon creation, preventing all nodes from defaulting to `(0, 0)` in the top-left corner before physics ticks begin.
+  - Immediately sets `x1, y1, x2, y2` on all SVG `<line>` elements and positions midpoint signal labels on DOM creation.
+  - In Hierarchical Tree mode, smoothly interpolates node positions to tier targets without spring oscillation or Coulomb disruption.
+- **Dynamic ViewBox & Container Fallback**:
+  - Added explicit `viewBox="0 0 960 540"` to `<svg id="mesh-svg">` and dynamically updates `viewBox` from container bounding rects, ensuring accurate coordinate scaling inside Home Assistant Ingress iframes.
+- **Physics Error Resilience & Numerical Guards**:
+  - Wrapped `stepPhysics` in a robust try/catch block with fallback logging, preventing animation frame loops from crashing.
+  - Added strict `NaN` guards on node coordinates and velocity vectors (`cx`/`cy` fallback if any coordinate is ever non-finite).
+- **Home Assistant Ingress Cache Busting**:
+  - Bumped `<script src="app.js?v=2.8.6"></script>` in `index.html` to guarantee that Home Assistant's webview and browsers immediately load the latest client code.
+
 ## [2.8.5] - 2026-11-01
 
 ### Fixed: 2D Force Mesh and Hierarchical Tree Topology Stability

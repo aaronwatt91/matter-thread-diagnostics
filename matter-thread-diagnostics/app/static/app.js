@@ -2906,11 +2906,15 @@ function renderSvgTopology(nodes, edges) {
   }
 
   svg.innerHTML = "";
+  const container = document.getElementById("topology-canvas-container");
+  const cRect = container ? container.getBoundingClientRect() : null;
   const rect = svg.getBoundingClientRect();
-  const width = Math.max(rect.width || svg.clientWidth || 880, 600);
-  const height = Math.max(rect.height || 540, 480);
+  const width = Math.max(rect.width || (cRect && cRect.width) || svg.clientWidth || 960, 600);
+  const height = Math.max(rect.height || (cRect && cRect.height) || 540, 480);
   const cx = width / 2;
   const cy = height / 2;
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
   if (!nodes || nodes.length === 0) {
     renderEmptyTopology(svg, width, height);
@@ -2933,6 +2937,15 @@ function renderSvgTopology(nodes, edges) {
   // Only preserve previous positions if staying in the same layout mode during live re-scans
   const isLayoutSwitch = topologyPhysicsState.lastRenderedMode !== topologyPhysicsState.layoutMode;
   topologyPhysicsState.lastRenderedMode = topologyPhysicsState.layoutMode;
+
+  if (isLayoutSwitch) {
+    topologyPhysicsState.panX = 0;
+    topologyPhysicsState.panY = 0;
+    topologyPhysicsState.zoom = 1.0;
+  }
+  if (typeof topologyPhysicsState.panX !== "number" || isNaN(topologyPhysicsState.panX)) topologyPhysicsState.panX = 0;
+  if (typeof topologyPhysicsState.panY !== "number" || isNaN(topologyPhysicsState.panY)) topologyPhysicsState.panY = 0;
+  if (typeof topologyPhysicsState.zoom !== "number" || isNaN(topologyPhysicsState.zoom) || topologyPhysicsState.zoom <= 0) topologyPhysicsState.zoom = 1.0;
 
   const prevPosById = {};
   if (!isLayoutSwitch) {
@@ -2990,8 +3003,10 @@ function renderSvgTopology(nodes, edges) {
   // Build physics edges with target spring distance derived from real RF RSSI / LQI / Ping RTT
   const simEdges = [];
   edges.forEach((e) => {
-    const src = nodeById[e.source];
-    const tgt = nodeById[e.target];
+    const sId = typeof e.source === "object" ? e.source.id : e.source;
+    const tId = typeof e.target === "object" ? e.target.id : e.target;
+    const src = nodeById[sId];
+    const tgt = nodeById[tId];
     if (!src || !tgt) return;
 
     let targetDist = e.target_distance || 135;
@@ -3012,6 +3027,10 @@ function renderSvgTopology(nodes, edges) {
 
     const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", src.x.toFixed(1));
+    line.setAttribute("y1", src.y.toFixed(1));
+    line.setAttribute("x2", tgt.x.toFixed(1));
+    line.setAttribute("y2", tgt.y.toFixed(1));
     line.setAttribute("stroke", strokeColor);
     line.setAttribute("stroke-width", strokeWidth);
     line.setAttribute("stroke-opacity", "0.78");
@@ -3023,13 +3042,23 @@ function renderSvgTopology(nodes, edges) {
     let lblBg = null;
     let lbl = null;
     if (e.label) {
+      const mx = (src.x + tgt.x) / 2;
+      const my = (src.y + tgt.y) / 2;
+      const textLen = (e.label || "").length * 5.6 + 10;
+
       lblBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      lblBg.setAttribute("x", (mx - textLen / 2).toFixed(1));
+      lblBg.setAttribute("y", (my - 10).toFixed(1));
+      lblBg.setAttribute("width", textLen.toFixed(1));
+      lblBg.setAttribute("height", "14");
       lblBg.setAttribute("rx", "4");
       lblBg.setAttribute("ry", "4");
       lblBg.setAttribute("fill", "#0f172acc");
       edgeG.appendChild(lblBg);
 
       lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      lbl.setAttribute("x", mx.toFixed(1));
+      lbl.setAttribute("y", (my + 1).toFixed(1));
       lbl.setAttribute("fill", e.status === "warning" ? "#fbbf24" : (targetDist < 105 ? "#6ee7b7" : "#bae6fd"));
       lbl.setAttribute("font-size", "10");
       lbl.setAttribute("font-weight", "600");
@@ -3056,6 +3085,7 @@ function renderSvgTopology(nodes, edges) {
   simNodes.forEach((n) => {
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.style.cursor = "grab";
+    g.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
 
     // Outer search/preferred halo ring
     const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -3219,7 +3249,7 @@ function renderSvgTopology(nodes, edges) {
   // In tree mode, position directly at target hierarchy tiers so they never scatter or fight springs
   if (topologyPhysicsState.layoutMode === "tree") {
     simNodes.forEach(n => {
-      if (n.targetX !== null && n.targetX !== undefined && n.targetY !== null && n.targetY !== undefined) {
+      if (typeof n.targetX === "number" && !isNaN(n.targetX) && typeof n.targetY === "number" && !isNaN(n.targetY)) {
         n.x = n.targetX;
         n.y = n.targetY;
         n.vx = 0;
@@ -3228,149 +3258,199 @@ function renderSvgTopology(nodes, edges) {
     });
   }
 
+  // Synchronous initial placement pass: Ensure all nodes and edge lines have explicit valid coordinates
+  // immediately upon render so they never flash or pile up at (0, 0) if requestAnimationFrame is delayed or throttled.
+  simNodes.forEach(n => {
+    if (typeof n.x !== "number" || isNaN(n.x)) n.x = cx;
+    if (typeof n.y !== "number" || isNaN(n.y)) n.y = cy;
+    if (n.elem) {
+      n.elem.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
+    }
+  });
+
+  simEdges.forEach(e => {
+    if (e.lineElem && e.src && e.tgt) {
+      e.lineElem.setAttribute("x1", e.src.x.toFixed(1));
+      e.lineElem.setAttribute("y1", e.src.y.toFixed(1));
+      e.lineElem.setAttribute("x2", e.tgt.x.toFixed(1));
+      e.lineElem.setAttribute("y2", e.tgt.y.toFixed(1));
+    }
+    if (e.lblElem && e.lblBgElem && e.src && e.tgt) {
+      const mx = (e.src.x + e.tgt.x) / 2;
+      const my = (e.src.y + e.tgt.y) / 2;
+      const textLen = (e.label || "").length * 5.6 + 10;
+      e.lblBgElem.setAttribute("x", (mx - textLen / 2).toFixed(1));
+      e.lblBgElem.setAttribute("y", (my - 10).toFixed(1));
+      e.lblBgElem.setAttribute("width", textLen.toFixed(1));
+      e.lblBgElem.setAttribute("height", "14");
+      e.lblElem.setAttribute("x", mx.toFixed(1));
+      e.lblElem.setAttribute("y", (my + 1).toFixed(1));
+    }
+  });
+
+  if (viewportG) {
+    viewportG.setAttribute(
+      "transform",
+      `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
+    );
+  }
+
   updateTopologySearchHighlight();
   applyTopologyVisibilityFilter();
   updateTopologyLegend();
 
   let tickCount = 0;
   const stepPhysics = () => {
-    tickCount++;
-    const t = tickCount * 0.025;
-    const N = simNodes.length;
-    const energy = topologyPhysicsState.energy;
+    try {
+      tickCount++;
+      const t = tickCount * 0.025;
+      const N = simNodes.length;
+      const energy = topologyPhysicsState.energy;
 
-    // 0. Layout Mode Target Springs (Tree / Radial / Room)
-    if (topologyPhysicsState.layoutMode === "tree") {
+      // 0. Layout Mode Target Springs (Tree Mode: smooth tier positioning)
+      if (topologyPhysicsState.layoutMode === "tree") {
+        for (let i = 0; i < N; i++) {
+          const n = simNodes[i];
+          if (!n.dragging && typeof n.targetX === "number" && typeof n.targetY === "number") {
+            n.x += (n.targetX - n.x) * 0.25;
+            n.y += (n.targetY - n.y) * 0.25;
+            n.vx = 0;
+            n.vy = 0;
+          }
+        }
+      }
+
+      // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap (Only in force mode)
+      if (topologyPhysicsState.layoutMode === "force") {
+        for (let i = 0; i < N; i++) {
+          const a = simNodes[i];
+          for (let j = i + 1; j < N; j++) {
+            const b = simNodes[j];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let distSq = dx * dx + dy * dy;
+            const dist = Math.sqrt(distSq) || 1.0;
+            const minSep = a.radius + b.radius + 55;
+            let repulse = Math.min(2600.0 / Math.max(distSq, 900.0), 9.0);
+            if (dist < minSep) {
+              repulse += Math.min((minSep - dist) * 0.12, 5.0);
+            }
+            const fx = (dx / dist) * repulse;
+            const fy = (dy / dist) * repulse;
+            if (!a.dragging) {
+              a.vx -= fx;
+              a.vy -= fy;
+            }
+            if (!b.dragging) {
+              b.vx += fx;
+              b.vy += fy;
+            }
+          }
+        }
+
+        // 2. RF Signal-Proximity Spring Force along edges (Hooke's law toward targetDist)
+        for (let i = 0; i < simEdges.length; i++) {
+          const e = simEdges[i];
+          const a = e.src;
+          const b = e.tgt;
+          if (!a || !b) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1.0;
+          const displacement = dist - e.targetDist;
+          const force = Math.max(-10.0, Math.min(10.0, displacement * e.stiffness * 0.5));
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+
+          if (!a.dragging) {
+            a.vx -= fx;
+            a.vy -= fy;
+          }
+          if (!b.dragging) {
+            b.vx += fx;
+            b.vy += fy;
+          }
+        }
+      }
+
+      // 3. Center gravity, velocity damping & clamping
+      const pad = 50;
       for (let i = 0; i < N; i++) {
         const n = simNodes[i];
-        if (!n.dragging && n.targetX !== null && n.targetY !== null) {
-          n.vx += (n.targetX - n.x) * 0.16;
-          n.vy += (n.targetY - n.y) * 0.22;
+        if (typeof n.x !== "number" || isNaN(n.x)) n.x = cx;
+        if (typeof n.y !== "number" || isNaN(n.y)) n.y = cy;
+        if (typeof n.vx !== "number" || isNaN(n.vx)) n.vx = 0;
+        if (typeof n.vy !== "number" || isNaN(n.vy)) n.vy = 0;
+
+        if (!n.dragging) {
+          if (topologyPhysicsState.layoutMode === "force") {
+            const gravity = n.type === "border_router" ? 0.010 : 0.005;
+            n.vx += (cx - n.x) * gravity;
+            n.vy += (cy - n.y) * gravity;
+            n.vx += Math.sin(t + n.phase) * 0.035;
+            n.vy += Math.cos(t * 0.85 + n.phase) * 0.035;
+
+            // Damping
+            n.vx *= 0.78;
+            n.vy *= 0.78;
+
+            // Speed limit to prevent numerical explosion
+            const speed = Math.hypot(n.vx, n.vy);
+            const maxSpeed = 14.0;
+            if (speed > maxSpeed) {
+              n.vx = (n.vx / speed) * maxSpeed;
+              n.vy = (n.vy / speed) * maxSpeed;
+            }
+
+            n.x += n.vx * Math.max(energy, 0.35);
+            n.y += n.vy * Math.max(energy, 0.35);
+
+            // Soft viewport boundaries: push gently inward
+            if (n.x < pad) { n.x = pad; n.vx = Math.abs(n.vx) * 0.5; }
+            if (n.x > width - pad) { n.x = width - pad; n.vx = -Math.abs(n.vx) * 0.5; }
+            if (n.y < pad) { n.y = pad; n.vy = Math.abs(n.vy) * 0.5; }
+            if (n.y > height - pad) { n.y = height - pad; n.vy = -Math.abs(n.vy) * 0.5; }
+          }
+        }
+
+        if (n.elem) {
+          n.elem.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
         }
       }
-    }
 
-    // 1. All-pairs Coulomb repulsion so nodes and labels don't overlap (Safely Clamped)
-    for (let i = 0; i < N; i++) {
-      const a = simNodes[i];
-      for (let j = i + 1; j < N; j++) {
-        const b = simNodes[j];
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        if (topologyPhysicsState.layoutMode === "tree") {
-          dy *= 0.1; // In tree mode, keep tiers aligned horizontally
-        }
-        let distSq = dx * dx + dy * dy;
-        const dist = Math.sqrt(distSq) || 1.0;
-        const minSep = a.radius + b.radius + (topologyPhysicsState.layoutMode === "tree" ? 30 : 55);
-        let repulse = Math.min(2600.0 / Math.max(distSq, 900.0), 9.0);
-        if (dist < minSep) {
-          repulse += Math.min((minSep - dist) * 0.12, 5.0);
-        }
-        const fx = (dx / dist) * repulse;
-        const fy = (dy / dist) * repulse;
-        if (!a.dragging) {
-          a.vx -= fx;
-          a.vy -= fy;
-        }
-        if (!b.dragging) {
-          b.vx += fx;
-          b.vy += fy;
-        }
-      }
-    }
-
-    // 2. RF Signal-Proximity Spring Force along edges (Hooke's law toward targetDist)
-    // Only applied in force layout so edges don't pull nodes across tree hierarchy tiers
-    if (topologyPhysicsState.layoutMode === "force") {
+      // 4. Update edge lines & midpoint labels
       for (let i = 0; i < simEdges.length; i++) {
         const e = simEdges[i];
-        const a = e.src;
-        const b = e.tgt;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1.0;
-        const displacement = dist - e.targetDist;
-        const force = Math.max(-10.0, Math.min(10.0, displacement * e.stiffness * 0.5));
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
+        if (!e.src || !e.tgt || !e.lineElem) continue;
+        e.lineElem.setAttribute("x1", e.src.x.toFixed(1));
+        e.lineElem.setAttribute("y1", e.src.y.toFixed(1));
+        e.lineElem.setAttribute("x2", e.tgt.x.toFixed(1));
+        e.lineElem.setAttribute("y2", e.tgt.y.toFixed(1));
 
-        if (!a.dragging) {
-          a.vx += fx;
-          a.vy += fy;
-        }
-        if (!b.dragging) {
-          b.vx -= fx;
-          b.vy -= fy;
+        if (e.lblElem && e.lblBgElem) {
+          const mx = (e.src.x + e.tgt.x) / 2;
+          const my = (e.src.y + e.tgt.y) / 2;
+          const textLen = (e.label || "").length * 5.6 + 10;
+          e.lblBgElem.setAttribute("x", (mx - textLen / 2).toFixed(1));
+          e.lblBgElem.setAttribute("y", (my - 10).toFixed(1));
+          e.lblBgElem.setAttribute("width", textLen.toFixed(1));
+          e.lblBgElem.setAttribute("height", "14");
+          e.lblElem.setAttribute("x", mx.toFixed(1));
+          e.lblElem.setAttribute("y", (my + 1).toFixed(1));
         }
       }
-    }
 
-    // 3. Center gravity & velocity clamping
-    const pad = 50;
-    for (let i = 0; i < N; i++) {
-      const n = simNodes[i];
-      if (!n.dragging) {
-        if (topologyPhysicsState.layoutMode === "force") {
-          const gravity = n.type === "border_router" ? 0.010 : 0.005;
-          n.vx += (cx - n.x) * gravity;
-          n.vy += (cy - n.y) * gravity;
-          n.vx += Math.sin(t + n.phase) * 0.035;
-          n.vy += Math.cos(t * 0.85 + n.phase) * 0.035;
-        }
-
-        // Damping
-        n.vx *= 0.78;
-        n.vy *= 0.78;
-
-        // Speed limit to prevent numerical explosion
-        const speed = Math.hypot(n.vx, n.vy);
-        const maxSpeed = 14.0;
-        if (speed > maxSpeed) {
-          n.vx = (n.vx / speed) * maxSpeed;
-          n.vy = (n.vy / speed) * maxSpeed;
-        }
-
-        n.x += n.vx * Math.max(energy, 0.35);
-        n.y += n.vy * Math.max(energy, 0.35);
-
-        // Soft viewport boundaries: push gently inward
-        if (n.x < pad) { n.x = pad; n.vx = Math.abs(n.vx) * 0.5; }
-        if (n.x > width - pad) { n.x = width - pad; n.vx = -Math.abs(n.vx) * 0.5; }
-        if (n.y < pad) { n.y = pad; n.vy = Math.abs(n.vy) * 0.5; }
-        if (n.y > height - pad) { n.y = height - pad; n.vy = -Math.abs(n.vy) * 0.5; }
+      if (viewportG) {
+        viewportG.setAttribute(
+          "transform",
+          `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
+        );
       }
 
-      n.elem.setAttribute("transform", `translate(${n.x.toFixed(1)}, ${n.y.toFixed(1)})`);
+      topologyPhysicsState.energy = Math.max(0.35, topologyPhysicsState.energy * 0.992);
+    } catch (err) {
+      console.error("Physics step error:", err);
     }
-
-    // 4. Update edge lines & midpoint labels
-    for (let i = 0; i < simEdges.length; i++) {
-      const e = simEdges[i];
-      e.lineElem.setAttribute("x1", e.src.x.toFixed(1));
-      e.lineElem.setAttribute("y1", e.src.y.toFixed(1));
-      e.lineElem.setAttribute("x2", e.tgt.x.toFixed(1));
-      e.lineElem.setAttribute("y2", e.tgt.y.toFixed(1));
-
-      if (e.lblElem && e.lblBgElem) {
-        const mx = (e.src.x + e.tgt.x) / 2;
-        const my = (e.src.y + e.tgt.y) / 2;
-        const textLen = (e.label || "").length * 5.6 + 10;
-        e.lblBgElem.setAttribute("x", (mx - textLen / 2).toFixed(1));
-        e.lblBgElem.setAttribute("y", (my - 10).toFixed(1));
-        e.lblBgElem.setAttribute("width", textLen.toFixed(1));
-        e.lblBgElem.setAttribute("height", "14");
-        e.lblElem.setAttribute("x", mx.toFixed(1));
-        e.lblElem.setAttribute("y", (my + 1).toFixed(1));
-      }
-    }
-
-    viewportG.setAttribute(
-      "transform",
-      `translate(${topologyPhysicsState.panX.toFixed(1)}, ${topologyPhysicsState.panY.toFixed(1)}) scale(${topologyPhysicsState.zoom.toFixed(3)})`
-    );
-
-    topologyPhysicsState.energy = Math.max(0.35, topologyPhysicsState.energy * 0.992);
     topologyPhysicsState.animFrameId = requestAnimationFrame(stepPhysics);
   };
 
@@ -3477,10 +3557,12 @@ function computeLayoutTargetPositions(simNodes, simEdges, width, height, layoutM
   if (!simNodes.length) return;
 
   const svg = document.getElementById("mesh-svg");
+  const container = document.getElementById("topology-canvas-container");
   if (!width || !height) {
+    const cRect = container ? container.getBoundingClientRect() : null;
     const rect = svg ? svg.getBoundingClientRect() : null;
-    width = Math.max((rect && rect.width) || (svg && svg.clientWidth) || 880, 600);
-    height = Math.max((rect && rect.height) || 540, 480);
+    width = Math.max((rect && rect.width) || (cRect && cRect.width) || (svg && svg.clientWidth) || 960, 600);
+    height = Math.max((rect && rect.height) || (cRect && cRect.height) || 540, 480);
   }
   const cx = width / 2;
   const cy = height / 2;
