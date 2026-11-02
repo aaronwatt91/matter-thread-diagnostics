@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.8.7] - 2026-11-02
+
+### Changed: 3D House Twin Mesh Connection Severing for Offline Nodes
+- **Mesh Link Disconnection for Offline Devices**:
+  - In the 3D House Digital Twin visual (`renderHouse3DTopology`), RF wireless mesh connection beams and animated signal pulse packets are now broken (not rendered) if either the source or target node is offline (`status === "offline"`, `available === false`, or `state === "unavailable"`), matching real-world physics where unpowered or unreachable radios have no active links to the mesh.
+  - Offline device spheres are rendered in dim red (`#ef4444`, `emissiveIntensity: 0.15`) with higher roughness and an explicit `(Offline)` label sprite.
+  - The ambient breathing animation loop in `animateHouse3D()` preserves offline nodes at low, non-pulsing dimness while live online radios continue breathing actively.
+  - Status bar dynamically reports active RF link count and any severed offline nodes.
+
 ## [2.8.6] - 2026-11-02
 
 ### Fixed: SVG Mesh Topology Node Placement & Cache Invalidation

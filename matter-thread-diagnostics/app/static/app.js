@@ -5531,12 +5531,13 @@ function initHouse3DViewer() {
       controls.update();
     }
 
-    // Clean breathing glow on device spheres (pure spheres, no saturn rings)
+    // Clean breathing glow on active device spheres (offline nodes remain dim)
     const emissiveGlow = 0.55 + Math.sin(performance.now() * 0.0035) * 0.22;
     for (const grp of house3DState.nodeObjects.values()) {
       const sp = grp.getObjectByName("deviceSphere");
       if (sp && sp.material && !house3DState.isDraggingNode) {
-        sp.material.emissiveIntensity = emissiveGlow;
+        const isOffline = grp.userData && grp.userData.isOffline;
+        sp.material.emissiveIntensity = isOffline ? 0.15 : emissiveGlow;
       }
     }
 
@@ -5634,17 +5635,21 @@ function renderHouse3DTopology(nodes, edges) {
         y = room.coords.y + (count > 2 && idx % 2 === 1 ? 0.22 : 0);
       }
 
-      const group = new THREE.Group();
-      group.position.set(x, y, z);
-      group.userData = { isNode: true, nodeData: n, roomId, devKey };
+      const isNodeOffline = (node) => {
+        if (!node) return false;
+        if (node.status === "offline") return true;
+        if (node.available === false) return true;
+        if (typeof node.state === "string" && (node.state.toLowerCase() === "offline" || node.state.toLowerCase() === "unavailable")) return true;
+        return false;
+      };
+
+      const isOffline = isNodeOffline(n);
+      const isWeak = n.status === "weak";
+      const isTbrOrCoord = n.preferred || (n.routing_role && (n.routing_role.includes("Border Router") || n.routing_role.includes("Coordinator")));
+      const isEnd = n.is_end_device || (n.routing_role && n.routing_role.includes("End Device"));
 
       // Determine color
       let colorHex = "#10b981"; // default green
-      const isTbrOrCoord = n.preferred || (n.routing_role && (n.routing_role.includes("Border Router") || n.routing_role.includes("Coordinator")));
-      const isEnd = n.is_end_device || (n.routing_role && n.routing_role.includes("End Device"));
-      const isOffline = n.status === "offline";
-      const isWeak = n.status === "weak";
-
       if (isOffline) {
         colorHex = "#ef4444";
       } else if (isWeak) {
@@ -5657,39 +5662,68 @@ function renderHouse3DTopology(nodes, edges) {
 
       const threeColor = new THREE.Color(colorHex);
 
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+      group.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline };
+
       // 1. Core Glowing Sphere (No Saturn rings)
       const sphereGeo = new THREE.SphereGeometry(0.20, 32, 32);
       const sphereMat = new THREE.MeshStandardMaterial({
         color: threeColor,
         emissive: threeColor,
-        emissiveIntensity: 0.65,
-        roughness: 0.2,
+        emissiveIntensity: isOffline ? 0.15 : 0.65,
+        roughness: isOffline ? 0.6 : 0.2,
         metalness: 0.4
       });
       const sphere = new THREE.Mesh(sphereGeo, sphereMat);
       sphere.name = "deviceSphere";
-      sphere.userData = { isNode: true, nodeData: n, roomId, devKey };
+      sphere.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline };
       group.add(sphere);
 
       // 2. Floating Text Sprite Billboard
-      const sprite = createCanvasTextSprite(n.label || "Device", colorHex);
+      const spriteLabel = isOffline ? `${n.label || 'Device'} (Offline)` : (n.label || 'Device');
+      const sprite = createCanvasTextSprite(spriteLabel, colorHex);
       sprite.position.set(0, 0.38, 0);
       group.add(sprite);
 
       scene.add(group);
-      house3DState.nodeObjects.set(n.id || n.label, group);
+      const k1 = n.id !== undefined && n.id !== null ? n.id : n.label;
+      const k2 = n.id !== undefined && n.id !== null ? String(n.id) : n.label;
+      house3DState.nodeObjects.set(k1, group);
+      house3DState.nodeObjects.set(k2, group);
+      if (n.ext_address) house3DState.nodeObjects.set(n.ext_address, group);
+      if (n.label) house3DState.nodeObjects.set(n.label, group);
     });
   }
+
+  const isNodeOffline = (node) => {
+    if (!node) return false;
+    if (node.status === "offline") return true;
+    if (node.available === false) return true;
+    if (typeof node.state === "string" && (node.state.toLowerCase() === "offline" || node.state.toLowerCase() === "unavailable")) return true;
+    return false;
+  };
 
   // Build 3D Wireless RF Link Beams
   rawEdges.forEach((e) => {
     const srcId = e.source !== undefined && e.source !== null ? (e.source.id !== undefined ? e.source.id : e.source) : "";
     const tgtId = e.target !== undefined && e.target !== null ? (e.target.id !== undefined ? e.target.id : e.target) : "";
 
-    const srcGroup = house3DState.nodeObjects.get(srcId);
-    const tgtGroup = house3DState.nodeObjects.get(tgtId);
+    const srcGroup = house3DState.nodeObjects.get(srcId) || house3DState.nodeObjects.get(String(srcId));
+    const tgtGroup = house3DState.nodeObjects.get(tgtId) || house3DState.nodeObjects.get(String(tgtId));
 
     if (srcGroup && tgtGroup) {
+      const srcNode = srcGroup.userData && srcGroup.userData.nodeData;
+      const tgtNode = tgtGroup.userData && tgtGroup.userData.nodeData;
+
+      const isSrcOffline = (srcGroup.userData && srcGroup.userData.isOffline) || isNodeOffline(srcNode);
+      const isTgtOffline = (tgtGroup.userData && tgtGroup.userData.isOffline) || isNodeOffline(tgtNode);
+
+      // Break the mesh connection if either node is offline or the edge itself is offline
+      if (isSrcOffline || isTgtOffline || e.status === "offline") {
+        return;
+      }
+
       const p1 = srcGroup.position.clone();
       const p2 = tgtGroup.position.clone();
       const dist = p1.distanceTo(p2);
@@ -5752,7 +5786,9 @@ function renderHouse3DTopology(nodes, edges) {
   const lastScanElem = document.getElementById("topology-last-scan");
   const countElem = document.getElementById("topology-router-count");
   if (lastScanElem) {
-    lastScanElem.innerText = `3D Twin Active: ${filteredNodes.length} devices mapped in Blair 4 TK house (drag any sphere to position & auto-save)`;
+    const offlineCount = filteredNodes.filter(n => isNodeOffline(n)).length;
+    const offlineSuffix = offlineCount > 0 ? ` • ${offlineCount} offline (mesh severed)` : "";
+    lastScanElem.innerText = `3D Twin Active: ${filteredNodes.length} devices mapped in Blair 4 TK house (${house3DState.linkDataList.length} active RF links${offlineSuffix})`;
   }
   if (countElem) {
     const isZb = currentNetworkProtocol === "zigbee";
