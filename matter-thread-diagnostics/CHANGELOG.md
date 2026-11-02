@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.8] - 2026-11-02
+
+### Changed: Border Router Color Palette Updated to Bold Blue
+- **Vibrant Blue Border Routers Across 3D & 2D Topologies**:
+  - In the 3D House Digital Twin visual (`renderHouse3DTopology`), Border Routers and Coordinators are now styled in vibrant royal blue (`#2563eb`), with an enlarged sphere geometry (`r = 0.24` vs `0.20`), higher emissive intensity (`0.85`), and matching blue billboard text labels.
+  - Comprehensive Border Router detection check added (`n.type === "border_router"`, `n.is_border_router`, `preferred`, and role keyword matching) so that non-preferred border routers with router roles no longer fall back to green.
+  - Standardized Border Router color to blue across 2D Force Mesh, Tree, and Sankey layouts, as well as the live topology legend.
+
 ## [2.8.7] - 2026-11-02
 
 ### Changed: 3D House Twin Mesh Connection Severing for Offline Nodes

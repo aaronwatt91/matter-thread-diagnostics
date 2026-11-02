@@ -3539,12 +3539,9 @@ function getNodeColor(n, colorMode, brMap, nodeAffinity) {
   // Default: "role"
   if (n.status === "offline") return "#ef4444";
   if (n.status === "weak" || n.status === "warning") return "#f59e0b";
-  if (n.type === "border_router") {
+  if (n.type === "border_router" || n.is_border_router || (n.routing_role && (n.routing_role.toLowerCase().includes("border router") || n.routing_role.toLowerCase().includes("tbr")))) {
     if (currentNetworkProtocol === "zigbee" || (n.routing_role && n.routing_role.toLowerCase().includes("zigbee"))) return "#eab308";
-    if (n.vendor === "nest") return "#4285F4";
-    if (n.vendor === "apple") return "#94a3b8";
-    if (n.vendor === "ha") return "#03A9F4";
-    return "#3b82f6";
+    return "#2563eb";
   }
   if (n.type === "end_device") {
     return "#8b5cf6";
@@ -3739,9 +3736,7 @@ function updateTopologyLegend() {
   }
 
   legend.innerHTML = `
-    <span><span class="dot" style="background: #4285F4;"></span> Google Nest TBR</span>
-    <span><span class="dot" style="background: #94a3b8;"></span> Apple TV / HomePod TBR</span>
-    <span><span class="dot" style="background: #03A9F4;"></span> HA OTBR (ZBT-1)</span>
+    <span><span class="dot" style="background: #2563eb;"></span> Thread Border Router (TBR)</span>
     <span><span class="dot" style="background: #10b981;"></span> Thread Router (Mains)</span>
     <span><span class="dot" style="background: #8b5cf6;"></span> Battery End Device (SED)</span>
     <span><span class="dot" style="background: #f59e0b;"></span> Weak Signal / Warning</span>
@@ -4349,9 +4344,9 @@ function renderSankeyFlow(nodes, edges) {
     g.style.cursor = "grab";
     g.setAttribute("transform", `translate(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)})`);
 
-    const isTbr = n.type === "border_router";
-    const isRouter = n.type === "router";
-    const cardBorder = isTbr ? "#38bdf8" : (isRouter ? "#10b981" : "#8b5cf6");
+    const isTbr = n.type === "border_router" || n.is_border_router || Boolean(n.preferred);
+    const isRouter = !isTbr && (n.type === "router" || n.is_router);
+    const cardBorder = isTbr ? "#2563eb" : (isRouter ? "#10b981" : "#8b5cf6");
 
     const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     bgRect.setAttribute("width", "155");
@@ -5645,17 +5640,25 @@ function renderHouse3DTopology(nodes, edges) {
 
       const isOffline = isNodeOffline(n);
       const isWeak = n.status === "weak";
-      const isTbrOrCoord = n.preferred || (n.routing_role && (n.routing_role.includes("Border Router") || n.routing_role.includes("Coordinator")));
-      const isEnd = n.is_end_device || (n.routing_role && n.routing_role.includes("End Device"));
+      const isBorderRouter = n.type === "border_router" ||
+        n.is_border_router === true ||
+        Boolean(n.preferred) ||
+        (n.routing_role && (
+          n.routing_role.toLowerCase().includes("border router") ||
+          n.routing_role.toLowerCase().includes("tbr") ||
+          n.routing_role.toLowerCase().includes("coordinator") ||
+          n.routing_role.toLowerCase().includes("leader")
+        ));
+      const isEnd = n.type === "end_device" || n.is_end_device || (n.routing_role && n.routing_role.toLowerCase().includes("end device"));
 
       // Determine color
-      let colorHex = "#10b981"; // default green
+      let colorHex = "#10b981"; // default green for routers
       if (isOffline) {
         colorHex = "#ef4444";
       } else if (isWeak) {
         colorHex = "#f59e0b";
-      } else if (isTbrOrCoord) {
-        colorHex = "#38bdf8";
+      } else if (isBorderRouter) {
+        colorHex = "#2563eb"; // Bold royal blue for Border Routers / Coordinators
       } else if (isEnd) {
         colorHex = "#a855f7";
       }
@@ -5664,20 +5667,20 @@ function renderHouse3DTopology(nodes, edges) {
 
       const group = new THREE.Group();
       group.position.set(x, y, z);
-      group.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline };
+      group.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline, isBorderRouter };
 
       // 1. Core Glowing Sphere (No Saturn rings)
-      const sphereGeo = new THREE.SphereGeometry(0.20, 32, 32);
+      const sphereGeo = new THREE.SphereGeometry(isBorderRouter ? 0.24 : 0.20, 32, 32);
       const sphereMat = new THREE.MeshStandardMaterial({
         color: threeColor,
         emissive: threeColor,
-        emissiveIntensity: isOffline ? 0.15 : 0.65,
+        emissiveIntensity: isOffline ? 0.15 : (isBorderRouter ? 0.85 : 0.65),
         roughness: isOffline ? 0.6 : 0.2,
-        metalness: 0.4
+        metalness: isBorderRouter ? 0.5 : 0.4
       });
       const sphere = new THREE.Mesh(sphereGeo, sphereMat);
       sphere.name = "deviceSphere";
-      sphere.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline };
+      sphere.userData = { isNode: true, nodeData: n, roomId, devKey, isOffline, isBorderRouter };
       group.add(sphere);
 
       // 2. Floating Text Sprite Billboard
