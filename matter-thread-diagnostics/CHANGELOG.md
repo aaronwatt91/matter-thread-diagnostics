@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.8.10] - 2026-11-02
+
+### Reverted: Connection Line Styling Restored to Original Clean Aesthetics
+- **3D House Twin Lines**:
+  - Restored RF mesh connection beams back to original clean curved 3D lines (`THREE.Line` with `THREE.LineBasicMaterial`) and original pulse packet particles.
+  - Retained safe WebGL geometry and material disposal on edge cleanup to prevent memory leaks.
+  - Preserved offline mesh severing and bold blue border router markers.
+- **2D Topology Lines**:
+  - Restored 2D Force Mesh, Hierarchical Tree, and Transit Map connection lines back to original balanced stroke widths.
+- **Cache Invalidation**:
+  - Bumped frontend script cache buster to `app.js?v=2.8.10` in `index.html`.
+
 ## [2.8.9] - 2026-11-02
 
 ### Changed: Thicker Primary Mesh Connections Across 3D House Twin & 2D Topology
