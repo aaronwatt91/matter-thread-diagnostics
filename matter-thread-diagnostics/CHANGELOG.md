@@ -1,6 +1,18 @@
 # Changelog
 
-## [2.8.8] - 2026-11-02
+## [2.8.9] - 2026-11-02
+
+### Changed: Thicker Primary Mesh Connections Across 3D House Twin & 2D Topology
+- **Volumetric 3D Tubes in House Digital Twin**:
+  - Replaced thin 1px WebGL lines with volumetric 3D cylindrical tubes (`THREE.TubeGeometry`) along the arched quadratic Bézier curves.
+  - Primary backbone connections (links directly attached to a Thread Border Router / Zigbee Coordinator, or router-to-router relay links) are rendered with a prominent tube radius of `0.040` (more than 2.5× wider than secondary leaf connections at `0.016`), higher emissive intensity (`0.75`), and higher opacity (`0.95`).
+  - Animated RF pulse particles on primary links are enlarged (`pulseRadius = 0.065` vs `0.038`) with faster transit speeds.
+  - Interactive node dragging (`update3DLinksForNode`) dynamically disposes and rebuilds the `THREE.TubeGeometry` on the fly as devices are moved around the house.
+- **Enhanced 2D SVG Topology & Transit Maps**:
+  - In 2D Force Mesh and Hierarchical Tree views, primary backbone connections are rendered with bold `stroke-width: 4.5px` (or `3.6px`) and higher opacity (`0.92`), compared to `1.6px`–`2.2px` on secondary links.
+  - In 2D Transit Map views, primary line tracks are drawn with `stroke-width: 7.5px` (vs `3.5px`).
+- **Cache Invalidation**:
+  - Bumped frontend script cache buster to `app.js?v=2.8.9` in `index.html`.
 
 ### Changed: Border Router Color Palette Updated to Bold Blue
 - **Vibrant Blue Border Routers Across 3D & 2D Topologies**:
