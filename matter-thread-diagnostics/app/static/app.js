@@ -3020,10 +3020,19 @@ function renderSvgTopology(nodes, edges) {
       }
     }
 
-    // Stronger signal = stiffer spring and thicker line
+    const isSrcTbr = src.type === "border_router" || src.is_border_router || Boolean(src.preferred);
+    const isTgtTbr = tgt.type === "border_router" || tgt.is_border_router || Boolean(tgt.preferred);
+    const isSrcRouter = src.type === "router" || src.is_router || isSrcTbr;
+    const isTgtRouter = tgt.type === "router" || tgt.is_router || isTgtTbr;
+    const isPrimary = isSrcTbr || isTgtTbr || (isSrcRouter && isTgtRouter) || Boolean(e.is_primary);
+
+    // Stronger signal & primary connection = stiffer spring and refined thickness
     const stiffness = targetDist < 105 ? 0.065 : (targetDist < 165 ? 0.045 : 0.028);
-    const strokeWidth = targetDist < 105 ? "3" : (targetDist < 165 ? "2.2" : "1.6");
-    const strokeColor = e.status === "warning" ? "#f59e0b" : (targetDist < 105 ? "#34d399" : "#38bdf8");
+    const strokeWidth = isPrimary
+      ? (targetDist < 105 ? "3.6" : (targetDist < 165 ? "3.0" : "2.4"))
+      : (targetDist < 105 ? "2.6" : (targetDist < 165 ? "2.0" : "1.6"));
+    const strokeColor = e.status === "warning" ? "#f59e0b" : (targetDist < 105 ? "#34d399" : (isPrimary ? "#38bdf8" : "#94a3b8"));
+    const strokeOpacity = isPrimary ? "0.88" : "0.72";
 
     const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -3033,7 +3042,7 @@ function renderSvgTopology(nodes, edges) {
     line.setAttribute("y2", tgt.y.toFixed(1));
     line.setAttribute("stroke", strokeColor);
     line.setAttribute("stroke-width", strokeWidth);
-    line.setAttribute("stroke-opacity", "0.78");
+    line.setAttribute("stroke-opacity", strokeOpacity);
     if (e.status === "warning" || targetDist > 185) {
       line.setAttribute("stroke-dasharray", "6,4");
     }
@@ -3879,13 +3888,19 @@ function renderTransitMap(nodes, edges) {
     const aff = affinity.nodeAffinity[sId] || affinity.nodeAffinity[tId] || { color: isZigbee ? "#eab308" : "#38bdf8" };
     const lineColor = isZigbee ? "#ca8a04" : (aff.color || "#0284c7");
 
+    const sNode = nodes.find(n => n.id === sId);
+    const tNode = nodes.find(n => n.id === tId);
+    const isPrimary = (sNode && (sNode.type === "border_router" || sNode.preferred)) ||
+                      (tNode && (tNode.type === "border_router" || tNode.preferred)) ||
+                      Boolean(e.is_primary);
+
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("fill", "none");
     path.setAttribute("stroke", lineColor);
-    path.setAttribute("stroke-width", "5");
+    path.setAttribute("stroke-width", isPrimary ? "5.5" : "4.0");
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
-    path.setAttribute("stroke-opacity", "0.85");
+    path.setAttribute("stroke-opacity", isPrimary ? "0.90" : "0.78");
     linesG.appendChild(path);
 
     lineEntries.push({ path, sId, tId });
@@ -5737,6 +5752,14 @@ function renderHouse3DTopology(nodes, edges) {
         return;
       }
 
+      const isSrcTbr = Boolean(srcGroup.userData && srcGroup.userData.isBorderRouter);
+      const isTgtTbr = Boolean(tgtGroup.userData && tgtGroup.userData.isBorderRouter);
+      const isSrcRouter = Boolean(srcNode && (srcNode.type === "router" || srcNode.is_router || (srcNode.routing_role && srcNode.routing_role.toLowerCase().includes("router"))));
+      const isTgtRouter = Boolean(tgtNode && (tgtNode.type === "router" || tgtNode.is_router || (tgtNode.routing_role && tgtNode.routing_role.toLowerCase().includes("router"))));
+
+      // Primary backbone connection: to/from Border Router, between backbone routers, or flagged is_primary
+      const isPrimary = isSrcTbr || isTgtTbr || (isSrcRouter && isTgtRouter) || Boolean(e.is_primary);
+
       const p1 = srcGroup.position.clone();
       const p2 = tgtGroup.position.clone();
       const dist = p1.distanceTo(p2);
@@ -5746,7 +5769,6 @@ function renderHouse3DTopology(nodes, edges) {
       mid.y += Math.min(0.35 + dist * 0.08, 1.2);
 
       const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
-      const points = curve.getPoints(24);
 
       // Color code by signal strength
       let edgeColor = "#10b981"; // green
@@ -5759,19 +5781,21 @@ function renderHouse3DTopology(nodes, edges) {
         edgeColor = "#38bdf8";
       }
 
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
-      const lineMat = new THREE.LineBasicMaterial({
+      // Slender luminous 3D light beams - refined and elegant ("a touch thicker" than 1px hairline)
+      const tubeRadius = isPrimary ? 0.013 : 0.007;
+      const tubeGeo = new THREE.TubeGeometry(curve, 20, tubeRadius, 6, false);
+      const tubeMat = new THREE.MeshBasicMaterial({
         color: new THREE.Color(edgeColor),
         transparent: true,
-        opacity: 0.85,
-        linewidth: 2
+        opacity: isPrimary ? 0.90 : 0.75
       });
-      const line = new THREE.Line(lineGeo, lineMat);
-      scene.add(line);
-      house3DState.edgeObjects.push(line);
+      const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+      scene.add(tubeMesh);
+      house3DState.edgeObjects.push(tubeMesh);
 
       // Signal Pulse Packet Particle
-      const pulseGeo = new THREE.SphereGeometry(0.045, 12, 12);
+      const pulseRadius = isPrimary ? 0.050 : 0.040;
+      const pulseGeo = new THREE.SphereGeometry(pulseRadius, 12, 12);
       const pulseMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(edgeColor) });
       const pulseMesh = new THREE.Mesh(pulseGeo, pulseMat);
       scene.add(pulseMesh);
@@ -5780,16 +5804,18 @@ function renderHouse3DTopology(nodes, edges) {
         mesh: pulseMesh,
         curve,
         t: Math.random(),
-        speed: 0.007 + Math.random() * 0.005
+        speed: (isPrimary ? 0.008 : 0.006) + Math.random() * 0.004
       };
       house3DState.pulseObjects.push(pulseObj);
 
       house3DState.linkDataList.push({
-        line,
+        tubeMesh,
+        tubeRadius,
         pulseMesh,
         pulseObj,
         srcGroup,
         tgtGroup,
+        isPrimary,
         edge: e
       });
     }
@@ -5820,9 +5846,10 @@ function update3DLinksForNode(movedGroup) {
       mid.y += Math.min(0.35 + dist * 0.08, 1.2);
 
       const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
-      const points = curve.getPoints(24);
-      item.line.geometry.setFromPoints(points);
-      item.line.geometry.attributes.position.needsUpdate = true;
+      if (item.tubeMesh) {
+        if (item.tubeMesh.geometry) item.tubeMesh.geometry.dispose();
+        item.tubeMesh.geometry = new THREE.TubeGeometry(curve, 20, item.tubeRadius || 0.007, 6, false);
+      }
       if (item.pulseObj) {
         item.pulseObj.curve = curve;
       }

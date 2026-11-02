@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.8.11] - 2026-11-02
+
+### Changed: Balanced and Refined Connection Line Thickness Across 3D and 2D
+- **Sleek Radiant 3D Beams in House Digital Twin**:
+  - Replaced thin 1px hairline lines with slender, luminous `THREE.TubeGeometry` using unshaded `THREE.MeshBasicMaterial` (avoiding heavy industrial pipe textures).
+  - Scaled tube radius subtly: `tubeRadius = 0.013` for primary backbone links (to/from TBR or router-to-router) and `0.007` for secondary leaf links — creating a refined, laser-light look that is "a touch thicker" than a 1px hairline without being bulky.
+  - Interactive device dragging updates the tube geometry in real time.
+- **Refined 2D Topology Stroke Widths**:
+  - In 2D SVG Force Mesh and Tree views: calibrated stroke width to `2.4px`–`3.6px` for primary connections and `1.6px`–`2.6px` for secondary links.
+  - In 2D Transit Map: set primary line paths to `5.5px` and secondary to `4.0px`.
+- **Cache Invalidation**:
+  - Bumped frontend script cache buster to `app.js?v=2.8.11` in `index.html`.
+
 ## [2.8.10] - 2026-11-02
 
 ### Reverted: Connection Line Styling Restored to Original Clean Aesthetics
